@@ -23,6 +23,19 @@ In diesem System stecken Algorithmen, die speziell für den rauen und optisch sc
 3. **Konfiguration:** Die mitgelieferte `config.example.ini` beim ersten Start einfach ignorieren – das Programm erstellt automatisch eine frische `config.ini` mit hilfreichen Kommentaren für dein System.
 4. **Starten:** Führe `StartTargetVisionDeLuebs.bat` aus oder starte direkt über `python TargetVisionDeLuebs.py`.
 
+### 🎨 Praxistipp: Hintergrund-Farbwerte (RGB) exakt ermitteln
+
+Damit die automatische Pausenerkennung perfekt funktioniert, benötigt das System die RGB-Farbwerte deiner Wand aus der Kamera-Perspektive.
+
+> ⚠️ **Wichtiger Hinweis:** Wenn `darstellung_ohne_weissabgleich = yes` aktiviert ist, weichen die Farben auf dem Monitor vom Analysebild ab. Screenshots des Hauptfensters liefern daher falsche Werte!
+
+**Der einfachste Weg zu den exakten Werten:**
+1. **Referenzbild erzeugen:** Lass die Zielscheibe wegfahren, sodass nur die leere Wand zu sehen ist, und klicke im Programm auf den **Reset-Button** der jeweiligen Kamera.
+2. **Foto öffnen:** Das System speichert dabei automatisch das rohe Kamerabild im Ordner `debug_bilder/` als `referenz_left.jpg` bzw. `referenz_right.jpg`. Öffne diese Datei in **Paint** (oder einem anderen Bildbearbeitungsprogramm).
+3. **Farbe abgreifen:** Wähle das **Pipetten-Werkzeug** und klicke mitten auf die Wandfläche.
+4. **RGB-Werte ablesen:** Klicke oben auf **"Palette bearbeiten"** (Farben bearbeiten). Dort findest du auf der rechten Seite die exakten Werte für **Rot (R)**, **Grün (G)** und **Blau (B)**.
+5. **In `config.ini` eintragen:** Übertrage die drei Zahlen in den Abschnitt `[Hintergrund_Links]` bzw. `[Hintergrund_Rechts]`.
+
 ## ⚙️ Dateistruktur
 * `TargetVisionDeLuebs.py` – Die Haupt-Engine.
 * `config.ini` – Wird beim Start generiert. Hier stellst du Kameras, Crops, Wandfarben (RGB) und Erkennungstoleranzen ein. *(Wird durch .gitignore nicht auf GitHub hochgeladen)*
