@@ -322,23 +322,41 @@ class TargetTracker:
         for cnt in contours:
             area = cv2.contourArea(cnt)
             if area > self.min_hole_area:
-                M = cv2.moments(cnt)
-                if M["m00"] != 0:
-                    cx = int(M["m10"] / M["m00"])
-                    cy = int(M["m01"] / M["m00"])
+                
+                # =========================================================
+                # VARIANTE A: minEnclosingCircle (Aktuell aktiv für V1.0.0 Test)
+                # Legt einen perfekten Kreis um die Form. Zentriert sich besser, 
+                # wenn abgerissene Papiersplitter ("Rattenlöcher") das Loch verzerren.
+                # =========================================================
+                (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
+                cx = int(circle_x)
+                cy = int(circle_y)
 
-                    is_new = True
-                    for shot in self.shots:
-                        if shot['side'] == side:
-                            dist = np.hypot(shot['pos'][0] - cx, shot['pos'][1] - cy)
-                            if dist < self.caliber_radius:
-                                is_new = False
-                                break
+                # =========================================================
+                # VARIANTE B: Schwerpunkt / Center of Mass (Auskommentiert)
+                # Zieht bei "Rattenlöchern" oft in Richtung des abgerissenen Papiers.
+                # =========================================================
+                # M = cv2.moments(cnt)
+                # if M["m00"] != 0:
+                #     cx = int(M["m10"] / M["m00"])
+                #     cy = int(M["m01"] / M["m00"])
+                # else:
+                #     continue # Überspringt ungültige Konturen
+                # =========================================================
 
-                    if is_new:
-                        new_shots_found_this_frame.append({'side': side, 'pos': (cx, cy), 'is_new': True})
-                        self.log(side, f"-> NEUES LOCH GEFUNDEN: Fläche {area:.1f}px")
+                is_new = True
+                for shot in self.shots:
+                    if shot['side'] == side:
+                        dist = np.hypot(shot['pos'][0] - cx, shot['pos'][1] - cy)
+                        if dist < self.caliber_radius:
+                            is_new = False
+                            break
 
+                if is_new:
+                    new_shots_found_this_frame.append({'side': side, 'pos': (cx, cy), 'is_new': True})
+                    # NEU: X/Y-Koordinaten direkt im Log protokollieren für die Feinanalyse
+                    self.log(side, f"-> NEUES LOCH GEFUNDEN: Pos ({cx}, {cy}) | Fläche {area:.1f}px")
+                
         if new_shots_found_this_frame:
             for shot in self.shots:
                 if shot['side'] == side:
