@@ -13,8 +13,9 @@ In diesem System stecken Algorithmen, die speziell für den rauen und optisch sc
 * **Akkumulierte 3-Bilder-Differenz:** Ein "Gedächtnis" für alte Treffer. Zuvor geschossene Löcher werden mathematisch subtrahiert und stören die neue Erkennung nicht.
 * **Intelligente Pausenerkennung:** Das System erkennt die Wandfarbe im Hintergrund. Fährt die Scheibe weg, pausiert die Motorik automatisch – das spart massiv CPU-Ressourcen und verhindert Fehlerkennungen.
 * **Umgebungslicht-Normalisierung:** Helligkeitsschwankungen auf der Pappe werden vor der Analyse dynamisch ausgeglichen.
-* **Dual-Kamera Support:** Unterstützt zwei Kameras (z.B. linke und rechte Bahn) gleichzeitig über Multithreading.
-* **Visuelles Aufhübschen:** Die Auswertung rechnet präzise in tristen Graustufen, aber für das Auge am Monitor können die Farben optional künstlich gesättigt werden.
+* **Dual-Kamera Support:** Unterstützt zwei Kameras (z.B. linke und rechte Seite) gleichzeitig über Multithreading.
+* **Dual-Verarbeitung (Farbe & Graustufen):** Die Pausenerkennung prüft den Wand-Hintergrund in allen 3 RGB-Farbkanälen. Die Schusserkennung nutzt geglättete Graustufen zur präzisen Loch-Analyse.
+* **Visuelles Aufhübschen:** Für das Auge am Monitor können die Farben des Live-Bildes künstlich gesättigt werden, ohne dass der Algorithmus im Hintergrund beeinflusst wird.
 
 ## 🚀 Installation & Start
 1. **Repo klonen** oder als ZIP herunterladen.
