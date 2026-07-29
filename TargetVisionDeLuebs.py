@@ -296,6 +296,10 @@ class TargetTracker:
         diff_gray = cv2.cvtColor(diff_bgr, cv2.COLOR_BGR2GRAY)
         _, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY) 
 
+        # ---> NEU: Der 4x4 Pixel Closing-Kleber <---
+        kernel = np.ones((5, 5), np.uint8)
+        thresh_raw = cv2.morphologyEx(thresh_raw, cv2.MORPH_CLOSE, kernel)
+
         # 3. ALTES DIFF-BILD ABZIEHEN (Mathematische Subtraktion der bekannten Bereiche)
         if state.cumulative_mask is not None:
             # Weißer Bereich im alten Diff zieht weißen Bereich im rohen Diff ab -> wird schwarz (ignoriert)
