@@ -1,0 +1,6 @@
+# Nutzerdaten ignorieren
+debug_bilder/
+__pycache__/
+*.pyc
+config.ini
+treffer_log.txt
