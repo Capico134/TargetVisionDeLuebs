@@ -3,6 +3,7 @@ import numpy as np
 import time
 import configparser
 import os
+import subprocess
 from datetime import datetime
 
 CONFIG_FILE = 'config.ini'
@@ -16,6 +17,17 @@ if not os.path.exists(DEBUG_FOLDER):
 # Log-Datei beim Start leeren/neu anlegen
 with open(LOG_FILE, "w", encoding="utf-8") as f:
     f.write(f"=== DIGITALE TREFFERANZEIGE LOG - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+
+def get_current_version():
+    try:
+        raw_git = subprocess.check_output(
+            ["git", "describe", "--tags", "--always", "--dirty"], 
+            stderr=subprocess.DEVNULL
+        ).strip().decode("utf-8")
+        clean_version = raw_git.lstrip('v') 
+        return clean_version
+    except Exception:
+        return "1.0.0-zip"
 
 def update_ini_value(filepath, target_section, target_key, new_value):
     if not os.path.exists(filepath):
@@ -153,9 +165,6 @@ class CameraState:
         self.lower_color = np.array([max(0, b-tol), max(0, g-tol), max(0, r-tol)])
         self.upper_color = np.array([min(255, b+tol), min(255, g+tol), min(255, r+tol)])
         
-        # Schalter für die Hintergrund-Automatik
-        self.auto_background = True
-        
         # FIX: Das "Alte Diff-Bild" (Akkumulierte Maske für bekannte Treffer) initialisieren
         self.cumulative_mask = None
 
@@ -186,6 +195,9 @@ class CameraState:
 class TargetTracker:
     def __init__(self, config):
         self.config = config
+        self.version = get_current_version()
+        print(f"🎯 TargetVision DeLübs     [v{self.version}]")
+        self.window_name = f"TargetVision DeLuebs - v{self.version}"
         
         self.use_left = config.getboolean('Kameras', 'nutze_kamera_links')
         self.use_right = config.getboolean('Kameras', 'nutze_kamera_rechts')
@@ -341,6 +353,7 @@ class TargetTracker:
             
             self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!")
             self.save_debug_image(f"diff_letzter_treffer_{side}", thresh_new)
+            self.save_debug_image(f"letzte_aufnahme_{side}", frame)
             return True
         else:
             self.log(side, "Keine validen neuen Treffer im Bild gefunden.")
@@ -378,29 +391,27 @@ class TargetTracker:
                     state.is_moving = False
                     self.log(state.side, "Bewegung beendet (Bild stabil).")
                     
-                    if state.auto_background:
-                        bg_visible, bg_percent = state.is_background_visible(frame)
-                        
-                        # Berechnet, wie knapp es war
-                        diff = bg_percent - state.min_area 
-                        
-                        if bg_visible:
-                            self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> WAND (+{diff:.1f}% über Limit {state.min_area}%)")
-                            if state.target_present:
-                                self.log(state.side, "ZIELSCHEIBE VERLASSEN. (Pausiert)")
-                                state.target_present = False
-                        else:
-                            self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> SCHEIBE ({abs(diff):.1f}% unter Limit {state.min_area}%)")
-                            if not state.target_present:
-                                state.target_present = True
-                                if current_ref is None:
-                                    self.set_reference_image(frame, state.side)
-                                else:
-                                    self.detect_new_shot(frame, state.side) # KEIN REFERENZ-UPDATE!
+                    # Hintergrund-Automatik ist immer aktiv
+                    bg_visible, bg_percent = state.is_background_visible(frame)
+                    
+                    # Berechnet, wie knapp es war
+                    diff = bg_percent - state.min_area 
+                    
+                    if bg_visible:
+                        self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> WAND (+{diff:.1f}% über Limit {state.min_area}%)")
+                        if state.target_present:
+                            self.log(state.side, "ZIELSCHEIBE VERLASSEN. (Pausiert)")
+                            state.target_present = False
+                    else:
+                        self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> SCHEIBE ({abs(diff):.1f}% unter Limit {state.min_area}%)")
+                        if not state.target_present:
+                            state.target_present = True
+                            if current_ref is None:
+                                self.set_reference_image(frame, state.side)
                             else:
                                 self.detect_new_shot(frame, state.side) # KEIN REFERENZ-UPDATE!
-                    else:
-                        self.detect_new_shot(frame, state.side) # KEIN REFERENZ-UPDATE!
+                        else:
+                            self.detect_new_shot(frame, state.side) # KEIN REFERENZ-UPDATE!
 
     # =========================================================================
     # HILFSFUNKTIONEN (Clean Code)
@@ -505,7 +516,7 @@ class TargetTracker:
         
         self.scale_x, self.scale_y = 1.0, 1.0
         try:
-            rect = cv2.getWindowImageRect("Digitale Trefferanzeige")
+            rect = cv2.getWindowImageRect(self.window_name)
             if rect[2] > 0 and rect[3] > 0:
                 win_w, win_h = rect[2], rect[3]
                 combined_view = cv2.resize(combined_view, (win_w, win_h))
@@ -545,7 +556,7 @@ class TargetTracker:
         cv2.putText(combined_view, "Beenden", (ex1 + 18, ey1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
         self.btn_exit_coords = (ex1, ey1, ex2, ey2)
 
-        cv2.imshow("Digitale Trefferanzeige", combined_view)
+        cv2.imshow(self.window_name, combined_view)
 
     def check_keys(self):
         key = cv2.waitKey(self.poll_ms) & 0xFF
@@ -554,7 +565,7 @@ class TargetTracker:
             return True
             
         try:
-            if cv2.getWindowProperty("Digitale Trefferanzeige", cv2.WND_PROP_VISIBLE) < 1:
+            if cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
                 return True 
         except cv2.error:
             return True 
@@ -599,14 +610,14 @@ class TargetTracker:
         blink_timer = time.time()
         blink_state = True
         
-        cv2.namedWindow("Digitale Trefferanzeige", cv2.WINDOW_NORMAL)
+        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         
         if self.fullscreen:
-            cv2.setWindowProperty("Digitale Trefferanzeige", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+            cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         else:
-            cv2.resizeWindow("Digitale Trefferanzeige", 1280, 720) 
+            cv2.resizeWindow(self.window_name, 1280, 720) 
             
-        cv2.setMouseCallback("Digitale Trefferanzeige", self.on_mouse_click)
+        cv2.setMouseCallback(self.window_name, self.on_mouse_click)
         self.log("SYSTEM", "=== PROGRAMM GESTARTET ===")
 
         while True:
