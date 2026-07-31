@@ -84,6 +84,15 @@ cam_left_index = 0
 cam_right_index = 1
 
 [Erkennung]
+# Auslöser für die Auswertung:
+# yes = Auslösen erst durch Bewegungen im Kamerabild (Z.B. durch Bewegung der laufenden Scheibe, sehr ressourcenschonend)
+# no = Dauerhaftes Scannen (Für statische Scheiben, Webcams, Lasertraining)
+ausloeser_durch_erschuetterung = no
+# Auswertungsmethode für die Form des Schusslochs:
+# A = Umschließender Kreis (Standard, gut für leicht ausgefranste Löcher)
+# B = Schwerpunkt (Zieht bei unsauberen Rissen oft zum Papierschnipsel hin)
+# C = Smart-Hybrid (Hough-Kreisbogen + minEnclosingCircle - Empfohlen!)
+erkennungs_methode = C
 # Mindestfläche in Pixeln, die eine Farb/Helligkeitsänderung haben muss, um als Loch zu gelten.
 min_hole_area = 16
 # Sperr-Radius um bestehende Treffer (in Pixeln) gegen Doppelzählungen.
@@ -134,11 +143,32 @@ cut_right = 20
 fenster_skalierung = 1.0
 # Kiosk-Modus für den Schießstand (yes/no)
 vollbild = no
+# Hübscht das Bild für das Auge auf (mehr Farbe/Kontrast), ohne die Erkennung zu beeinflussen
+darstellung_ohne_weissabgleich = yes
 """)
         print("Standard config.ini mit Kommentaren erstellt.")
 
     config = configparser.ConfigParser()
     config.read(CONFIG_FILE, encoding='utf-8')
+
+    # --- AUTO-PATCH / MIGRATION FÜR ÄLTERE VERSIONEN ---
+    needs_reload = False
+
+    if not config.has_option('Erkennung', 'ausloeser_durch_erschuetterung'):
+        print("🔧 Führe Auto-Patch aus: Füge 'ausloeser_durch_erschuetterung = yes' hinzu...")
+        update_ini_value(CONFIG_FILE, 'Erkennung', 'ausloeser_durch_erschuetterung', 'yes')
+        needs_reload = True
+    
+    # Prüfen, ob der Schlüssel 'erkennungs_methode' im Block 'Erkennung' fehlt
+    if not config.has_option('Erkennung', 'erkennungs_methode'):
+        print("🔧 Führe Auto-Patch aus: Füge 'erkennungs_methode = C' hinzu...")
+        update_ini_value(CONFIG_FILE, 'Erkennung', 'erkennungs_methode', 'C')
+        needs_reload = True
+        
+    # Falls wir etwas gepatched haben, lesen wir die Datei frisch ein
+    if needs_reload:
+        config.read(CONFIG_FILE, encoding='utf-8')
+
     return config
 
 class CameraState:
@@ -150,6 +180,7 @@ class CameraState:
         self.target_present = False
         self.last_motion_log = 0 
         self.is_initialized = False 
+        self.last_scan_time = 0  # <--- NEU: Für den Dauerfeuer-Timer
         
         self.motion_threshold = config.getint('Erkennung', 'motion_threshold')
         self.motion_tolerance = config.getint('Erkennung', 'motion_tolerance', fallback=25)
@@ -205,6 +236,8 @@ class TargetTracker:
         self.min_hole_area = config.getint('Erkennung', 'min_hole_area')
         self.caliber_radius = config.getint('Erkennung', 'caliber_radius')
         self.hit_tolerance = config.getint('Erkennung', 'hit_tolerance', fallback=15)
+        self.erkennungs_methode = config.get('Erkennung', 'erkennungs_methode', fallback='A').upper()
+        self.ausloeser_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.max_img_change = config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
         self.poll_ms = config.getint('Timing', 'poll_ms', fallback=33)
         self.fullscreen = config.getboolean('Anzeige', 'vollbild', fallback=False)
@@ -321,40 +354,71 @@ class TargetTracker:
         # 5. KONTUREN-ANALYSE auf dem bereinigten thresh_new
         contours, _ = cv2.findContours(thresh_new, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         new_shots_found_this_frame = []
-        self.log(side, f"Analysiere Konturen... (Neuer Zuwachs: {change_percent:.2f}% | Konturen: {len(contours)})")
+        # Log-Spam im Dauerfeuer-Modus verhindern:
+        if self.ausloeser_erschuetterung or len(contours) > 0:
+            self.log(side, f"Analysiere Konturen... (Neuer Zuwachs: {change_percent:.2f}% | Konturen: {len(contours)})")
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
             if area > self.min_hole_area:
-                
-                # =========================================================
-                # VARIANTE A: minEnclosingCircle (Aktuell aktiv für V1.0.0 Test)
-                # Legt einen perfekten Kreis um die Form. Zentriert sich besser, 
-                # wenn abgerissene Papiersplitter ("Rattenlöcher") das Loch verzerren.
-                # =========================================================
-                (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
-                cx = int(circle_x)
-                cy = int(circle_y)
+               
+                if self.erkennungs_methode == 'C':
+                    # =========================================================
+                    # VARIANTE C: Der Smart-Hybrid (Hough + minEnclosingCircle)
+                    # =========================================================
+                    # 1. Zuerst testen: Wie groß ist das umschließende "Feld"?
+                    (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
+                    
+                    # 2. Wenn das Feld viel größer ist als dein normales Kaliber (Faktor 1.3),
+                    # dann ist es ein Riss oder Doppelschuss!
+                    if radius > (self.caliber_radius * 1.3):
+                        print("PAPA-ALGORITHMUS (Hough) für die chaotischen Löcher")
+                        mask = np.zeros_like(thresh_new)
+                        cv2.drawContours(mask, [cnt], -1, 255, -1)
+                        
+                        min_r = max(2, int(self.caliber_radius * 0.5))
+                        max_r = int(self.caliber_radius * 2.0)
+                        
+                        circles = cv2.HoughCircles(mask, cv2.HOUGH_GRADIENT, dp=1, minDist=20,
+                                                   param1=50, param2=10, 
+                                                   minRadius=min_r, maxRadius=max_r)
+                        
+                        if circles is not None:
+                            cx, cy = int(circles[0][0][0]), int(circles[0][0][1])
+                        else:
+                            cx, cy = int(circle_x), int(circle_y)
+                    else:
+                        # -> STANDARD-ALGORITHMUS für perfekte, saubere Einzelschüsse
+                        cx, cy = int(circle_x), int(circle_y)
 
-                # =========================================================
-                # VARIANTE B: Schwerpunkt / Center of Mass (Auskommentiert)
-                # Zieht bei "Rattenlöchern" oft in Richtung des abgerissenen Papiers.
-                # =========================================================
-                # M = cv2.moments(cnt)
-                # if M["m00"] != 0:
-                #     cx = int(M["m10"] / M["m00"])
-                #     cy = int(M["m01"] / M["m00"])
-                # else:
-                #     continue # Überspringt ungültige Konturen
-                # =========================================================
+                elif self.erkennungs_methode == 'B':
+                    # =========================================================
+                    # VARIANTE B: Schwerpunkt / Center of Mass
+                    # =========================================================
+                    M = cv2.moments(cnt)
+                    if M["m00"] != 0:
+                        cx = int(M["m10"] / M["m00"])
+                        cy = int(M["m01"] / M["m00"])
+                    else:
+                        continue 
+                        
+                else:
+                    # =========================================================
+                    # VARIANTE A: minEnclosingCircle (Dein bisheriger Standard)
+                    # =========================================================
+                    (circle_x, circle_y), _ = cv2.minEnclosingCircle(cnt)
+                    cx, cy = int(circle_x), int(circle_y)
+
+
 
                 is_new = True
                 for shot in self.shots:
                     if shot['side'] == side:
                         dist = np.hypot(shot['pos'][0] - cx, shot['pos'][1] - cy)
-                        if dist < self.caliber_radius:
-                            is_new = False
-                            break
+                    #CALIBER BREAK ABGESCHALTET
+                        #if dist < self.caliber_radius:
+                        #    is_new = False
+                        #    break
 
                 if is_new:
                     new_shots_found_this_frame.append({'side': side, 'pos': (cx, cy), 'is_new': True})
@@ -378,8 +442,34 @@ class TargetTracker:
             self.save_debug_image(f"letzte_aufnahme_{side}", frame)
             return True
         else:
-            self.log(side, "Keine validen neuen Treffer im Bild gefunden.")
+            if self.ausloeser_erschuetterung:
+                self.log(side, "Keine validen neuen Treffer im Bild gefunden.")
+            # ---> NEU: Speichere das Bild der fehlgeschlagenen Auswertung <---
+            self.save_debug_image(f"diff_letzte_verworfene_auswertung_{side}", thresh_new)
+            self.save_debug_image(f"letzte_verworfene_aufnahme_{side}", frame)
+            
             return False
+
+    def check_background_and_evaluate(self, frame, state, current_ref):
+        bg_visible, bg_percent = state.is_background_visible(frame)
+        diff = bg_percent - state.min_area 
+        
+        if bg_visible:
+            if state.target_present:
+                self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> WAND (+{diff:.1f}% über Limit {state.min_area}%)")
+                self.log(state.side, "ZIELSCHEIBE VERLASSEN. (Pausiert)")
+                state.target_present = False
+        else:
+            if not state.target_present:
+                self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> SCHEIBE ({abs(diff):.1f}% unter Limit {state.min_area}%)")
+                state.target_present = True
+                if current_ref is None:
+                    self.set_reference_image(frame, state.side)
+                else:
+                    self.detect_new_shot(frame, state.side)
+            else:
+                self.detect_new_shot(frame, state.side)
+
 
     def process_camera(self, frame, state):
         if frame is None: return
@@ -399,42 +489,30 @@ class TargetTracker:
             state.is_initialized = True
             return
 
-        has_motion = state.check_motion(frame)
-
-        if has_motion:
-            if not state.is_moving:
-                self.log(state.side, "Bewegung (Erschütterung/Fahrt) gestartet.")
-            state.is_moving = True
-            state.still_counter = 0
+        # --- MODUS A: Live-Anlage (Erschütterung) ---
+        if self.ausloeser_erschuetterung:
+            has_motion = state.check_motion(frame)
+            if has_motion:
+                if not state.is_moving:
+                    self.log(state.side, "Bewegung (Erschütterung/Fahrt) gestartet.")
+                state.is_moving = True
+                state.still_counter = 0
+            else:
+                if state.is_moving:
+                    state.still_counter += 1
+                    if state.still_counter >= state.stillness_limit:
+                        state.is_moving = False
+                        self.log(state.side, "Bewegung beendet (Bild stabil).")
+                        self.check_background_and_evaluate(frame, state, current_ref)
+                        
+        # --- MODUS B: Dauerfeuer (Statische Scheibe, Lasertraining, MS Paint) ---
         else:
-            if state.is_moving:
-                state.still_counter += 1
-                if state.still_counter >= state.stillness_limit:
-                    state.is_moving = False
-                    self.log(state.side, "Bewegung beendet (Bild stabil).")
-                    
-                    # Hintergrund-Automatik ist immer aktiv
-                    bg_visible, bg_percent = state.is_background_visible(frame)
-                    
-                    # Berechnet, wie knapp es war
-                    diff = bg_percent - state.min_area 
-                    
-                    if bg_visible:
-                        self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> WAND (+{diff:.1f}% über Limit {state.min_area}%)")
-                        if state.target_present:
-                            self.log(state.side, "ZIELSCHEIBE VERLASSEN. (Pausiert)")
-                            state.target_present = False
-                    else:
-                        self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> SCHEIBE ({abs(diff):.1f}% unter Limit {state.min_area}%)")
-                        if not state.target_present:
-                            state.target_present = True
-                            if current_ref is None:
-                                self.set_reference_image(frame, state.side)
-                            else:
-                                self.detect_new_shot(frame, state.side) # KEIN REFERENZ-UPDATE!
-                        else:
-                            self.detect_new_shot(frame, state.side) # KEIN REFERENZ-UPDATE!
-
+            current_time = time.time()
+            # Prüft nur alle 1.5 Sekunden (Schont die CPU massiv!)
+            if current_time - state.last_scan_time > 1.5:
+                state.last_scan_time = current_time
+                self.check_background_and_evaluate(frame, state, current_ref)
+                
     # =========================================================================
     # HILFSFUNKTIONEN (Clean Code)
     # =========================================================================
