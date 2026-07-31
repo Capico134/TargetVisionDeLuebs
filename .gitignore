@@ -1,5 +1,6 @@
 # Nutzerdaten ignorieren
 debug_bilder/
+debug_pakete/
 __pycache__/
 *.pyc
 config.ini

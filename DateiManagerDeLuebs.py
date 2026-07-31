@@ -1,0 +1,228 @@
+import os
+import cv2
+import configparser
+import subprocess
+import zipfile  # <--- NEU
+from datetime import datetime
+
+class DateiManager:
+    def __init__(self):
+        self.CONFIG_FILE = 'config.ini'
+        self.DEBUG_FOLDER = 'debug_bilder'
+        self.LOG_FILE = 'treffer_log.txt'
+        self.ZIP_FOLDER = 'debug_pakete'
+        
+        self._init_system()
+
+    def _init_system(self):
+        """Erstellt Ordner und leert das Log beim Start."""
+        if not os.path.exists(self.DEBUG_FOLDER):
+            os.makedirs(self.DEBUG_FOLDER)
+            
+        # ---> NEU: Erstellt den Ordner für die Bug-Pakete, falls er fehlt
+        if not os.path.exists(self.ZIP_FOLDER):
+            os.makedirs(self.ZIP_FOLDER)    
+
+        with open(self.LOG_FILE, "w", encoding="utf-8") as f:
+            f.write(f"=== DIGITALE TREFFERANZEIGE LOG - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+
+    def get_current_version(self):
+        """Holt die Version aus Git oder gibt einen Fallback zurück."""
+        try:
+            raw_git = subprocess.check_output(
+                ["git", "describe", "--tags", "--always", "--dirty"], 
+                stderr=subprocess.DEVNULL
+            ).strip().decode("utf-8")
+            return raw_git.lstrip('v') 
+        except Exception:
+            return "1.1.0-dev"
+
+    def write_log(self, log_msg):
+        """Schreibt eine fertige Nachricht in die Textdatei."""
+        with open(self.LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(log_msg + "\n")
+
+    def save_debug_image(self, name, image):
+        """Speichert Debug-Bilder intelligent als JPG (Fotos) oder PNG (Masken)."""
+        # Wenn der Name "diff" enthält, nutzen wir verlustfreies PNG, sonst JPG
+        ext = ".png" if "diff" in name.lower() else ".jpg"
+        path = os.path.join(self.DEBUG_FOLDER, f"{name}{ext}")
+        cv2.imwrite(path, image)
+
+    def update_ini_value(self, target_section, target_key, new_value):
+        """Aktualisiert oder fügt einen Wert in der config.ini hinzu (Ninja-Patch)."""
+        if not os.path.exists(self.CONFIG_FILE):
+            return
+
+        with open(self.CONFIG_FILE, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        in_target_section = False
+        section_found = False
+        key_found = False
+        insert_idx = -1
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith('[') and stripped.endswith(']'):
+                if stripped == f"[{target_section}]":
+                    in_target_section = True
+                    section_found = True
+                    insert_idx = i + 1
+                else:
+                    if in_target_section:
+                        in_target_section = False
+                        insert_idx = i
+            elif in_target_section and not stripped.startswith('#') and '=' in stripped:
+                k, _ = line.split('=', 1)
+                if k.strip() == target_key:
+                    lines[i] = f"{target_key} = {new_value}\n"
+                    key_found = True
+                    break
+                insert_idx = i + 1
+
+        if section_found and not key_found:
+            if insert_idx == -1: insert_idx = len(lines)
+            lines.insert(insert_idx, f"{target_key} = {new_value}\n")
+        elif not section_found:
+            if lines and not lines[-1].endswith('\n'):
+                lines.append('\n')
+            lines.append(f"\n[{target_section}]\n{target_key} = {new_value}\n")
+
+        with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
+            f.writelines(lines)
+        print(f"💾 config.ini Update: [{target_section}] {target_key} = {new_value}")
+
+    def load_or_create_config(self):
+        """Lädt die Konfiguration, erstellt sie neu oder führt Patches aus."""
+        if not os.path.exists(self.CONFIG_FILE):
+            with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
+                f.write("""[Kameras]
+# Aktiviert oder deaktiviert die jeweilige Kameraansicht
+nutze_kamera_links = yes
+nutze_kamera_rechts = yes
+# Kamera-Indizes im System (0 ist meist die Standard-Webcam/OBS Virtual Cam)
+cam_left_index = 0
+cam_right_index = 1
+
+[Erkennung]
+# Auslöser für die Auswertung:
+# yes = Auslösen erst durch Bewegungen im Kamerabild (Z.B. durch Bewegung der laufenden Scheibe, sehr ressourcenschonend)
+# no = Dauerhaftes Scannen (Für statische Scheiben, Webcams, Lasertraining)
+ausloeser_durch_erschuetterung = no
+# Auswertungsmethode für die Form des Schusslochs:
+# A = Umschließender Kreis (Standard, gut für leicht ausgefranste Löcher)
+# B = Schwerpunkt (Zieht bei unsauberen Rissen oft zum Papierschnipsel hin)
+# C = Smart-Hybrid (Hough-Kreisbogen + minEnclosingCircle - Empfohlen!)
+erkennungs_methode = C
+# Mindestfläche in Pixeln, die eine Farb/Helligkeitsänderung haben muss, um als Loch zu gelten.
+min_hole_area = 16
+# Sperr-Radius um bestehende Treffer (in Pixeln) gegen Doppelzählungen.
+caliber_radius = 14
+# Anzahl veränderter Pixel im Bild, ab der eine Bewegung (Vibration/Fahrt) erkannt wird.
+motion_threshold = 2000
+# Farb/Helligkeits-Toleranz für die Bewegungserkennung.
+motion_tolerance = 40
+# Empfindlichkeit für Löcher (Referenz vs. Live).
+hit_tolerance = 20
+# Notbremse gegen Standbild/Ruckler in Prozent.
+max_image_change_percent = 5.0
+
+[Timing]
+# Bildwiederholrate/Haupttakt in Millisekunden (33 ms entspricht ca. 30 FPS).
+poll_ms = 33
+# Wie viele Frames am Stück absolute Ruhe herrschen muss, damit das Bild als "stabil" gilt.
+stillness_frames = 10
+
+[Hintergrund_Links]
+rgb_r = 234
+rgb_g = 241
+rgb_b = 190
+tolerance = 30
+min_area_percent = 40
+
+[Hintergrund_Rechts]
+rgb_r = 220
+rgb_g = 135
+rgb_b = 114
+tolerance = 30
+min_area_percent = 40
+
+[Crop_Links]
+cut_top = 0
+cut_bottom = 0
+cut_left = 175
+cut_right = 20
+
+[Crop_Rechts]
+cut_top = 0
+cut_bottom = 0
+cut_left = 175
+cut_right = 20
+
+[Anzeige]
+# Skalierungsfaktor für das Hauptfenster der Anzeige.
+fenster_skalierung = 1.0
+# Kiosk-Modus für den Schießstand (yes/no)
+vollbild = no
+# Hübscht das Bild für das Auge auf (mehr Farbe/Kontrast), ohne die Erkennung zu beeinflussen
+darstellung_ohne_weissabgleich = yes
+""")
+            print("Standard config.ini erstellt.")
+
+        config = configparser.ConfigParser()
+        config.read(self.CONFIG_FILE, encoding='utf-8')
+
+        # --- AUTO-PATCH / MIGRATION ---
+        needs_reload = False
+        
+        if not config.has_option('Erkennung', 'ausloeser_durch_erschuetterung'):
+            print("🔧 Führe Auto-Patch aus: Füge 'ausloeser_durch_erschuetterung = yes' hinzu...")
+            self.update_ini_value('Erkennung', 'ausloeser_durch_erschuetterung', 'yes')
+            needs_reload = True
+            
+        if not config.has_option('Erkennung', 'erkennungs_methode'):
+            print("🔧 Führe Auto-Patch aus: Füge 'erkennungs_methode = C' hinzu...")
+            self.update_ini_value('Erkennung', 'erkennungs_methode', 'C')
+            needs_reload = True
+            
+        if needs_reload:
+            config.read(self.CONFIG_FILE, encoding='utf-8')
+
+        return config
+        
+    def create_debug_zip(self):
+        """Generiert den Pfad für das Debug-Paket und ruft die allgemeine ZIP-Funktion auf."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        zip_filepath = os.path.join(self.ZIP_FOLDER, f"Debug_Paket_{timestamp}.zip")
+        
+        # Aufruf der generischen Funktion
+        return self.create_zip_package(zip_filepath)
+
+    def create_zip_package(self, zip_filepath):
+        """
+        Erstellt ein ZIP-Archiv mit Config, Log und allen aktuellen Bildern.
+        Wird für Debug-Pakete und zukünftig für Match-Archive (MATCH000042.zip) genutzt.
+        """
+        try:
+            with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                # 1. Config und Log hinzufügen
+                if os.path.exists(self.CONFIG_FILE):
+                    zipf.write(self.CONFIG_FILE, os.path.basename(self.CONFIG_FILE))
+                if os.path.exists(self.LOG_FILE):
+                    zipf.write(self.LOG_FILE, os.path.basename(self.LOG_FILE))
+                
+                # 2. Nur Dateien (keine Unterordner) aus dem Debug-Ordner hinzufügen
+                if os.path.exists(self.DEBUG_FOLDER):
+                    for file in os.listdir(self.DEBUG_FOLDER):
+                        file_path = os.path.join(self.DEBUG_FOLDER, file)
+                        if os.path.isfile(file_path):
+                            zipf.write(file_path, os.path.join(self.DEBUG_FOLDER, file))
+                            
+            print(f"📦 ZIP-Paket erfolgreich erstellt: {zip_filepath}")
+            self.write_log(f"SYSTEM: 📦 Datenpaket erstellt -> {zip_filepath}")
+            return True
+        except Exception as e:
+            print(f"❌ Fehler beim Erstellen der ZIP: {e}")
+            self.write_log(f"SYSTEM: ❌ Fehler beim Erstellen der ZIP -> {e}")
+            return False
