@@ -10,8 +10,12 @@ Folge dem Projekt auf YouTube, um über neue Funktionen informiert zu werden. Hi
 
 ## 🔬 High-Precision Engine
 In diesem System stecken Algorithmen, die speziell für den rauen und optisch schwierigen Schießstand-Alltag entwickelt wurden:
+## 🔬 High-Precision Engine
+
+In diesem System stecken Algorithmen, die speziell für den rauen und optisch schwierigen Schießstand-Alltag entwickelt wurden:
 * **Akkumuliertes Schuss-Gedächtnis:** Zuvor geschossene Löcher werden in einer kontinuierlichen Maske gespeichert und mathematisch subtrahiert. Alte Treffer stören die neue Erkennung somit nicht.
 * **Farb-Differenz-Trick zur Trefferanalyse:** Die Schusserkennung verlässt sich nicht auf simples Schwarz-Weiß. Die Differenz zwischen Referenz und Live-Bild wird hochpräzise in voller Farbe (RGB) berechnet, *bevor* sie in geglättete Graustufen umgewandelt wird. So werden selbst neue Treffer zuverlässig erkannt, bei denen die rote Wand exakt dieselbe Helligkeit aufweist wie die braune Zielscheibe!
+* **Smart-Hybrid Zielerfassung:** Das System entscheidet pro Treffer dynamisch über den besten Erkennungs-Algorithmus. Während saubere Schüsse blitzschnell und ressourcenschonend berechnet werden, schaltet die Engine bei stark ausgefransten Löchern oder Doppelschüssen vollautomatisch auf einen komplexen Hough-Kreisbogen-Algorithmus um. So wird das exakte Zentrum des Schusses selbst bei völlig zerrissener Pappe zielsicher gefunden.
 * **Intelligente Pausenerkennung:** Das System prüft den Wand-Hintergrund in allen 3 Farbkanälen. Fährt die Scheibe weg, pausiert die Engine automatisch – das spart massiv CPU-Ressourcen und verhindert Fehlerkennungen.
 * **Umgebungslicht-Normalisierung:** Helligkeitsschwankungen auf der Pappe werden vor der Analyse dynamisch ausgeglichen.
 * **Dual-Kamera Support:** Unterstützt zwei Kameras (z.B. linke und rechte Seite) gleichzeitig über Multithreading.
