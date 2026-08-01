@@ -442,10 +442,25 @@ class TargetTracker:
         disp_l = self.enhance_color_for_display(frame_l) if (self.use_left and frame_l is not None and self.enhance_display) else frame_l
         disp_r = self.enhance_color_for_display(frame_r) if (self.use_right and frame_r is not None and self.enhance_display) else frame_r
         
-        if self.use_left and disp_l is not None: frames_to_stack.append(disp_l)
-        if self.use_right and disp_r is not None: frames_to_stack.append(disp_r)
+        # --- NEU: DUMMY BILD LOGIK (Absturzschutz) ---
+        ref_h, ref_w = 480, 640 # Fallback-Größe
+        if disp_l is not None: ref_h, ref_w = disp_l.shape[:2]
+        elif disp_r is not None: ref_h, ref_w = disp_r.shape[:2]
+
+        def create_dummy_frame(side_name):
+            dummy = np.zeros((ref_h, ref_w, 3), dtype=np.uint8)
+            text = f"KAMERA GETRENNT ({side_name})"
+            cv2.putText(dummy, text, (30, ref_h // 2), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2, cv2.LINE_AA)
+            return dummy
+
+        if self.use_left:
+            frames_to_stack.append(disp_l if disp_l is not None else create_dummy_frame("LINKS"))
+        
+        if self.use_right:
+            frames_to_stack.append(disp_r if disp_r is not None else create_dummy_frame("RECHTS"))
 
         if not frames_to_stack: return
+        # ---------------------------------------------
 
         max_h = max([f.shape[0] for f in frames_to_stack])
         padded_frames = []
@@ -460,7 +475,9 @@ class TargetTracker:
                 
         combined_view = np.hstack(padded_frames)
         orig_h, orig_w = combined_view.shape[:2]
-        self.w_left_displayed = frames_to_stack[0].shape[1] if (self.use_left and frame_l is not None) else 0
+        
+        # w_left_displayed ist jetzt unabhängig vom echten frame_l (wichtig für Dummy)!
+        self.w_left_displayed = frames_to_stack[0].shape[1] if self.use_left else 0
         
         self.scale_x, self.scale_y = 1.0, 1.0
         try:
@@ -478,11 +495,12 @@ class TargetTracker:
         avg_scale = (self.scale_x + self.scale_y) / 2
         final_radius = max(2, int(self.caliber_radius * avg_scale))
         
-        # --- NEU: Wir iterieren jetzt über die Liste aus dem StateManager ---
+        # --- TREFFER ZEICHNEN (ohne Transparenz-Trick, mit deinen optimierten Werten) ---
         for shot in self.sm.shots:
             x, y = shot['pos']
-            # Wenn der Schuss auf der rechten Kamera ist, müssen wir ihn nach rechts verschieben
-            if shot['side'] == 'right' and self.use_left and frame_l is not None:
+            
+            # Versatz auch bei fehlendem Kamera-Bild anwenden
+            if shot['side'] == 'right' and self.use_left:
                 x += self.w_left_displayed
                 
             final_x = int(x * self.scale_x)
@@ -495,82 +513,30 @@ class TargetTracker:
             cv2.circle(combined_view, (final_x, final_y), final_radius, color, 2)
             cv2.circle(combined_view, (final_x, final_y), max(1, int(2*avg_scale)), color, -1)
             
-            # --- GEÄNDERT: Ringwertung nur rendern, wenn aktiv ---
-            if self.ringwertung_aktiv:
-                # ---> NEU: 2. Die Ringwertung rendern <---
+            # 2. Die Ringwertung rendern (wenn aktiv)
+            if getattr(self, 'ringwertung_aktiv', False):
                 score_val = shot.get('score', 0.0)
                 score_str = f"{score_val:.1f}"
                 
-                # Wir rücken den Text etwas nach rechts und oben, damit er das Loch nicht verdeckt
+                # Deine optimierten Abstände
                 text_x = final_x + final_radius + 3
                 text_y = final_y - 3
                 
-                # Text-Schatten (Schwarz, etwas dicker) für perfekten Kontrast
+                # Text-Schatten
                 cv2.putText(combined_view, score_str, (text_x + 1, text_y + 1), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 2, cv2.LINE_AA)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
                 
-                # Haupttext (Strahlendes Cyan/Gelb)
-                # OpenCV nutzt BGR, also (0, 255, 255) ist sattes Gelb
-                text_color = (0, 255, 255) if score_val < 10.0 else (0, 255, 0) # Grüne Farbe für einen 10er!
+                # Haupttext
+                text_color = (0, 255, 255) if score_val < 10.0 else (0, 255, 0)
                 cv2.putText(combined_view, score_str, (text_x, text_y), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1, cv2.LINE_AA)
-
-        #avg_scale = (self.scale_x + self.scale_y) / 2
-        #final_radius = max(2, int(self.caliber_radius * avg_scale))
-        #
-        ## 1. ZUERST zeichnen wir alle Fadenkreuze (komplett sichtbar, ohne Transparenz)
-        #for shot in self.sm.shots:
-        #    x, y = shot['pos']
-        #    if shot['side'] == 'right' and self.use_left and frame_l is not None:
-        #        x += self.w_left_displayed
-        #        
-        #    final_x = int(x * self.scale_x)
-        #    final_y = int(y * self.scale_y)
-        #    
-        #    color = (0, 0, 255) if (shot.get('is_new', False) and blink_state) else (255, 100, 0)
-        #    cv2.circle(combined_view, (final_x, final_y), final_radius, color, 2)
-        #    cv2.circle(combined_view, (final_x, final_y), max(1, int(2*avg_scale)), color, -1)
-        #
-        ## --- DER TRANSPARENZ-TRICK ---
-        ## 2. Wir legen eine digitale "Glasscheibe" (Kopie) über das Bild
-        #overlay = combined_view.copy()
-        #
-        ## 3. Wir malen die Texte auf die Glasscheibe
-        #for shot in self.sm.shots:
-        #    x, y = shot['pos']
-        #    if shot['side'] == 'right' and self.use_left and frame_l is not None:
-        #        x += self.w_left_displayed
-        #        
-        #    final_x = int(x * self.scale_x)
-        #    final_y = int(y * self.scale_y)
-        #    
-        #    score_val = shot.get('score', 0.0)
-        #    score_str = f"{score_val:.1f}"
-        #    
-        #    text_x = final_x + final_radius + 5
-        #    text_y = final_y - 5
-        #    
-        #    # Text-Schatten
-        #    cv2.putText(overlay, score_str, (text_x + 1, text_y + 1), 
-        #                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
-        #    
-        #    # Haupttext
-        #    text_color = (0, 255, 255) if score_val < 10.0 else (0, 255, 0)
-        #    cv2.putText(overlay, score_str, (text_x, text_y), 
-        #                cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 1, cv2.LINE_AA)
-        #
-        ## 4. Wir verschmelzen Glasscheibe und Bild! 
-        ## (0.7 bedeutet: Der Text ist zu 70% deckend und zu 30% transparent)
-        #cv2.addWeighted(overlay, 0.7, combined_view, 0.3, 0, combined_view)
-
-
-
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1, cv2.LINE_AA)
 
         scaled_w_left = int(self.w_left_displayed * self.scale_x)
         
-        if self.use_left and frame_l is not None:
+        # Die unteren Menüleisten auch zeichnen, wenn die Kamera aus ist
+        if self.use_left:
             self.draw_camera_overlay(combined_view, 'left', 0, scaled_w_left, win_h)
-        if self.use_right and frame_r is not None:
+        if self.use_right:
             self.draw_camera_overlay(combined_view, 'right', scaled_w_left, win_w - scaled_w_left, win_h)
         
         # --- VISUELLES FEEDBACK (Kalibrierung für 8 Sekunden anzeigen) ---
@@ -582,13 +548,10 @@ class TargetTracker:
                 if use_cam:
                     offset_x = 0 if s == 'left' else scaled_w_left
                     
-                    # Grüner Kreis (Wahre Mitte)
                     fb_cx = int(feedback['cx'] * self.scale_x) + offset_x
                     fb_cy = int(feedback['cy'] * self.scale_y)
                     fb_ideal_rx = int(feedback['ideal_rx'] * self.scale_x)
                     fb_ideal_ry = int(feedback['ideal_ry'] * self.scale_y)
-                    
-                    # Roter Kreis (Falsche Erdnuss-Mitte)
                     fb_red_cx = int(feedback['red_cx'] * self.scale_x) + offset_x
                     fb_red_cy = int(feedback['red_cy'] * self.scale_y)
                     fb_red_rx = int(feedback['red_rx'] * self.scale_x)
@@ -598,32 +561,6 @@ class TargetTracker:
                         cv2.ellipse(combined_view, (fb_red_cx, fb_red_cy), (fb_red_rx, fb_red_ry), 0, 0, 360, (0, 0, 255), 1, cv2.LINE_AA)
                     
                     cv2.ellipse(combined_view, (fb_cx, fb_cy), (fb_ideal_rx, fb_ideal_ry), 0, 0, 360, (0, 255, 0), 2, cv2.LINE_AA)
-        
-        
-        ## --- VISUELLES FEEDBACK (Kalibrierung für 8 Sekunden anzeigen) ---
-        #current_time = time.time()
-        #for s, feedback in [('left', getattr(self, 'calib_feedback_left', None)), 
-        #                    ('right', getattr(self, 'calib_feedback_right', None))]:
-        #    if feedback and (current_time - feedback['time'] < 8.0):
-        #        use_cam = self.use_left if s == 'left' else self.use_right
-        #        if use_cam:
-        #            # Versatz für die rechte Kamera berechnen
-        #            offset_x = 0 if s == 'left' else scaled_w_left
-        #            
-        #            # Koordinaten auf das GUI-Fenster skalieren
-        #            fb_cx = int(feedback['cx'] * self.scale_x) + offset_x
-        #            fb_cy = int(feedback['cy'] * self.scale_y)
-        #            fb_ideal_rx = int(feedback['ideal_rx'] * self.scale_x)
-        #            fb_ideal_ry = int(feedback['ideal_ry'] * self.scale_y)
-        #            fb_red_rx = int(feedback['red_rx'] * self.scale_x)
-        #            fb_red_ry = int(feedback['red_ry'] * self.scale_y)
-        #
-        #            # 1. Rote Linie zeichnen (Was die Kamera WIRKLICH gefunden hat)
-        #            if feedback['show_red']:
-        #                cv2.ellipse(combined_view, (fb_cx, fb_cy), (fb_red_rx, fb_red_ry), 0, 0, 360, (0, 0, 255), 1, cv2.LINE_AA)
-        #            
-        #            # 2. Grüne Linie zeichnen (Was das System laut Config.ini erwartet)
-        #            cv2.ellipse(combined_view, (fb_cx, fb_cy), (fb_ideal_rx, fb_ideal_ry), 0, 0, 360, (0, 255, 0), 1, cv2.LINE_AA)
         
         # Beenden Button
         ex1, ey1 = win_w - 110, 10
@@ -641,18 +578,18 @@ class TargetTracker:
         cv2.putText(combined_view, "Bug ZIP", (zx1 + 20, zy1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
         self.btn_zip_coords = (zx1, zy1, zx2, zy2)
         
-        # ---> NEU: Highscore Button (Ganz Links) <---
+        # Highscore Button
         hx1, hy1 = win_w - 560, 10
         hx2, hy2 = win_w - 420, 40
-        cv2.rectangle(combined_view, (hx1, hy1), (hx2, hy2), (50, 150, 200), -1) # Gold/Gelblich
+        cv2.rectangle(combined_view, (hx1, hy1), (hx2, hy2), (50, 150, 200), -1) 
         cv2.rectangle(combined_view, (hx1, hy1), (hx2, hy2), (255, 255, 255), 1) 
         cv2.putText(combined_view, "Highscore", (hx1 + 30, hy1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
         self.btn_highscore_coords = (hx1, hy1, hx2, hy2)
         
-        # ---> NEU: Match Speichern Button (Links) <---
+        # Match Speichern Button
         sx1, sy1 = win_w - 410, 10
         sx2, sy2 = win_w - 240, 40
-        cv2.rectangle(combined_view, (sx1, sy1), (sx2, sy2), (180, 70, 70), -1) # Blau
+        cv2.rectangle(combined_view, (sx1, sy1), (sx2, sy2), (180, 70, 70), -1) 
         cv2.rectangle(combined_view, (sx1, sy1), (sx2, sy2), (255, 255, 255), 1) 
         cv2.putText(combined_view, "Match Speichern", (sx1 + 15, sy1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
         self.btn_save_coords = (sx1, sy1, sx2, sy2)
