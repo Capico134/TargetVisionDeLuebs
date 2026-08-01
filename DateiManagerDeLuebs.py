@@ -94,17 +94,28 @@ class DateiManager:
             f.writelines(lines)
         print(f"💾 config.ini Update: [{target_section}] {target_key} = {new_value}")
 
+
     def load_or_create_config(self):
         """Lädt die Konfiguration, erstellt sie neu oder führt Patches aus."""
         if not os.path.exists(self.CONFIG_FILE):
             with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
-                f.write("""[Kameras]
+                f.write("""[Zielscheibe]
+# Die aktive Zielscheibe (muss exakt dem Namen in der zielscheiben.json entsprechen)
+aktive_scheibe = Luftgewehr_10m             
+# Schaltet die 10.9 Zehntel-Ringwertung und die Nullpunkt-Zentrierung ein (yes) oder aus (no)
+ringwertung_aktiv = no
+                
+[Kameras]
 # Aktiviert oder deaktiviert die jeweilige Kameraansicht
 nutze_kamera_links = yes
 nutze_kamera_rechts = yes
 # Kamera-Indizes im System (0 ist meist die Standard-Webcam/OBS Virtual Cam)
 cam_left_index = 0
 cam_right_index = 1
+px_pro_mm_x_links = 5.0
+px_pro_mm_y_links = 5.0
+px_pro_mm_x_rechts = 5.0
+px_pro_mm_y_rechts = 5.0
 
 [Erkennung]
 # Auslöser für die Auswertung:
@@ -119,6 +130,9 @@ erkennungs_methode = C
 # Für Methode C: Ab welchem Vergrößerungs-Faktor (im Vergleich zum Normal-Kaliber) ein unsauberes Loch
 # nicht mehr als "Normal" gilt und den Hough-Algorithmus auslöst. (Standard: 1.5)
 hybrid_riss_faktor = 1.5
+# Für Methode C: Begrenzungen für den Hough-Algorithmus (Faktor bezogen auf caliber_radius)
+hough_min_faktor = 0.85
+hough_max_faktor = 1.15
 # Mindestfläche in Pixeln, die eine Farb/Helligkeitsänderung haben muss, um als Loch zu gelten.
 min_hole_area = 25
 # Sperr-Radius um bestehende Treffer (in Pixeln) gegen Doppelzählungen.
@@ -195,7 +209,17 @@ darstellung_ohne_weissabgleich = yes
             self.update_ini_value('Erkennung', 'hybrid_riss_faktor', '1.5')
             needs_reload = True
             
-        # NEU: Mindestwert für min_hole_area erzwingen
+        # --- NEU: Auto-Patch für die Hough-Faktoren ---
+        if not config.has_option('Erkennung', 'hough_min_faktor'):
+            print("🔧 Führe Auto-Patch aus: Füge 'hough_min_faktor = 0.85' hinzu...")
+            self.update_ini_value('Erkennung', 'hough_min_faktor', '0.85')
+            needs_reload = True
+            
+        if not config.has_option('Erkennung', 'hough_max_faktor'):
+            print("🔧 Führe Auto-Patch aus: Füge 'hough_max_faktor = 1.15' hinzu...")
+            self.update_ini_value('Erkennung', 'hough_max_faktor', '1.15')
+            needs_reload = True
+            
         if config.has_option('Erkennung', 'min_hole_area'):
             try:
                 current_area = config.getint('Erkennung', 'min_hole_area')
@@ -204,8 +228,27 @@ darstellung_ohne_weissabgleich = yes
                     self.update_ini_value('Erkennung', 'min_hole_area', '25')
                     needs_reload = True
             except ValueError:
-                pass # Falls da aus Versehen Text drinsteht, ignorieren wir es hier (oder reparieren es)
-        
+                pass 
+
+        if not config.has_section('Zielscheibe'):
+            print("🔧 Führe Auto-Patch aus: Füge Sektion '[Zielscheibe]' hinzu...")
+            config.add_section('Zielscheibe')
+            self.update_ini_value('Zielscheibe', 'aktive_scheibe', 'Luftgewehr_10m')
+            needs_reload = True
+            
+        # --- NEU: Auto-Patch für den Hauptschalter der Ringwertung ---
+        if not config.has_option('Zielscheibe', 'ringwertung_aktiv'):
+            print("🔧 Führe Auto-Patch aus: Füge 'ringwertung_aktiv = no' hinzu...")
+            self.update_ini_value('Zielscheibe', 'ringwertung_aktiv', 'no')
+            needs_reload = True
+            
+        for seite in ['links', 'rechts']:
+            for achse in ['x', 'y']:
+                key = f'px_pro_mm_{achse}_{seite}'
+                if not config.has_option('Kameras', key):
+                    print(f"🔧 Führe Auto-Patch aus: Füge '{key} = 5.0' hinzu...")
+                    self.update_ini_value('Kameras', key, '5.0')
+                    needs_reload = True    
         
         if needs_reload:
             config.read(self.CONFIG_FILE, encoding='utf-8')
@@ -252,3 +295,47 @@ darstellung_ohne_weissabgleich = yes
             print(f"❌ Fehler beim Erstellen der ZIP: {e}")
             self.write_log(f"SYSTEM: ❌ Fehler beim Erstellen der ZIP -> {e}")
             return False
+            
+    def load_targets(self):
+        """Lädt die zielscheiben.json oder erstellt sie mit DSB-Standardwerten neu."""
+        target_file = "zielscheiben.json"
+        
+        if not os.path.exists(target_file):
+            print(f"🔧 Erstelle Standard-Zielscheiben-Datei: {target_file}")
+            default_targets = {
+                "Luftpistole_10m": {
+                    "name": "Luftpistole 10m (DSB)",
+                    "kaliber_mm": 4.5,
+                    "spiegel_durchmesser_mm": 59.5,
+                    "ringe_durchmesser_mm": {
+                        "10": 11.5, "9": 27.5, "8": 43.5, "7": 59.5, "6": 75.5,
+                        "5": 91.5, "4": 107.5, "3": 123.5, "2": 139.5, "1": 155.5
+                    },
+                    "innenzehner_mm": 5.0
+                },
+                "Luftgewehr_10m": {
+                    "name": "Luftgewehr 10m (DSB)",
+                    "kaliber_mm": 4.5,
+                    "spiegel_durchmesser_mm": 30.5,
+                    "ringe_durchmesser_mm": {
+                        "10": 0.5, "9": 5.5, "8": 10.5, "7": 15.5, "6": 20.5,
+                        "5": 25.5, "4": 30.5, "3": 35.5, "2": 40.5, "1": 45.5
+                    },
+                    "innenzehner_mm": 0.5
+                }
+            }
+            try:
+                with open(target_file, "w", encoding="utf-8") as f:
+                    json.dump(default_targets, f, indent=4)
+            except IOError as e:
+                print(f"❌ Fehler beim Erstellen von {target_file}: {e}")
+                return default_targets # Wir geben sie trotzdem zurück, damit das Spiel läuft!
+
+        # Datei laden
+        try:
+            with open(target_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"❌ Fehler beim Lesen der {target_file}: {e}")
+            self.write_log(f"SYSTEM: ❌ Fehler beim Lesen der zielscheiben.json -> {e}")
+            return {}

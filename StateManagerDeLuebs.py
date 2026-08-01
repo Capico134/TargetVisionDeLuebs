@@ -3,6 +3,7 @@ import numpy as np
 import os
 import json
 import time
+import math
 from datetime import datetime
 
 
@@ -115,6 +116,10 @@ class StateManager:
         self.match_start_mono = time.monotonic()
         self.current_match_id = self.get_next_match_id()
         self.shots = []
+        # ---> NEU: Speicher für die Nullpunkte beider Kameras
+        self.nullpunkts = {'left': None, 'right': None}
+        # --- NEU ---
+        self.ringwertung_aktiv = config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         
         self.dm.write_log(f"SYSTEM: 🔄 Neues Match initialisiert (ID: {self.get_formatted_match_id()})")
 
@@ -139,19 +144,61 @@ class StateManager:
     def get_formatted_match_id(self):
         return f"{self.current_match_id:06d}"
 
+    def set_nullpunkt(self, side, cx, cy):
+        """Speichert den exakten weißen Punkt aus der Kalibrierung."""
+        self.nullpunkts[side] = (cx, cy)
+
     def add_shot(self, side, cx, cy, area):
+        """Speichert einen neuen Schuss und berechnet die Ring-Zehntelwertung!"""
+        score = 0.0
+        nullpunkt = self.nullpunkts.get(side)
+        
+        # --- GEÄNDERT: Nur berechnen, wenn aktiv UND ein Nullpunkt existiert ---
+        if self.ringwertung_aktiv and nullpunkt:
+            # 1. Config laden (X und Y getrennt!)
+            seite_str = "links" if side == 'left' else "rechts"
+            px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+            px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+            
+            # 2. Pixel-Distanz zur echten Mitte berechnen
+            dx_px = abs(cx - nullpunkt[0])
+            dy_px = abs(cy - nullpunkt[1])
+            
+            # 3. Pythagoras in Millimetern anwenden (Entzerrt die Ellipse!)
+            dx_mm = dx_px / px_x
+            dy_mm = dy_px / px_y
+            dist_mm = math.sqrt(dx_mm**2 + dy_mm**2)
+            
+            # 4. Ring-Breite aus der zielscheiben.json laden
+            aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+            targets = self.dm.load_targets()
+            
+            if aktive_scheibe_id in targets:
+                target_data = targets[aktive_scheibe_id]
+                # Die Ringbreite ist die Hälfte der Durchmesserdifferenz zwischen 10 und 9
+                d_10 = target_data['ringe_durchmesser_mm']['10']
+                d_9 = target_data['ringe_durchmesser_mm']['9']
+                ring_abstand_radius_mm = (d_9 - d_10) / 2.0
+                
+                # 5. Die magische ISSF-Formel
+                raw_score = 11.0 - (dist_mm / ring_abstand_radius_mm)
+                
+                # Wie im echten Sport: Wir runden sauber auf eine Nachkommastelle ab!
+                score = math.floor(raw_score * 10) / 10.0
+                
+                # Limits setzen
+                if score > 10.9: score = 10.9
+                if score < 0.0: score = 0.0
+        
         shot_data = {
             'side': side,
             'pos': (cx, cy),
             'area': area,
-            'is_new': True,
-            'timestamp': datetime.now().strftime("%H:%M:%S"),
-            't_mono': time.monotonic() - self.match_start_mono
+            'score': score, 
+            'timestamp': time.time(),
+            't_mono': time.monotonic() - getattr(self, 'match_start_mono', time.monotonic()), # <--- FIX: Zeit für die Timeline
+            'is_new': True
         }
-        for shot in self.shots:
-            if shot['side'] == side:
-                shot['is_new'] = False
-                
         self.shots.append(shot_data)
         return shot_data
 
@@ -189,14 +236,19 @@ class StateManager:
         elif cam_r: cam_str = "Nur Rechts"
         else: cam_str = "Keine"
 
+        # --- NEU: Wir berechnen die Gesamtringzahl für die Highscore! ---
+        gesamt_ringe = sum(s.get('score', 0.0) for s in self.shots)
+        gesamt_ringe = round(gesamt_ringe, 1)
+
         # 1. Metadaten für Highscore und JSON
         metadata = {
-            "spieler": player_name,  # <--- HIER DEN NAMEN ÜBERGEBEN
+            "spieler": player_name,  
             "programm_name": "TargetVision",
             "kameras": cam_str,
             "treffer_links": len(self.get_shots_for_side('left')),
             "treffer_rechts": len(self.get_shots_for_side('right')),
-            "gesamtpunkte": len(self.shots),
+            "gesamtpunkte": len(self.shots), # (Die reine Schuss-Anzahl)
+            "gesamt_ringe": gesamt_ringe,    # <--- NEU: Die aufsummierte Zehntel-Wertung!
             "erkennungs_methode": self.config.get('Erkennung', 'erkennungs_methode'),
             "match_id": self.current_match_id,
             "version": self.dm.get_current_version(),
@@ -211,7 +263,8 @@ class StateManager:
                 "s": "l" if s['side'] == 'left' else "r",
                 "x": s['pos'][0],
                 "y": s['pos'][1],
-                "a": round(s['area'], 1)
+                "a": round(s['area'], 1),
+                "score": s.get('score', 0.0) # <--- NEU: Ringwertung des Einzelschusses!
             })
 
         match_data = {"metadata": metadata, "timeline": timeline}
@@ -220,13 +273,11 @@ class StateManager:
         os.makedirs(os.path.join("savegames", "logs"), exist_ok=True)
         zip_filepath = os.path.join("savegames", "logs", f"MATCH{self.get_formatted_match_id()}.zip")
         
-        # Aufruf mit dem neuen Parameter
         self.dm.create_zip_package(zip_filepath, match_data=match_data)
 
         # 4. Highscore speichern und Match auf null setzen
         self.hm.save_highscore(metadata)
-        self.dm.write_log(f"SYSTEM: 🏆 Match {self.get_formatted_match_id()} gespeichert!")
+        self.dm.write_log(f"SYSTEM: 🏆 Match {self.get_formatted_match_id()} gespeichert (Ringe: {gesamt_ringe})!")
         
-        # ---> NEU: Das Match nach dem Speichern komplett abräumen <---
         self.reset_match('all')
         return True

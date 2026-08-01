@@ -28,14 +28,26 @@ class TargetTracker:
         self.hit_tolerance = config.getint('Erkennung', 'hit_tolerance', fallback=15)
         self.erkennungs_methode = config.get('Erkennung', 'erkennungs_methode', fallback='C').upper()
         self.hybrid_riss_faktor = config.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.5)
+        self.hough_min_f = config.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85)
+        self.hough_max_f = config.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15)
         self.ausloeser_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.max_img_change = config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
         self.poll_ms = config.getint('Timing', 'poll_ms', fallback=33)
         self.fullscreen = config.getboolean('Anzeige', 'vollbild', fallback=False)
         self.enhance_display = config.getboolean('Anzeige', 'darstellung_ohne_weissabgleich', fallback=True)
         
-        self.cap_left = cv2.VideoCapture(config.getint('Kameras', 'cam_left_index')) if self.use_left else None
-        self.cap_right = cv2.VideoCapture(config.getint('Kameras', 'cam_right_index')) if self.use_right else None
+        self.ringwertung_aktiv = config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+        
+        slowstart = False
+        if slowstart:
+            self.cap_left = cv2.VideoCapture(config.getint('Kameras', 'cam_left_index')) if self.use_left else None
+            self.cap_right = cv2.VideoCapture(config.getint('Kameras', 'cam_right_index')) if self.use_right else None
+        else:
+            # cv2.CAP_DSHOW erzwingt den schnellen DirectShow-Zugriff unter Windows!
+            cam_left_idx = config.getint('Kameras', 'cam_left_index')
+            cam_right_idx = config.getint('Kameras', 'cam_right_index')
+            self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_DSHOW) if self.use_left else None
+            self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_DSHOW) if self.use_right else None
 
         # --- NEU: Die States kommen jetzt direkt aus dem Manager ---
         self.state_left = self.sm.state_left
@@ -64,6 +76,9 @@ class TargetTracker:
         self.trigger_reset_right = False
         self.trigger_exit = False
 
+        self.calib_feedback_left = None
+        self.calib_feedback_right = None
+        
     def log(self, side, text):
         timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
         log_msg = f"[{timestamp}] [{side.upper()}] {text}"
@@ -105,6 +120,94 @@ class TargetTracker:
         else:
             self.ref_right = bgr_blur
         self.save_debug_image(f"referenz_{side}", frame)
+        
+        # --- GEÄNDERT: Kalibrierung nur, wenn Ringwertung aktiv ist ---
+        if self.ringwertung_aktiv:
+            mitte = self.ninja_kalibrierungs_check(bgr_blur, side)
+            if mitte:
+                self.sm.set_nullpunkt(side, mitte[0], mitte[1]) 
+                self.log("SYSTEM", f"🎯 Nullpunkt {side.upper()} gesetzt auf X:{int(mitte[0])} Y:{int(mitte[1])}")
+
+    def ninja_kalibrierungs_check(self, ref_bgr, side):
+        """Findet den Nullpunkt mit dem unbestechlichen 'Weißen-Punkt-Sniper'."""
+        aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+        targets = self.dm.load_targets()
+        
+        if aktive_scheibe_id not in targets:
+            return None
+            
+        spiegel_mm = targets[aktive_scheibe_id].get('spiegel_durchmesser_mm', 30.5)
+        
+        gray_frame = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
+        
+        # 1. Den schwarzen Klecks (Erdnuss) finden
+        _, thresh = cv2.threshold(gray_frame, 80, 255, cv2.THRESH_BINARY_INV)
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+            
+        groesste_kontur = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(groesste_kontur) < 1000:
+            return None
+            
+        x, y, w, h = cv2.boundingRect(groesste_kontur)
+
+        # --- DER WEIßE-PUNKT-SNIPER ---
+        # A) Wir malen die Erdnuss als weiße Maske auf schwarzen Grund
+        mask = np.zeros_like(gray_frame)
+        cv2.drawContours(mask, [groesste_kontur], -1, 255, -1)
+        
+        # B) Wir "schrumpfen" die Maske um ca. 15% der Breite. 
+        # So stellen wir sicher, dass das weiße Papier am Rand komplett ignoriert wird!
+        shrink_size = int(w * 0.15)
+        kernel = np.ones((shrink_size, shrink_size), np.uint8)
+        mask_shrunk = cv2.erode(mask, kernel, iterations=1)
+        
+        # C) Wir legen diese geschrumpfte Maske über das Original-Graubild.
+        # Alles außerhalb wird pechschwarz. Nur das Innere des Spiegels bleibt sichtbar.
+        masked_gray = cv2.bitwise_and(gray_frame, gray_frame, mask=mask_shrunk)
+        
+        # D) Leichtes Weichzeichnen gegen Bildrauschen
+        blurred_gray = cv2.GaussianBlur(masked_gray, (5, 5), 0)
+        
+        # E) Den hellsten Punkt finden (minMaxLoc sucht den absoluten Maximalwert)
+        _, max_val, _, max_loc = cv2.minMaxLoc(blurred_gray)
+        
+        if max_val > 100: # Sicherheits-Check: Ist da wirklich etwas Helles?
+            cx, cy = max_loc
+            self.log("SYSTEM", f"🎯 Weißer Punkt exakt zentriert auf X:{cx} Y:{cy}")
+            punkt_gefunden = True
+        else:
+            # Fallback, falls jemand den Punkt komplett herausgeschossen hat
+            cx, cy = int(x + (w / 2)), int(y + (h / 2))
+            self.log("SYSTEM", f"⚠️ Kein weißer Punkt! Fallback auf Erdnuss-Mitte.")
+            punkt_gefunden = False
+
+        # 2. Maßstab aus der Config laden (zur Berechnung der Feedback-Kreise)
+        seite_str = "links" if side == 'left' else "rechts"
+        config_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+        config_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+        
+        ideal_rx = int((spiegel_mm * config_x) / 2)
+        ideal_ry = int((spiegel_mm * config_y) / 2)
+        
+        # Check ob es eine Erdnuss ist
+        is_erdnuss = (w > ideal_rx * 2.2) or (h > ideal_ry * 2.2)
+
+        # Feedback für GUI speichern
+        feedback_data = {
+            'cx': cx, 'cy': cy, # Echte Mitte (Weißer Punkt)
+            'red_cx': int(x + w/2), 'red_cy': int(y + h/2), # Mitte der falschen Erdnuss
+            'ideal_rx': ideal_rx, 'ideal_ry': ideal_ry,
+            'red_rx': int(w/2), 'red_ry': int(h/2),
+            'show_red': is_erdnuss,
+            'time': time.time()
+        }
+        
+        if side == 'left': self.calib_feedback_left = feedback_data
+        else: self.calib_feedback_right = feedback_data
+
+        return (cx, cy)
 
     def detect_new_shot(self, frame, side):
         state = self.state_left if side == 'left' else self.state_right
@@ -120,7 +223,7 @@ class TargetTracker:
         diff_gray = cv2.cvtColor(diff_bgr, cv2.COLOR_BGR2GRAY)
         _, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY) 
 
-        kernel = np.ones((5, 5), np.uint8)
+        kernel = np.ones((6, 6), np.uint8)
         thresh_raw = cv2.morphologyEx(thresh_raw, cv2.MORPH_CLOSE, kernel)
 
         if state.cumulative_mask is not None:
@@ -150,12 +253,15 @@ class TargetTracker:
                 if self.erkennungs_methode == 'C':
                     (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
                     # Wenn das gefundene Loch deutlich größer ist als das Kaliber (Riss / Doppelschuss)
-                    if radius > (self.caliber_radius * self.hybrid_riss_faktor):  # <--- HIER GEÄNDERT
+                    if radius > (self.caliber_radius * self.hybrid_riss_faktor):  
                         self.log(side, f"🛠️ Unsauberes Loch (Radius: {radius:.1f}px) -> Aktiviere HoughCircles...")
                         mask = np.zeros_like(thresh_new)
                         cv2.drawContours(mask, [cnt], -1, 255, -1)
-                        min_r = max(2, int(self.caliber_radius * 0.5))
-                        max_r = int(self.caliber_radius * 2.0)
+                        
+                        # --- GEÄNDERT: Dynamische Durchmesserbereiche für Methode C ---
+                        min_r = max(2, int(self.caliber_radius * self.hough_min_f))
+                        max_r = int(self.caliber_radius * self.hough_max_f)
+                        
                         circles = cv2.HoughCircles(mask, cv2.HOUGH_GRADIENT, dp=1, minDist=20,
                                                    param1=50, param2=10, 
                                                    minRadius=min_r, maxRadius=max_r)
@@ -190,9 +296,15 @@ class TargetTracker:
                     self.log(side, f"-> NEUES LOCH GEFUNDEN: Pos ({cx}, {cy}) | Fläche {area:.1f}px")
                 
         if new_shots_found_this_frame:
-            # --- NEU: Wir nutzen jetzt die saubere Funktion des StateManagers! ---
+            # --- NEU: Alte Treffer "ent-blinken", bevor die neuen kommen ---
+            for s in self.sm.shots:
+                if s['side'] == side:
+                    s['is_new'] = False
+
+            # --- Wir nutzen jetzt die saubere Funktion des StateManagers! ---
             for sd in new_shots_found_this_frame:
-                self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'])
+                shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'])
+                self.log(side, f"💥 Treffer gewertet: {shot['score']} Ringe!")
             
             state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, thresh_raw)
             self.save_debug_image(f"diff_gesamt_{side}", state.cumulative_mask)
@@ -369,15 +481,90 @@ class TargetTracker:
         # --- NEU: Wir iterieren jetzt über die Liste aus dem StateManager ---
         for shot in self.sm.shots:
             x, y = shot['pos']
+            # Wenn der Schuss auf der rechten Kamera ist, müssen wir ihn nach rechts verschieben
             if shot['side'] == 'right' and self.use_left and frame_l is not None:
                 x += self.w_left_displayed
                 
             final_x = int(x * self.scale_x)
             final_y = int(y * self.scale_y)
             
+            # Farbe bestimmen (Blinken für neue Treffer)
             color = (0, 0, 255) if (shot.get('is_new', False) and blink_state) else (255, 100, 0)
+            
+            # 1. Das Fadenkreuz / Schussloch zeichnen
             cv2.circle(combined_view, (final_x, final_y), final_radius, color, 2)
             cv2.circle(combined_view, (final_x, final_y), max(1, int(2*avg_scale)), color, -1)
+            
+            # --- GEÄNDERT: Ringwertung nur rendern, wenn aktiv ---
+            if self.ringwertung_aktiv:
+                # ---> NEU: 2. Die Ringwertung rendern <---
+                score_val = shot.get('score', 0.0)
+                score_str = f"{score_val:.1f}"
+                
+                # Wir rücken den Text etwas nach rechts und oben, damit er das Loch nicht verdeckt
+                text_x = final_x + final_radius + 3
+                text_y = final_y - 3
+                
+                # Text-Schatten (Schwarz, etwas dicker) für perfekten Kontrast
+                cv2.putText(combined_view, score_str, (text_x + 1, text_y + 1), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 2, cv2.LINE_AA)
+                
+                # Haupttext (Strahlendes Cyan/Gelb)
+                # OpenCV nutzt BGR, also (0, 255, 255) ist sattes Gelb
+                text_color = (0, 255, 255) if score_val < 10.0 else (0, 255, 0) # Grüne Farbe für einen 10er!
+                cv2.putText(combined_view, score_str, (text_x, text_y), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1, cv2.LINE_AA)
+
+        #avg_scale = (self.scale_x + self.scale_y) / 2
+        #final_radius = max(2, int(self.caliber_radius * avg_scale))
+        #
+        ## 1. ZUERST zeichnen wir alle Fadenkreuze (komplett sichtbar, ohne Transparenz)
+        #for shot in self.sm.shots:
+        #    x, y = shot['pos']
+        #    if shot['side'] == 'right' and self.use_left and frame_l is not None:
+        #        x += self.w_left_displayed
+        #        
+        #    final_x = int(x * self.scale_x)
+        #    final_y = int(y * self.scale_y)
+        #    
+        #    color = (0, 0, 255) if (shot.get('is_new', False) and blink_state) else (255, 100, 0)
+        #    cv2.circle(combined_view, (final_x, final_y), final_radius, color, 2)
+        #    cv2.circle(combined_view, (final_x, final_y), max(1, int(2*avg_scale)), color, -1)
+        #
+        ## --- DER TRANSPARENZ-TRICK ---
+        ## 2. Wir legen eine digitale "Glasscheibe" (Kopie) über das Bild
+        #overlay = combined_view.copy()
+        #
+        ## 3. Wir malen die Texte auf die Glasscheibe
+        #for shot in self.sm.shots:
+        #    x, y = shot['pos']
+        #    if shot['side'] == 'right' and self.use_left and frame_l is not None:
+        #        x += self.w_left_displayed
+        #        
+        #    final_x = int(x * self.scale_x)
+        #    final_y = int(y * self.scale_y)
+        #    
+        #    score_val = shot.get('score', 0.0)
+        #    score_str = f"{score_val:.1f}"
+        #    
+        #    text_x = final_x + final_radius + 5
+        #    text_y = final_y - 5
+        #    
+        #    # Text-Schatten
+        #    cv2.putText(overlay, score_str, (text_x + 1, text_y + 1), 
+        #                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
+        #    
+        #    # Haupttext
+        #    text_color = (0, 255, 255) if score_val < 10.0 else (0, 255, 0)
+        #    cv2.putText(overlay, score_str, (text_x, text_y), 
+        #                cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 1, cv2.LINE_AA)
+        #
+        ## 4. Wir verschmelzen Glasscheibe und Bild! 
+        ## (0.7 bedeutet: Der Text ist zu 70% deckend und zu 30% transparent)
+        #cv2.addWeighted(overlay, 0.7, combined_view, 0.3, 0, combined_view)
+
+
+
 
         scaled_w_left = int(self.w_left_displayed * self.scale_x)
         
@@ -385,6 +572,58 @@ class TargetTracker:
             self.draw_camera_overlay(combined_view, 'left', 0, scaled_w_left, win_h)
         if self.use_right and frame_r is not None:
             self.draw_camera_overlay(combined_view, 'right', scaled_w_left, win_w - scaled_w_left, win_h)
+        
+        # --- VISUELLES FEEDBACK (Kalibrierung für 8 Sekunden anzeigen) ---
+        current_time = time.time()
+        for s, feedback in [('left', getattr(self, 'calib_feedback_left', None)), 
+                            ('right', getattr(self, 'calib_feedback_right', None))]:
+            if feedback and (current_time - feedback['time'] < 8.0):
+                use_cam = self.use_left if s == 'left' else self.use_right
+                if use_cam:
+                    offset_x = 0 if s == 'left' else scaled_w_left
+                    
+                    # Grüner Kreis (Wahre Mitte)
+                    fb_cx = int(feedback['cx'] * self.scale_x) + offset_x
+                    fb_cy = int(feedback['cy'] * self.scale_y)
+                    fb_ideal_rx = int(feedback['ideal_rx'] * self.scale_x)
+                    fb_ideal_ry = int(feedback['ideal_ry'] * self.scale_y)
+                    
+                    # Roter Kreis (Falsche Erdnuss-Mitte)
+                    fb_red_cx = int(feedback['red_cx'] * self.scale_x) + offset_x
+                    fb_red_cy = int(feedback['red_cy'] * self.scale_y)
+                    fb_red_rx = int(feedback['red_rx'] * self.scale_x)
+                    fb_red_ry = int(feedback['red_ry'] * self.scale_y)
+
+                    if feedback['show_red']:
+                        cv2.ellipse(combined_view, (fb_red_cx, fb_red_cy), (fb_red_rx, fb_red_ry), 0, 0, 360, (0, 0, 255), 1, cv2.LINE_AA)
+                    
+                    cv2.ellipse(combined_view, (fb_cx, fb_cy), (fb_ideal_rx, fb_ideal_ry), 0, 0, 360, (0, 255, 0), 2, cv2.LINE_AA)
+        
+        
+        ## --- VISUELLES FEEDBACK (Kalibrierung für 8 Sekunden anzeigen) ---
+        #current_time = time.time()
+        #for s, feedback in [('left', getattr(self, 'calib_feedback_left', None)), 
+        #                    ('right', getattr(self, 'calib_feedback_right', None))]:
+        #    if feedback and (current_time - feedback['time'] < 8.0):
+        #        use_cam = self.use_left if s == 'left' else self.use_right
+        #        if use_cam:
+        #            # Versatz für die rechte Kamera berechnen
+        #            offset_x = 0 if s == 'left' else scaled_w_left
+        #            
+        #            # Koordinaten auf das GUI-Fenster skalieren
+        #            fb_cx = int(feedback['cx'] * self.scale_x) + offset_x
+        #            fb_cy = int(feedback['cy'] * self.scale_y)
+        #            fb_ideal_rx = int(feedback['ideal_rx'] * self.scale_x)
+        #            fb_ideal_ry = int(feedback['ideal_ry'] * self.scale_y)
+        #            fb_red_rx = int(feedback['red_rx'] * self.scale_x)
+        #            fb_red_ry = int(feedback['red_ry'] * self.scale_y)
+        #
+        #            # 1. Rote Linie zeichnen (Was die Kamera WIRKLICH gefunden hat)
+        #            if feedback['show_red']:
+        #                cv2.ellipse(combined_view, (fb_cx, fb_cy), (fb_red_rx, fb_red_ry), 0, 0, 360, (0, 0, 255), 1, cv2.LINE_AA)
+        #            
+        #            # 2. Grüne Linie zeichnen (Was das System laut Config.ini erwartet)
+        #            cv2.ellipse(combined_view, (fb_cx, fb_cy), (fb_ideal_rx, fb_ideal_ry), 0, 0, 360, (0, 255, 0), 1, cv2.LINE_AA)
         
         # Beenden Button
         ex1, ey1 = win_w - 110, 10

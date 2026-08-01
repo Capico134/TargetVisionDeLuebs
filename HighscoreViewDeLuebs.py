@@ -6,7 +6,7 @@ import re
 import zipfile
 import io
 import datetime as dt
-from PIL import Image, ImageTk, ImageDraw
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 
 class HighscoreViewer:
     def __init__(self, root):
@@ -18,8 +18,8 @@ class HighscoreViewer:
         self.file_path = os.path.join("savegames", "highscore.json")
         self.data = []
         
-        # Zentrale Spaltendefinition (Single Source of Truth)
-        self.columns = ("ID", "Datum", "Spieler", "Kameras", "Treffer L/R", "Gesamt")
+        # --- NEU: Die neue "Ringe"-Spalte als Meister-Wertung ---
+        self.columns = ("ID", "Datum", "Spieler", "Kameras", "Schüsse", "Ringe")
         
         self.customize_style()
         self.build_gui()
@@ -33,7 +33,6 @@ class HighscoreViewer:
         style.map("Treeview", background=[('selected', '#3498db')])
 
     def build_gui(self):
-        # Top Frame für Titel & Buttons
         top_frame = tk.Frame(self.root, bg='#2c3e50')
         top_frame.pack(fill="x", padx=20, pady=20)
         
@@ -43,7 +42,6 @@ class HighscoreViewer:
         refresh_btn = tk.Button(top_frame, text="↻ Aktualisieren", command=self.load_and_display_data, font=('Arial', 16), bg='#3498db', fg='white', relief="flat", padx=10)
         refresh_btn.pack(side="right", padx=10)
 
-        # Tabelle (Treeview)
         frame = tk.Frame(self.root)
         frame.pack(fill="both", expand=True, padx=20, pady=(0, 10))
         
@@ -52,21 +50,20 @@ class HighscoreViewer:
         
         self.tree = ttk.Treeview(frame, columns=self.columns, show="headings", yscrollcommand=scrollbar.set, selectmode="extended")
         
-        # Spalten-Headings mit Sortier-Befehl verknüpfen
         for col in self.columns:
             self.tree.heading(col, text=col, command=lambda c=col: self.sort_column(c, True))
             
+        # --- NEU: Die Spaltenbreiten für die neue Wertung ---
         self.tree.column("ID", width=60, anchor="center")
         self.tree.column("Datum", width=200, anchor="center")
-        self.tree.column("Spieler", width=200)
+        self.tree.column("Spieler", width=250)
         self.tree.column("Kameras", width=150, anchor="center")
-        self.tree.column("Treffer L/R", width=120, anchor="center")
-        self.tree.column("Gesamt", width=80, anchor="center")
+        self.tree.column("Schüsse", width=100, anchor="center")
+        self.tree.column("Ringe", width=120, anchor="center") 
         
         self.tree.pack(side="left", fill="both", expand=True)
         scrollbar.config(command=self.tree.yview)
 
-        # Filter-GUI bauen
         filter_frame = tk.Frame(self.root, bg='#2c3e50')
         filter_frame.pack(fill="x", padx=20, pady=(0, 20))
         
@@ -81,7 +78,6 @@ class HighscoreViewer:
         filter_button = tk.Button(filter_frame, text="Filter anwenden", command=self.apply_filters, font=('Arial', 14))
         filter_button.pack(side="right", padx=(10, 0))
 
-        # Event-Bindings für Kontextmenü (Rechtsklick)
         self.tree.bind("<Button-3>", self.show_context_menu)
         self.tree.bind("<Delete>", lambda event: self.delete_selected_entries())
 
@@ -91,8 +87,10 @@ class HighscoreViewer:
             try:
                 if col == "Datum":
                     return dt.datetime.strptime(value, "%d.%m.%y %H:%M:%S")
-                elif col in ["ID", "Gesamt"]:
+                elif col in ["ID", "Schüsse"]:
                     return int(value)
+                elif col == "Ringe":
+                    return float(value) # --- NEU: Ringe werden als Float (Kommazahl) sortiert ---
                 return value
             except ValueError:
                 return value
@@ -113,7 +111,9 @@ class HighscoreViewer:
             self.data = []
 
         self.update_treeview(self.data)
-        self.sort_column("ID", True) # Standardmäßig neueste Match-ID oben
+        
+        # --- NEU: Standard-Sortierung ist jetzt "Ringe" absteigend! ---
+        self.sort_column("Ringe", True) 
 
     def update_treeview(self, data):
         for row in self.tree.get_children():
@@ -124,10 +124,13 @@ class HighscoreViewer:
             datum = hs.get("timestamp", "-")
             spieler = hs.get("spieler", "Unbekannt")
             kameras = hs.get("kameras", "Unbekannt")
-            treffer_lr = f"{hs.get('treffer_links', 0)} / {hs.get('treffer_rechts', 0)}"
-            gesamt = hs.get("gesamtpunkte", 0)
+            schuesse = hs.get("gesamtpunkte", 0)
             
-            self.tree.insert("", "end", values=(match_id, datum, spieler, kameras, treffer_lr, gesamt))
+            # --- NEU: Fallback-Schutz für alte Matches ---
+            ringe = hs.get("gesamt_ringe", 0.0) 
+            ringe_str = f"{ringe:.1f}"
+            
+            self.tree.insert("", "end", values=(match_id, datum, spieler, kameras, schuesse, ringe_str))
 
     def apply_filters(self):
         self.update_treeview(self.data)
@@ -154,7 +157,6 @@ class HighscoreViewer:
                 self.tree.delete(row_id)
 
     def show_context_menu(self, event):
-        """Öffnet das Kontextmenü bei Rechtsklick."""
         item = self.tree.identify_row(event.y)
         if item:
             self.tree.selection_set(item)
@@ -165,7 +167,6 @@ class HighscoreViewer:
             context_menu.post(event.x_root, event.y_root)
 
     def delete_selected_entries(self):
-        """Löscht Einträge aus der JSON und wirft sie aus der Anzeige."""
         selected_items = self.tree.selection()
         if not selected_items: return
         
@@ -176,23 +177,19 @@ class HighscoreViewer:
             values = self.tree.item(item, "values")
             match_id_to_delete = int(values[0])
             
-            # Aus den Daten filtern
             self.data = [entry for entry in self.data if entry.get("match_id") != match_id_to_delete]
             
-            # Optional: Die ZIP-Datei auf der Festplatte mitlöschen
             zip_path = os.path.join("savegames", "logs", f"MATCH{match_id_to_delete:06d}.zip")
             if os.path.exists(zip_path):
                 try: os.remove(zip_path)
                 except OSError: pass
 
-        # JSON überschreiben
         with open(self.file_path, "w", encoding="utf-8") as file:
             json.dump(self.data, file, indent=4)
             
         self.apply_filters()
 
     def show_hit_images(self):
-        """Liest das ZIP-Archiv, holt die Bilder und zeichnet die roten Kringel."""
         selected = self.tree.selection()
         if not selected: return
         
@@ -205,7 +202,6 @@ class HighscoreViewer:
             
         try:
             with zipfile.ZipFile(zip_path, 'r') as zipf:
-                # Lese die JSON aus dem ZIP
                 match_data = json.loads(zipf.read("match.json").decode('utf-8'))
                 timeline = match_data.get("timeline", [])
                 
@@ -213,15 +209,34 @@ class HighscoreViewer:
                 img_window.title(f"Trefferbilder - MATCH {match_id}")
                 img_window.configure(bg="#34495e")
                 
+                # --- NEU: Schriftart laden (Fallback auf Standard, falls Arial fehlt) ---
+                try:
+                    font = ImageFont.truetype("arial.ttf", 22)
+                except IOError:
+                    font = ImageFont.load_default()
+                
                 # Linkes Bild suchen und rendern
                 try:
                     img_l_data = zipf.read("debug_bilder/letzte_aufnahme_left.jpg")
                     img_l = Image.open(io.BytesIO(img_l_data))
                     draw_l = ImageDraw.Draw(img_l)
+                    
                     for hit in timeline:
                         if hit['s'] == 'l':
                             x, y = hit['x'], hit['y']
+                            score = hit.get('score', 0.0) # Bei alten Matches ohne Score wird es 0.0
+                            score_str = f"{score:.1f}"
+                            
+                            # 1. Roter Kringel
                             draw_l.ellipse((x-14, y-14, x+14, y+14), outline="red", width=4)
+                            
+                            # 2. Text-Schatten (schwarz)
+                            text_x, text_y = x + 18, y - 12
+                            draw_l.text((text_x + 2, text_y + 2), score_str, fill="black", font=font)
+                            
+                            # 3. Haupttext (Grün für 10er, sonst Gelb)
+                            color = "#00ff00" if score >= 10.0 else "#ffff00"
+                            draw_l.text((text_x, text_y), score_str, fill=color, font=font)
                             
                     photo_l = ImageTk.PhotoImage(img_l)
                     lbl_l = tk.Label(img_window, image=photo_l, bg="#34495e")
@@ -234,10 +249,23 @@ class HighscoreViewer:
                     img_r_data = zipf.read("debug_bilder/letzte_aufnahme_right.jpg")
                     img_r = Image.open(io.BytesIO(img_r_data))
                     draw_r = ImageDraw.Draw(img_r)
+                    
                     for hit in timeline:
                         if hit['s'] == 'r':
                             x, y = hit['x'], hit['y']
+                            score = hit.get('score', 0.0)
+                            score_str = f"{score:.1f}"
+                            
+                            # 1. Roter Kringel
                             draw_r.ellipse((x-14, y-14, x+14, y+14), outline="red", width=4)
+                            
+                            # 2. Text-Schatten (schwarz)
+                            text_x, text_y = x + 18, y - 12
+                            draw_r.text((text_x + 2, text_y + 2), score_str, fill="black", font=font)
+                            
+                            # 3. Haupttext (Grün für 10er, sonst Gelb)
+                            color = "#00ff00" if score >= 10.0 else "#ffff00"
+                            draw_r.text((text_x, text_y), score_str, fill=color, font=font)
                             
                     photo_r = ImageTk.PhotoImage(img_r)
                     lbl_r = tk.Label(img_window, image=photo_r, bg="#34495e")
