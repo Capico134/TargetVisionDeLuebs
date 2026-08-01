@@ -87,9 +87,11 @@ class TargetTracker:
         self.dm.write_log(log_msg)
             
         gui_text = text if len(text) <= 45 else text[:42] + "..."
-        if side == 'left':
+        
+        # --- GEÄNDERT: "SYSTEM"-Nachrichten auf allen aktiven Kameras anzeigen ---
+        if side == 'left' or side == 'SYSTEM':
             self.msg_left = gui_text
-        elif side == 'right':
+        if side == 'right' or side == 'SYSTEM':
             self.msg_right = gui_text
 
     def save_debug_image(self, name, image):
@@ -593,6 +595,61 @@ class TargetTracker:
         cv2.rectangle(combined_view, (sx1, sy1), (sx2, sy2), (255, 255, 255), 1) 
         cv2.putText(combined_view, "Match Speichern", (sx1 + 15, sy1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
         self.btn_save_coords = (sx1, sy1, sx2, sy2)
+        
+        # ---> NEU: Die Live-Trefferliste (HUD) auf der rechten Seite <---
+        if getattr(self, 'ringwertung_aktiv', False) and self.sm.shots:
+            start_y = 80  # Startet ein Stück unter den oberen Buttons
+            line_h = 25   # Zeilenabstand
+            
+            # Wir berechnen, wie viele Zeilen maximal auf den Bildschirm passen
+            max_items = max(5, (win_h - start_y - 80) // line_h)
+            
+            # Falls mehr Schüsse existieren, zeigen wir nur die neuesten an (die Liste "scrollt")
+            display_shots = self.sm.shots[-max_items:] if len(self.sm.shots) > max_items else self.sm.shots
+            start_idx = len(self.sm.shots) - len(display_shots)
+            
+            box_w = 110  # Auf 110 angepasst, damit "Treffer-Liste" + Werte sauber reinpassen
+            box_x = win_w - box_w - 15
+            box_h = (len(display_shots) + 2) * line_h # Platz für Schüsse + Gesamt-Zeile
+            
+            # 1. Transparenter dunkler Hintergrund für perfekte Lesbarkeit
+            hud_overlay = combined_view.copy()
+            cv2.rectangle(hud_overlay, (box_x - 10, start_y - 25), (box_x + box_w, start_y + box_h), (20, 20, 20), -1)
+            cv2.addWeighted(hud_overlay, 0.5, combined_view, 0.5, 0, combined_view)
+            
+            # 2. Überschrift
+            cv2.putText(combined_view, "Treffer-Liste", (box_x - 5, start_y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.line(combined_view, (box_x - 5, start_y - 2), (box_x + box_w - 5, start_y - 2), (100, 100, 100), 1)
+            
+            # 3. Die einzelnen Schüsse auflisten
+            for i, shot in enumerate(display_shots):
+                shot_num = start_idx + i + 1
+                score_val = shot.get('score', 0.0)
+                
+                # Farb-Logik (Grün für 10er, sonst Cyan)
+                text_color = (0, 255, 255) if score_val < 10.0 else (0, 255, 0)
+                
+                text = f"{shot_num}:"
+                score_str = f"{score_val:.1f}"
+                y_pos = start_y + 20 + (i * line_h)
+                
+                # Text für 'X:' linksbündig
+                cv2.putText(combined_view, text, (box_x - 5, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
+                
+                # GEÄNDERT: Text für Ringwert von +95 auf +50 nach links gerückt!
+                cv2.putText(combined_view, score_str, (box_x + 50, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.55, text_color, 1, cv2.LINE_AA)
+
+            # 4. Gesamt-Summe als fetter Abschluss
+            cv2.line(combined_view, (box_x - 5, start_y + 8 + len(display_shots) * line_h), (box_x + box_w - 5, start_y + 8 + len(display_shots) * line_h), (100, 100, 100), 1)
+            gesamt = sum(s.get('score', 0.0) for s in self.sm.shots)
+            gesamt_text = "Ges.:"
+            gesamt_val = f"{gesamt:.1f}"
+            y_sum = start_y + 28 + len(display_shots) * line_h
+            
+            cv2.putText(combined_view, gesamt_text, (box_x - 5, y_sum), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+            
+            # GEÄNDERT: Gesamtwert von +85 auf +45 nach links gerückt!
+            cv2.putText(combined_view, gesamt_val, (box_x + 45, y_sum), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (50, 200, 255), 2, cv2.LINE_AA)
 
         cv2.imshow(self.window_name, combined_view)
 

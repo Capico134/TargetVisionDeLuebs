@@ -18,7 +18,6 @@ class HighscoreViewer:
         self.file_path = os.path.join("savegames", "highscore.json")
         self.data = []
         
-        # --- NEU: Die neue "Ringe"-Spalte als Meister-Wertung ---
         self.columns = ("ID", "Datum", "Spieler", "Kameras", "Schüsse", "Ringe")
         
         self.customize_style()
@@ -53,7 +52,6 @@ class HighscoreViewer:
         for col in self.columns:
             self.tree.heading(col, text=col, command=lambda c=col: self.sort_column(c, True))
             
-        # --- NEU: Die Spaltenbreiten für die neue Wertung ---
         self.tree.column("ID", width=60, anchor="center")
         self.tree.column("Datum", width=200, anchor="center")
         self.tree.column("Spieler", width=250)
@@ -90,7 +88,8 @@ class HighscoreViewer:
                 elif col in ["ID", "Schüsse"]:
                     return int(value)
                 elif col == "Ringe":
-                    return float(value) # --- NEU: Ringe werden als Float (Kommazahl) sortiert ---
+                    # --- GEÄNDERT: Wenn ein Strich (-) im Feld steht, werten wir ihn zum Sortieren als -1 ---
+                    return float(value) if value != "-" else -1.0
                 return value
             except ValueError:
                 return value
@@ -111,9 +110,8 @@ class HighscoreViewer:
             self.data = []
 
         self.update_treeview(self.data)
-        
-        # --- NEU: Standard-Sortierung ist jetzt "Ringe" absteigend! ---
-        self.sort_column("Ringe", True) 
+        #self.sort_column("Ringe", True) 
+        self.sort_column("ID", True)#Sortieren nach ID
 
     def update_treeview(self, data):
         for row in self.tree.get_children():
@@ -126,9 +124,9 @@ class HighscoreViewer:
             kameras = hs.get("kameras", "Unbekannt")
             schuesse = hs.get("gesamtpunkte", 0)
             
-            # --- NEU: Fallback-Schutz für alte Matches ---
+            # --- GEÄNDERT: Blendet 0.0 aus, wenn keine Ringe berechnet wurden ---
             ringe = hs.get("gesamt_ringe", 0.0) 
-            ringe_str = f"{ringe:.1f}"
+            ringe_str = f"{ringe:.1f}" if ringe > 0.0 else "-"
             
             self.tree.insert("", "end", values=(match_id, datum, spieler, kameras, schuesse, ringe_str))
 
@@ -209,9 +207,9 @@ class HighscoreViewer:
                 img_window.title(f"Trefferbilder - MATCH {match_id}")
                 img_window.configure(bg="#34495e")
                 
-                # --- NEU: Schriftart laden (Fallback auf Standard, falls Arial fehlt) ---
+                # --- GEÄNDERT: Schriftart verkleinert auf 15 ---
                 try:
-                    font = ImageFont.truetype("arial.ttf", 22)
+                    font = ImageFont.truetype("arial.ttf", 15)
                 except IOError:
                     font = ImageFont.load_default()
                 
@@ -224,19 +222,19 @@ class HighscoreViewer:
                     for hit in timeline:
                         if hit['s'] == 'l':
                             x, y = hit['x'], hit['y']
-                            score = hit.get('score', 0.0) # Bei alten Matches ohne Score wird es 0.0
-                            score_str = f"{score:.1f}"
+                            score = hit.get('score', 0.0) 
                             
-                            # 1. Roter Kringel
+                            # 1. Roter Kringel wird IMMER gezeichnet
                             draw_l.ellipse((x-14, y-14, x+14, y+14), outline="red", width=4)
                             
-                            # 2. Text-Schatten (schwarz)
-                            text_x, text_y = x + 18, y - 12
-                            draw_l.text((text_x + 2, text_y + 2), score_str, fill="black", font=font)
-                            
-                            # 3. Haupttext (Grün für 10er, sonst Gelb)
-                            color = "#00ff00" if score >= 10.0 else "#ffff00"
-                            draw_l.text((text_x, text_y), score_str, fill=color, font=font)
+                            # 2. Text nur zeichnen, wenn es wirklich eine Wertung gibt (> 0.0)
+                            if score > 0.0:
+                                score_str = f"{score:.1f}"
+                                text_x, text_y = x + 15, y - 8 # Etwas näher ans Fadenkreuz gerückt
+                                
+                                draw_l.text((text_x + 1, text_y + 1), score_str, fill="black", font=font)
+                                color = "#00ff00" if score >= 10.0 else "#ffff00"
+                                draw_l.text((text_x, text_y), score_str, fill=color, font=font)
                             
                     photo_l = ImageTk.PhotoImage(img_l)
                     lbl_l = tk.Label(img_window, image=photo_l, bg="#34495e")
@@ -254,18 +252,18 @@ class HighscoreViewer:
                         if hit['s'] == 'r':
                             x, y = hit['x'], hit['y']
                             score = hit.get('score', 0.0)
-                            score_str = f"{score:.1f}"
                             
-                            # 1. Roter Kringel
+                            # 1. Roter Kringel wird IMMER gezeichnet
                             draw_r.ellipse((x-14, y-14, x+14, y+14), outline="red", width=4)
                             
-                            # 2. Text-Schatten (schwarz)
-                            text_x, text_y = x + 18, y - 12
-                            draw_r.text((text_x + 2, text_y + 2), score_str, fill="black", font=font)
-                            
-                            # 3. Haupttext (Grün für 10er, sonst Gelb)
-                            color = "#00ff00" if score >= 10.0 else "#ffff00"
-                            draw_r.text((text_x, text_y), score_str, fill=color, font=font)
+                            # 2. Text nur zeichnen, wenn es wirklich eine Wertung gibt (> 0.0)
+                            if score > 0.0:
+                                score_str = f"{score:.1f}"
+                                text_x, text_y = x + 15, y - 8 
+                                
+                                draw_r.text((text_x + 1, text_y + 1), score_str, fill="black", font=font)
+                                color = "#00ff00" if score >= 10.0 else "#ffff00"
+                                draw_r.text((text_x, text_y), score_str, fill=color, font=font)
                             
                     photo_r = ImageTk.PhotoImage(img_r)
                     lbl_r = tk.Label(img_window, image=photo_r, bg="#34495e")
