@@ -1,7 +1,10 @@
 import cv2
 import numpy as np
 import time
+import subprocess
 from datetime import datetime
+import tkinter as tk
+from tkinter import ttk, messagebox
 
 # --- NEU: Unsere sauberen Manager-Importe ---
 from DateiManagerDeLuebs import DateiManager
@@ -23,7 +26,8 @@ class TargetTracker:
         self.min_hole_area = config.getint('Erkennung', 'min_hole_area')
         self.caliber_radius = config.getint('Erkennung', 'caliber_radius')
         self.hit_tolerance = config.getint('Erkennung', 'hit_tolerance', fallback=15)
-        self.erkennungs_methode = config.get('Erkennung', 'erkennungs_methode', fallback='A').upper()
+        self.erkennungs_methode = config.get('Erkennung', 'erkennungs_methode', fallback='C').upper()
+        self.hybrid_riss_faktor = config.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.5)
         self.ausloeser_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.max_img_change = config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
         self.poll_ms = config.getint('Timing', 'poll_ms', fallback=33)
@@ -146,7 +150,7 @@ class TargetTracker:
                 if self.erkennungs_methode == 'C':
                     (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
                     # Wenn das gefundene Loch deutlich größer ist als das Kaliber (Riss / Doppelschuss)
-                    if radius > (self.caliber_radius * 1.3):
+                    if radius > (self.caliber_radius * self.hybrid_riss_faktor):  # <--- HIER GEÄNDERT
                         self.log(side, f"🛠️ Unsauberes Loch (Radius: {radius:.1f}px) -> Aktiviere HoughCircles...")
                         mask = np.zeros_like(thresh_new)
                         cv2.drawContours(mask, [cnt], -1, 255, -1)
@@ -186,19 +190,9 @@ class TargetTracker:
                     self.log(side, f"-> NEUES LOCH GEFUNDEN: Pos ({cx}, {cy}) | Fläche {area:.1f}px")
                 
         if new_shots_found_this_frame:
-            # --- NEU: Alte Schüsse als 'nicht neu' markieren und neue übergeben ---
-            for shot in self.sm.shots:
-                if shot['side'] == side:
-                    shot['is_new'] = False
-                    
+            # --- NEU: Wir nutzen jetzt die saubere Funktion des StateManagers! ---
             for sd in new_shots_found_this_frame:
-                self.sm.shots.append({
-                    'side': side,
-                    'pos': (sd['cx'], sd['cy']),
-                    'area': sd['area'],
-                    'is_new': True,
-                    'timestamp': datetime.now().strftime("%H:%M:%S")
-                })
+                self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'])
             
             state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, thresh_raw)
             self.save_debug_image(f"diff_gesamt_{side}", state.cumulative_mask)
@@ -407,6 +401,22 @@ class TargetTracker:
         cv2.rectangle(combined_view, (zx1, zy1), (zx2, zy2), (255, 255, 255), 1) 
         cv2.putText(combined_view, "Bug ZIP", (zx1 + 20, zy1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
         self.btn_zip_coords = (zx1, zy1, zx2, zy2)
+        
+        # ---> NEU: Highscore Button (Ganz Links) <---
+        hx1, hy1 = win_w - 560, 10
+        hx2, hy2 = win_w - 420, 40
+        cv2.rectangle(combined_view, (hx1, hy1), (hx2, hy2), (50, 150, 200), -1) # Gold/Gelblich
+        cv2.rectangle(combined_view, (hx1, hy1), (hx2, hy2), (255, 255, 255), 1) 
+        cv2.putText(combined_view, "Highscore", (hx1 + 30, hy1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        self.btn_highscore_coords = (hx1, hy1, hx2, hy2)
+        
+        # ---> NEU: Match Speichern Button (Links) <---
+        sx1, sy1 = win_w - 410, 10
+        sx2, sy2 = win_w - 240, 40
+        cv2.rectangle(combined_view, (sx1, sy1), (sx2, sy2), (180, 70, 70), -1) # Blau
+        cv2.rectangle(combined_view, (sx1, sy1), (sx2, sy2), (255, 255, 255), 1) 
+        cv2.putText(combined_view, "Match Speichern", (sx1 + 15, sy1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        self.btn_save_coords = (sx1, sy1, sx2, sy2)
 
         cv2.imshow(self.window_name, combined_view)
 
@@ -461,6 +471,98 @@ class TargetTracker:
                 bx1, by1, bx2, by2 = self.btn_right_coords
                 if bx1 <= x <= bx2 and by1 <= y <= by2:
                     self.trigger_reset_right = True
+                    return
+            
+            if getattr(self, 'btn_highscore_coords', None):
+                hx1, hy1, hx2, hy2 = self.btn_highscore_coords
+                if hx1 <= x <= hx2 and hy1 <= y <= hy2:
+                    self.log("SYSTEM", "Öffne Highscore-Tabelle...")
+                    # Startet das Tkinter-Fenster als eigenen Prozess
+                    subprocess.Popen(["python", "HighscoreViewDeLuebs.py"])
+                    return
+                        
+            if getattr(self, 'btn_save_coords', None):
+                sx1, sy1, sx2, sy2 = self.btn_save_coords
+                if sx1 <= x <= sx2 and sy1 <= y <= sy2:
+                    self.log("SYSTEM", "Frage nach Spielername...")
+                    
+                    # 1. Spieler-Historie auslesen und zählen (Wer spielt am meisten?)
+                    player_counts = {}
+                    for entry in self.sm.hm.data:
+                        p = entry.get("spieler", "Unbekannt")
+                        player_counts[p] = player_counts.get(p, 0) + 1
+                    
+                    # Sortieren nach Häufigkeit (absteigend) -> Zara steht ganz oben!
+                    sorted_players = sorted(player_counts.keys(), key=lambda x: player_counts[x], reverse=True)
+                    if not sorted_players:
+                        sorted_players = ["Schütze 1"] # Fallback, falls die Highscore noch komplett leer ist
+                        
+                    # 2. Standardwert bestimmen (Der Letzte, oder der Häufigste)
+                    default_name = getattr(self, 'last_player_name', sorted_players[0])
+                    
+                    # 3. Maßgeschneidertes Pop-up Fenster bauen
+                    root_dialog = tk.Tk()
+                    root_dialog.withdraw()
+                    
+                    dialog = tk.Toplevel(root_dialog)
+                    dialog.title("Match Speichern")
+                    dialog.geometry("380x170")
+                    dialog.attributes('-topmost', True) # Bleibt immer im Vordergrund
+                    
+                    tk.Label(dialog, text="Wer hat geschossen?\n(Name tippen oder aus Liste wählen)", font=('Arial', 11)).pack(pady=10)
+                    
+                    # Die intelligente Combobox
+                    name_var = tk.StringVar(value=default_name)
+                    combo = ttk.Combobox(dialog, textvariable=name_var, values=sorted_players, font=('Arial', 12))
+                    combo.pack(pady=5, padx=30, fill='x')
+                    combo.focus_set() # Cursor direkt ins Feld setzen
+                    
+                    result = [None] # Speicher für das Ergebnis
+                    
+                    def on_ok(e=None):
+                        result[0] = name_var.get().strip()
+                        dialog.destroy()
+                        
+                    def on_cancel(e=None):
+                        dialog.destroy()
+                        
+                    # Buttons
+                    btn_frame = tk.Frame(dialog)
+                    btn_frame.pack(pady=10)
+                    tk.Button(btn_frame, text="Speichern", command=on_ok, font=('Arial', 11), bg='#4CAF50', fg='white', width=12).pack(side=tk.LEFT, padx=10)
+                    tk.Button(btn_frame, text="Abbrechen", command=on_cancel, font=('Arial', 11), width=12).pack(side=tk.LEFT, padx=10)
+                    
+                    # Tasten-Steuerung (Enter = Speichern, Esc = Abbrechen)
+                    dialog.bind('<Return>', on_ok)
+                    dialog.bind('<Escape>', on_cancel)
+                    
+                    # Code wartet hier, bis das kleine Fenster geschlossen wird
+                    root_dialog.wait_window(dialog)
+                    player_name = result[0]
+                    root_dialog.destroy()
+                    
+                    # 4. Speichern ausführen
+                    if player_name:
+                        self.last_player_name = player_name
+                        self.log("SYSTEM", f"Speichere Match und Highscore für {player_name}...")
+                        
+                        if self.sm.save_current_match(player_name):
+                            self.log("SYSTEM", "Match erfolgreich gespeichert!")
+                        else:
+                            self.log("SYSTEM", "Speichern abgebrochen (Keine Treffer).")
+                            
+                            # --- NEU: Warn-Popup für den Schützen ---
+                            msg_root = tk.Tk()
+                            msg_root.withdraw() # Hauptfenster unsichtbar machen
+                            msg_root.attributes('-topmost', True) # Zwingt die Warnung in den Vordergrund
+                            messagebox.showwarning(
+                                "Speichern abgebrochen", 
+                                "Das Match enthält noch keine Treffer!\nEs wurde nichts gespeichert.", 
+                                parent=msg_root
+                            )
+                            msg_root.destroy()
+                    else:
+                        self.log("SYSTEM", "Speichern vom Benutzer abgebrochen.")
                     return
 
     def run(self):

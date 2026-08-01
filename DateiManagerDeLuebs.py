@@ -2,7 +2,8 @@ import os
 import cv2
 import configparser
 import subprocess
-import zipfile  # <--- NEU
+import zipfile
+import json  # <--- Diese Zeile hat gefehlt!
 from datetime import datetime
 
 class DateiManager:
@@ -115,8 +116,11 @@ ausloeser_durch_erschuetterung = no
 # B = Schwerpunkt (Zieht bei unsauberen Rissen oft zum Papierschnipsel hin)
 # C = Smart-Hybrid (Hough-Kreisbogen + minEnclosingCircle - Empfohlen!)
 erkennungs_methode = C
+# Für Methode C: Ab welchem Vergrößerungs-Faktor (im Vergleich zum Normal-Kaliber) ein unsauberes Loch
+# nicht mehr als "Normal" gilt und den Hough-Algorithmus auslöst. (Standard: 1.5)
+hybrid_riss_faktor = 1.5
 # Mindestfläche in Pixeln, die eine Farb/Helligkeitsänderung haben muss, um als Loch zu gelten.
-min_hole_area = 16
+min_hole_area = 25
 # Sperr-Radius um bestehende Treffer (in Pixeln) gegen Doppelzählungen.
 caliber_radius = 14
 # Anzahl veränderter Pixel im Bild, ab der eine Bewegung (Vibration/Fahrt) erkannt wird.
@@ -185,7 +189,24 @@ darstellung_ohne_weissabgleich = yes
             print("🔧 Führe Auto-Patch aus: Füge 'erkennungs_methode = C' hinzu...")
             self.update_ini_value('Erkennung', 'erkennungs_methode', 'C')
             needs_reload = True
+        
+        if not config.has_option('Erkennung', 'hybrid_riss_faktor'):
+            print("🔧 Führe Auto-Patch aus: Füge 'hybrid_riss_faktor = 1.5' hinzu...")
+            self.update_ini_value('Erkennung', 'hybrid_riss_faktor', '1.5')
+            needs_reload = True
             
+        # NEU: Mindestwert für min_hole_area erzwingen
+        if config.has_option('Erkennung', 'min_hole_area'):
+            try:
+                current_area = config.getint('Erkennung', 'min_hole_area')
+                if current_area < 25:
+                    print(f"🔧 Führe Auto-Patch aus: Erhöhe 'min_hole_area' von {current_area} auf 25...")
+                    self.update_ini_value('Erkennung', 'min_hole_area', '25')
+                    needs_reload = True
+            except ValueError:
+                pass # Falls da aus Versehen Text drinsteht, ignorieren wir es hier (oder reparieren es)
+        
+        
         if needs_reload:
             config.read(self.CONFIG_FILE, encoding='utf-8')
 
@@ -199,10 +220,10 @@ darstellung_ohne_weissabgleich = yes
         # Aufruf der generischen Funktion
         return self.create_zip_package(zip_filepath)
 
-    def create_zip_package(self, zip_filepath):
+    def create_zip_package(self, zip_filepath, match_data=None):
         """
         Erstellt ein ZIP-Archiv mit Config, Log und allen aktuellen Bildern.
-        Wird für Debug-Pakete und zukünftig für Match-Archive (MATCH000042.zip) genutzt.
+        Wenn match_data übergeben wird, wird zusätzlich eine match.json erzeugt.
         """
         try:
             with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -212,12 +233,17 @@ darstellung_ohne_weissabgleich = yes
                 if os.path.exists(self.LOG_FILE):
                     zipf.write(self.LOG_FILE, os.path.basename(self.LOG_FILE))
                 
-                # 2. Nur Dateien (keine Unterordner) aus dem Debug-Ordner hinzufügen
+                # 2. Nur Dateien aus dem Debug-Ordner hinzufügen
                 if os.path.exists(self.DEBUG_FOLDER):
                     for file in os.listdir(self.DEBUG_FOLDER):
                         file_path = os.path.join(self.DEBUG_FOLDER, file)
                         if os.path.isfile(file_path):
                             zipf.write(file_path, os.path.join(self.DEBUG_FOLDER, file))
+                            
+                # ---> NEU: match.json direkt in die ZIP schreiben <---
+                if match_data is not None:
+                    json_str = json.dumps(match_data, indent=4)
+                    zipf.writestr("match.json", json_str)
                             
             print(f"📦 ZIP-Paket erfolgreich erstellt: {zip_filepath}")
             self.write_log(f"SYSTEM: 📦 Datenpaket erstellt -> {zip_filepath}")

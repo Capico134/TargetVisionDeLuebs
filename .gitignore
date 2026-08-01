@@ -1,6 +1,7 @@
 # Nutzerdaten ignorieren
 debug_bilder/
 debug_pakete/
+savegames/
 __pycache__/
 *.pyc
 config.ini
