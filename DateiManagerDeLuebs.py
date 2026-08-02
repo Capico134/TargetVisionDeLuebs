@@ -1,3 +1,4 @@
+import glob
 import os
 import cv2
 import configparser
@@ -145,6 +146,8 @@ motion_tolerance = 40
 hit_tolerance = 20
 # Notbremse gegen Standbild/Ruckler in Prozent.
 max_image_change_percent = 5.0
+# Speichert bei JEDEM erkannten Treffer die Bilder separat ab (für Entwicklungszwecke)
+debug_alle_bilder_speichern = yes
 
 [Timing]
 # Bildwiederholrate/Haupttakt in Millisekunden (33 ms entspricht ca. 30 FPS).
@@ -249,11 +252,45 @@ darstellung_ohne_weissabgleich = yes
                     print(f"🔧 Führe Auto-Patch aus: Füge '{key} = 5.0' hinzu...")
                     self.update_ini_value('Kameras', key, '5.0')
                     needs_reload = True    
+                    
+        if not config.has_option('Erkennung', 'debug_alle_bilder_speichern'):
+            print("🔧 Führe Auto-Patch aus: Füge 'debug_alle_bilder_speichern = yes' hinzu...")
+            self.update_ini_value('Erkennung', 'debug_alle_bilder_speichern', 'yes')
+            needs_reload = True
         
         if needs_reload:
             config.read(self.CONFIG_FILE, encoding='utf-8')
 
         return config
+
+
+
+    def clear_debug_images(self, side):
+        """Löscht alte Debug-Bilder (JPG und PNG) einer spezifischen Kamera vor einem neuen Match."""
+        try:
+            if hasattr(self, 'debug_dir'):
+                ordner = self.debug_dir
+            elif hasattr(self, 'log_dir'):
+                ordner = self.log_dir
+            else:
+                ordner = "debug_bilder" # Fallback
+
+            # --- GEÄNDERT: Wir suchen jetzt explizit nach JPG und PNG ---
+            suchmuster_jpg = os.path.join(ordner, f"*{side}*.jpg")
+            suchmuster_png = os.path.join(ordner, f"*{side}*.png")
+            
+            # Beide Listen einfach zusammenhängen
+            alte_bilder = glob.glob(suchmuster_jpg) + glob.glob(suchmuster_png)
+            
+            for bild in alte_bilder:
+                try:
+                    os.remove(bild)
+                except Exception as e:
+                    pass
+            
+        except Exception as e:
+            print(f"Fehler beim Aufräumen des Debug-Ordners: {e}")
+
         
     def create_debug_zip(self):
         """Generiert den Pfad für das Debug-Paket und ruft die allgemeine ZIP-Funktion auf."""

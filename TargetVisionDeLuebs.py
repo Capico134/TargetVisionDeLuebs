@@ -32,6 +32,8 @@ class TargetTracker:
         self.hough_max_f = config.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15)
         self.ausloeser_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.max_img_change = config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
+        # ---> NEU: Beta-Debug-Schalter einlesen <---
+        self.debug_alle_bilder_speichern = config.getboolean('Erkennung', 'debug_alle_bilder_speichern', fallback=False)
         self.poll_ms = config.getint('Timing', 'poll_ms', fallback=33)
         self.fullscreen = config.getboolean('Anzeige', 'vollbild', fallback=False)
         self.enhance_display = config.getboolean('Anzeige', 'darstellung_ohne_weissabgleich', fallback=True)
@@ -254,27 +256,82 @@ class TargetTracker:
                
                 if self.erkennungs_methode == 'C':
                     (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
+                    
                     # Wenn das gefundene Loch deutlich größer ist als das Kaliber (Riss / Doppelschuss)
                     if radius > (self.caliber_radius * self.hybrid_riss_faktor):  
                         self.log(side, f"🛠️ Unsauberes Loch (Radius: {radius:.1f}px) -> Aktiviere HoughCircles...")
+                        # 1. Die Maske mit der Kontur erstellen
                         mask = np.zeros_like(thresh_new)
                         cv2.drawContours(mask, [cnt], -1, 255, -1)
-                        
-                        # --- GEÄNDERT: Dynamische Durchmesserbereiche für Methode C ---
+                        # ---> NEU: Das Loch künstlich "reparieren" (Glätten) <---
+                        # Wir zeichnen die Kanten stark weich, damit die Zacken verschwinden
+                        mask_blurred = cv2.GaussianBlur(mask, (9, 9), 0)
                         min_r = max(2, int(self.caliber_radius * self.hough_min_f))
                         max_r = int(self.caliber_radius * self.hough_max_f)
-                        
-                        circles = cv2.HoughCircles(mask, cv2.HOUGH_GRADIENT, dp=1, minDist=20,
-                                                   param1=50, param2=10, 
+                        # 2. HoughCircles auf das weichgezeichnete Loch loslassen
+                        # param1 etwas senken (z.B. auf 40), damit er die weicheren Kanten noch sieht
+                        circles = cv2.HoughCircles(mask_blurred, cv2.HOUGH_GRADIENT, dp=1, minDist=20,
+                                                   param1=40, param2=10, 
                                                    minRadius=min_r, maxRadius=max_r)
                         if circles is not None:
                             cx, cy = int(circles[0][0][0]), int(circles[0][0][1])
                             self.log(side, "✅ HoughCircles erfolgreich: Zentrum wurde korrigiert.")
                         else:
-                            cx, cy = int(circle_x), int(circle_y)
-                            self.log(side, "⚠️ HoughCircles fand keinen Kreis. Fallback auf Standard-Zentrum.")
+                            #!!!!!!!!!!!!!ERSTMAL KEINE ABRISSKANTE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                            #self.log(side, "⚠️ HoughCircles ohne Ergebnis. Analysiere Abrisskante...")
+                            #erfolg_abriss = False
+                            #
+                            ## --- NEU: Die Abrisskanten-Logik ---
+                            ## 1. Prüfen, ob wir überhaupt schon alte Löcher haben
+                            #if state.cumulative_mask is not None and cv2.countNonZero(state.cumulative_mask) > 0:
+                            #    
+                            #    # 2. Alte Löcher minimal vergrößern, um den Kontaktbereich sicher zu erfassen
+                            #    kernel_dilate = np.ones((5, 5), np.uint8)
+                            #    old_holes = cv2.dilate(state.cumulative_mask, kernel_dilate, iterations=1)
+                            #    
+                            #    # 3. Schnittmenge bilden: Wo berührt der neue Auswuchs die alten Löcher?
+                            #    intersection = cv2.bitwise_and(old_holes, mask)
+                            #    inter_contours, _ = cv2.findContours(intersection, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                            #    
+                            #    if inter_contours:
+                            #        # Wir nehmen die größte Berührungsfläche
+                            #        largest_inter = max(inter_contours, key=cv2.contourArea)
+                            #        
+                            #        if cv2.contourArea(largest_inter) > 3: # Es muss eine echte Berührung sein
+                            #            # A) Schwerpunkt der Abrisskante berechnen
+                            #            M_int = cv2.moments(largest_inter)
+                            #            if M_int["m00"] != 0:
+                            #                cx_int = int(M_int["m10"] / M_int["m00"])
+                            #                cy_int = int(M_int["m01"] / M_int["m00"])
+                            #                
+                            #                # B) Schwerpunkt des GESAMTEN neuen Auswuchses berechnen
+                            #                M_new = cv2.moments(cnt)
+                            #                if M_new["m00"] != 0:
+                            #                    cx_new = int(M_new["m10"] / M_new["m00"])
+                            #                    cy_new = int(M_new["m01"] / M_new["m00"])
+                            #                    
+                            #                    # C) Vektor von der Abrisskante in Richtung der Auswuchs-Mitte
+                            #                    dx = cx_new - cx_int
+                            #                    dy = cy_new - cy_int
+                            #                    dist = np.hypot(dx, dy)
+                            #                    
+                            #                    if dist > 0:
+                            #                        # D) Von der Abrisskante exakt einen Kaliberradius ins neue Material wandern
+                            #                        nx = dx / dist
+                            #                        ny = dy / dist
+                            #                        cx = int(cx_int + nx * self.caliber_radius)
+                            #                        cy = int(cy_int + ny * self.caliber_radius)
+                            #                        
+                            #                        self.log(side, f"🎯 Abrisskante erkannt! Zentrum exakt {self.caliber_radius}px nach innen versetzt.")
+                            #                        erfolg_abriss = True
+                            #
+                            ## Fallback, wenn keine Abrisskante existiert (z.B. zwei Treffer zeitgleich auf frischer Pappe)
+                            #if not erfolg_abriss:
+                                cx, cy = int(circle_x), int(circle_y)
+                                self.log(side, "⚠️ Keine Abrisskante gefunden. Fallback auf Standard-Zentrum.")
                     else:
                         cx, cy = int(circle_x), int(circle_y)
+                        
                 elif self.erkennungs_methode == 'B':
                     M = cv2.moments(cnt)
                     if M["m00"] != 0:
@@ -311,8 +368,19 @@ class TargetTracker:
             state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, thresh_raw)
             self.save_debug_image(f"diff_gesamt_{side}", state.cumulative_mask)
             self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!")
+            
             self.save_debug_image(f"diff_letzter_treffer_{side}", thresh_new)
             self.save_debug_image(f"letzte_aufnahme_{side}", frame)
+            
+            # ---> NEU: Beta-Debug Logik für fortlaufende Bilder <---
+            if getattr(self, 'debug_alle_bilder_speichern', False):
+                ts = datetime.now().strftime('%H%M%S_%f')[:-3]
+                # Zählt, der wievielte Schuss auf dieser Seite das gerade war
+                shot_idx = sum(1 for s in self.sm.shots if s['side'] == side) 
+                
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff", thresh_new)
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_orig", frame)
+
             return True
         else:
             if self.ausloeser_erschuetterung:
@@ -334,6 +402,11 @@ class TargetTracker:
             if not state.target_present:
                 self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> SCHEIBE ({abs(diff):.1f}% unter Limit {state.min_area}%)")
                 state.target_present = True
+                
+                # ---> NEU: Alte Debug-Bilder für diese Seite löschen, da neue Scheibe da ist <---
+                if hasattr(self.dm, 'clear_debug_images'):
+                    self.dm.clear_debug_images(state.side)
+                
                 if current_ref is None:
                     self.set_reference_image(frame, state.side)
                 else:
@@ -406,6 +479,10 @@ class TargetTracker:
     def execute_manual_reset(self, side, frame):
         # --- NEU: Reset läuft jetzt blitzsauber über den StateManager ---
         self.sm.reset_match(side)
+        
+        # ---> NEU: Alte Debug-Bilder für diese Seite löschen <---
+        if hasattr(self.dm, 'clear_debug_images'):
+            self.dm.clear_debug_images(side)
         
         state = self.state_left if side == 'left' else self.state_right
         if frame is not None:
@@ -608,14 +685,15 @@ class TargetTracker:
             display_shots = self.sm.shots[-max_items:] if len(self.sm.shots) > max_items else self.sm.shots
             start_idx = len(self.sm.shots) - len(display_shots)
             
-            box_w = 110  # Auf 110 angepasst, damit "Treffer-Liste" + Werte sauber reinpassen
-            box_x = win_w - box_w - 15
+            box_w = 110  
+            # --- GEÄNDERT: Von -15 auf -10, damit der Kasten exakt bündig mit dem Beenden-Button abschließt ---
+            box_x = win_w - box_w - 10
             box_h = (len(display_shots) + 2) * line_h # Platz für Schüsse + Gesamt-Zeile
             
             # 1. Transparenter dunkler Hintergrund für perfekte Lesbarkeit
             hud_overlay = combined_view.copy()
             cv2.rectangle(hud_overlay, (box_x - 10, start_y - 25), (box_x + box_w, start_y + box_h), (20, 20, 20), -1)
-            cv2.addWeighted(hud_overlay, 0.5, combined_view, 0.5, 0, combined_view)
+            cv2.addWeighted(hud_overlay, 0.4, combined_view, 0.6, 0, combined_view)
             
             # 2. Überschrift
             cv2.putText(combined_view, "Treffer-Liste", (box_x - 5, start_y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
@@ -629,14 +707,14 @@ class TargetTracker:
                 # Farb-Logik (Grün für 10er, sonst Cyan)
                 text_color = (0, 255, 255) if score_val < 10.0 else (0, 255, 0)
                 
-                text = f"{shot_num}:"
+                text = f" {shot_num}:"
                 score_str = f"{score_val:.1f}"
                 y_pos = start_y + 20 + (i * line_h)
                 
                 # Text für 'X:' linksbündig
                 cv2.putText(combined_view, text, (box_x - 5, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
                 
-                # GEÄNDERT: Text für Ringwert von +95 auf +50 nach links gerückt!
+                # Text für Ringwert rechtsbündig
                 cv2.putText(combined_view, score_str, (box_x + 50, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.55, text_color, 1, cv2.LINE_AA)
 
             # 4. Gesamt-Summe als fetter Abschluss
@@ -647,8 +725,6 @@ class TargetTracker:
             y_sum = start_y + 28 + len(display_shots) * line_h
             
             cv2.putText(combined_view, gesamt_text, (box_x - 5, y_sum), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-            
-            # GEÄNDERT: Gesamtwert von +85 auf +45 nach links gerückt!
             cv2.putText(combined_view, gesamt_val, (box_x + 45, y_sum), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (50, 200, 255), 2, cv2.LINE_AA)
 
         cv2.imshow(self.window_name, combined_view)
@@ -779,23 +855,27 @@ class TargetTracker:
                         self.last_player_name = player_name
                         self.log("SYSTEM", f"Speichere Match und Highscore für {player_name}...")
                         
+                        # ---> NEU: Wir sichern das visuelle Gedächtnis VOR dem Speichern <---
+                        backup_mask_l = self.state_left.cumulative_mask.copy() if self.state_left.cumulative_mask is not None else None
+                        backup_mask_r = self.state_right.cumulative_mask.copy() if self.state_right.cumulative_mask is not None else None
+                        
                         if self.sm.save_current_match(player_name):
                             self.log("SYSTEM", "Match erfolgreich gespeichert!")
+                            
+                            # ---> NEU: Wir stellen das visuelle Gedächtnis wieder her! <---
+                            # So bleiben die alten Löcher dem System bekannt, nur die Trefferliste ist jetzt leer.
+                            self.state_left.cumulative_mask = backup_mask_l
+                            self.state_right.cumulative_mask = backup_mask_r
+                            
+                            # ---> NEU: Nur den Kamera-Puffer leeren, KEINE neuen Referenzen erzwingen <---
+                            self.log("SYSTEM", "Leere Kamera-Puffer nach Pause...")
+                            for _ in range(10): 
+                                if self.use_left: self.cap_left.read()
+                                if self.use_right: self.cap_right.read()
+                            # --------------------------------------------------------
+                            
                         else:
                             self.log("SYSTEM", "Speichern abgebrochen (Keine Treffer).")
-                            
-                            # --- NEU: Warn-Popup für den Schützen ---
-                            msg_root = tk.Tk()
-                            msg_root.withdraw() # Hauptfenster unsichtbar machen
-                            msg_root.attributes('-topmost', True) # Zwingt die Warnung in den Vordergrund
-                            messagebox.showwarning(
-                                "Speichern abgebrochen", 
-                                "Das Match enthält noch keine Treffer!\nEs wurde nichts gespeichert.", 
-                                parent=msg_root
-                            )
-                            msg_root.destroy()
-                    else:
-                        self.log("SYSTEM", "Speichern vom Benutzer abgebrochen.")
                     return
 
     def run(self):
