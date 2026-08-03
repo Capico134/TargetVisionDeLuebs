@@ -131,7 +131,7 @@ class TargetTracker:
             if mitte:
                 self.sm.set_nullpunkt(side, mitte[0], mitte[1]) 
                 self.log("SYSTEM", f"🎯 Nullpunkt {side.upper()} gesetzt auf X:{int(mitte[0])} Y:{int(mitte[1])}")
-
+    
     def ninja_kalibrierungs_check(self, ref_bgr, side):
         """Findet den Nullpunkt mit dem unbestechlichen 'Weißen-Punkt-Sniper'."""
         aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
@@ -213,6 +213,75 @@ class TargetTracker:
 
         return (cx, cy)
 
+    #################  NEUSTER UNBRAUCHBARER VORSCHLAG VON GEMINI VOM 02.08.2026 ####################################
+    #def ninja_kalibrierungs_check(self, ref_bgr, side):
+    #    """Findet den Nullpunkt über den robusten geometrischen Schwerpunkt (ignoriert Schusslöcher!)."""
+    #    aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+    #    targets = self.dm.load_targets()
+    #    
+    #    if aktive_scheibe_id not in targets:
+    #        return None
+    #        
+    #    spiegel_mm = targets[aktive_scheibe_id].get('spiegel_durchmesser_mm', 30.5)
+    #    
+    #    gray_frame = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
+    #    
+    #    # 1. Den schwarzen Klecks (Erdnuss oder Kreis) finden
+    #    # Alles was schwarz ist, wird für die Maske weiß (255)
+    #    _, thresh = cv2.threshold(gray_frame, 80, 255, cv2.THRESH_BINARY_INV)
+    #    
+    #    # RETR_EXTERNAL ist hier der absolute Gamechanger!
+    #    # Es sucht NUR die äußerste Hülle. Alles, was sich INNEN abspielt (Schusslöcher), 
+    #    # wird von OpenCV komplett ignoriert.
+    #    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    #    if not contours:
+    #        return None
+    #        
+    #    groesste_kontur = max(contours, key=cv2.contourArea)
+    #    if cv2.contourArea(groesste_kontur) < 1000:
+    #        return None
+    #        
+    #    x, y, w, h = cv2.boundingRect(groesste_kontur)
+    #
+    #    # --- DER GEOMETRISCHE PANZER-SCANNER ---
+    #    # Statt fehleranfällig nach hellen Pixeln zu suchen (die Schusslöcher sein können),
+    #    # berechnen wir den mathematischen Schwerpunkt der geschlossenen Außenhülle!
+    #    M = cv2.moments(groesste_kontur)
+    #    if M["m00"] != 0:
+    #        cx = int(M["m10"] / M["m00"])
+    #        cy = int(M["m01"] / M["m00"])
+    #        self.log("SYSTEM", f"🎯 Geometrischer Schwerpunkt erfasst auf X:{cx} Y:{cy}")
+    #    else:
+    #        # Fallback (sollte bei geschlossenen Konturen quasi nie passieren)
+    #        cx, cy = int(x + (w / 2)), int(y + (h / 2))
+    #        self.log("SYSTEM", f"⚠️ Schwerpunkt-Fehler! Fallback auf BoundingBox-Mitte.")
+    #
+    #    # 2. Maßstab aus der Config laden (zur Berechnung der Feedback-Kreise)
+    #    seite_str = "links" if side == 'left' else "rechts"
+    #    config_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+    #    config_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+    #    
+    #    ideal_rx = int((spiegel_mm * config_x) / 2)
+    #    ideal_ry = int((spiegel_mm * config_y) / 2)
+    #    
+    #    # Check ob es eine Erdnuss ist
+    #    is_erdnuss = (w > ideal_rx * 2.2) or (h > ideal_ry * 2.2)
+    #
+    #    # Feedback für GUI speichern
+    #    feedback_data = {
+    #        'cx': cx, 'cy': cy, # Echte berechnete Mitte
+    #        'red_cx': int(x + w/2), 'red_cy': int(y + h/2), # Bounding-Box Mitte (für Debug)
+    #        'ideal_rx': ideal_rx, 'ideal_ry': ideal_ry,
+    #        'red_rx': int(w/2), 'red_ry': int(h/2),
+    #        'show_red': is_erdnuss,
+    #        'time': time.time()
+    #    }
+    #    
+    #    if side == 'left': self.calib_feedback_left = feedback_data
+    #    else: self.calib_feedback_right = feedback_data
+    #
+    #    return (cx, cy)
+
     def detect_new_shot(self, frame, side):
         state = self.state_left if side == 'left' else self.state_right
         reference_bgr = self.ref_left if side == 'left' else self.ref_right
@@ -277,60 +346,69 @@ class TargetTracker:
                             cx, cy = int(circles[0][0][0]), int(circles[0][0][1])
                             self.log(side, "✅ HoughCircles erfolgreich: Zentrum wurde korrigiert.")
                         else:
-                            #!!!!!!!!!!!!!ERSTMAL KEINE ABRISSKANTE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                            #self.log(side, "⚠️ HoughCircles ohne Ergebnis. Analysiere Abrisskante...")
-                            #erfolg_abriss = False
-                            #
-                            ## --- NEU: Die Abrisskanten-Logik ---
-                            ## 1. Prüfen, ob wir überhaupt schon alte Löcher haben
-                            #if state.cumulative_mask is not None and cv2.countNonZero(state.cumulative_mask) > 0:
-                            #    
-                            #    # 2. Alte Löcher minimal vergrößern, um den Kontaktbereich sicher zu erfassen
-                            #    kernel_dilate = np.ones((5, 5), np.uint8)
-                            #    old_holes = cv2.dilate(state.cumulative_mask, kernel_dilate, iterations=1)
-                            #    
-                            #    # 3. Schnittmenge bilden: Wo berührt der neue Auswuchs die alten Löcher?
-                            #    intersection = cv2.bitwise_and(old_holes, mask)
-                            #    inter_contours, _ = cv2.findContours(intersection, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                            #    
-                            #    if inter_contours:
-                            #        # Wir nehmen die größte Berührungsfläche
-                            #        largest_inter = max(inter_contours, key=cv2.contourArea)
-                            #        
-                            #        if cv2.contourArea(largest_inter) > 3: # Es muss eine echte Berührung sein
-                            #            # A) Schwerpunkt der Abrisskante berechnen
-                            #            M_int = cv2.moments(largest_inter)
-                            #            if M_int["m00"] != 0:
-                            #                cx_int = int(M_int["m10"] / M_int["m00"])
-                            #                cy_int = int(M_int["m01"] / M_int["m00"])
-                            #                
-                            #                # B) Schwerpunkt des GESAMTEN neuen Auswuchses berechnen
-                            #                M_new = cv2.moments(cnt)
-                            #                if M_new["m00"] != 0:
-                            #                    cx_new = int(M_new["m10"] / M_new["m00"])
-                            #                    cy_new = int(M_new["m01"] / M_new["m00"])
-                            #                    
-                            #                    # C) Vektor von der Abrisskante in Richtung der Auswuchs-Mitte
-                            #                    dx = cx_new - cx_int
-                            #                    dy = cy_new - cy_int
-                            #                    dist = np.hypot(dx, dy)
-                            #                    
-                            #                    if dist > 0:
-                            #                        # D) Von der Abrisskante exakt einen Kaliberradius ins neue Material wandern
-                            #                        nx = dx / dist
-                            #                        ny = dy / dist
-                            #                        cx = int(cx_int + nx * self.caliber_radius)
-                            #                        cy = int(cy_int + ny * self.caliber_radius)
-                            #                        
-                            #                        self.log(side, f"🎯 Abrisskante erkannt! Zentrum exakt {self.caliber_radius}px nach innen versetzt.")
-                            #                        erfolg_abriss = True
-                            #
-                            ## Fallback, wenn keine Abrisskante existiert (z.B. zwei Treffer zeitgleich auf frischer Pappe)
-                            #if not erfolg_abriss:
+                            self.log(side, "⚠️ HoughCircles ohne Ergebnis. Analysiere Abrisskante...")
+                            erfolg_abriss = False # <--- WICHTIG: Startet IMMER als False
+                            
+                            # --- Die Abrisskanten-Logik ---
+                            if state.cumulative_mask is not None and cv2.countNonZero(state.cumulative_mask) > 0:
+                                kernel_dilate = np.ones((5, 5), np.uint8)
+                                old_holes = cv2.dilate(state.cumulative_mask, kernel_dilate, iterations=1)
+                                
+                                intersection = cv2.bitwise_and(old_holes, mask)
+                                inter_contours, _ = cv2.findContours(intersection, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                                
+                                self.save_debug_image(f"abrisskante_schnittmenge_{side}", intersection)
+                                
+                                if inter_contours:
+                                    largest_inter = max(inter_contours, key=cv2.contourArea)
+                                    
+                                    if cv2.contourArea(largest_inter) > 3:
+                                        M_int = cv2.moments(largest_inter)
+                                        if M_int["m00"] != 0:
+                                            cx_int = int(M_int["m10"] / M_int["m00"])
+                                            cy_int = int(M_int["m01"] / M_int["m00"])
+                                            
+                                            M_new = cv2.moments(cnt)
+                                            if M_new["m00"] != 0:
+                                                cx_new = int(M_new["m10"] / M_new["m00"])
+                                                cy_new = int(M_new["m01"] / M_new["m00"])
+                                                
+                                                dx = cx_new - cx_int
+                                                dy = cy_new - cy_int
+                                                dist = np.hypot(dx, dy)
+                                                
+                                                if dist > 0:
+                                                    nx = dx / dist
+                                                    ny = dy / dist
+                                                    
+                                                    # ==============================================================
+                                                    # SCHALTER: HIER WIRD ZWISCHEN TEST UND SCHARF GEWECHSELT
+                                                    # ==============================================================
+                                                    
+                                                    # VARIANTE A: SHADOW-MODE (Aktuell aktiv - nur Loggen)
+                                                    test_cx = int(cx_int + nx * self.caliber_radius)
+                                                    test_cy = int(cy_int + ny * self.caliber_radius)
+                                                    self.log(side, f"🧪 TEST-ABRISSKANTE: Theoretisches Zentrum bei X:{test_cx} Y:{test_cy}")
+                                                    # (erfolg_abriss bleibt hier absichtlich False, damit der Fallback greift!)
+                                                    
+                                                    # VARIANTE B: SCHARF-MODUS (Einkommentieren, wenn die Tests gut waren)
+                                                    # cx = int(cx_int + nx * self.caliber_radius)
+                                                    # cy = int(cy_int + ny * self.caliber_radius)
+                                                    # self.log(side, f"🎯 Abrisskante AKTIV! Zentrum gesetzt auf X:{cx} Y:{cy}")
+                                                    # erfolg_abriss = True # Verhindert den Fallback am Ende!
+                                                    
+                                                    # ==============================================================
+
+                            # ---> DER DYNAMISCHE FALLBACK FÜR BEIDE MODI <---
+                            # Im Shadow-Mode löst er aus. Im Scharf-Modus wird er intelligent übersprungen!
+                            if not erfolg_abriss:
                                 cx, cy = int(circle_x), int(circle_y)
-                                self.log(side, "⚠️ Keine Abrisskante gefunden. Fallback auf Standard-Zentrum.")
+                                self.log(side, f"⚠️ Verwende FALLBACK-Zentrum für Wertung: X:{cx} Y:{cy}")
+
+                    # ---> HIER FEHLTE DAS ELSE FÜR PERFEKTE SCHÜSSE <---
                     else:
                         cx, cy = int(circle_x), int(circle_y)
+                        # self.log(side, "Perfektes Loch, nutze Standard-Zentrum.") # Optional zum Loggen
                         
                 elif self.erkennungs_methode == 'B':
                     M = cv2.moments(cnt)
@@ -856,16 +934,19 @@ class TargetTracker:
                         self.log("SYSTEM", f"Speichere Match und Highscore für {player_name}...")
                         
                         # ---> NEU: Wir sichern das visuelle Gedächtnis VOR dem Speichern <---
-                        backup_mask_l = self.state_left.cumulative_mask.copy() if self.state_left.cumulative_mask is not None else None
-                        backup_mask_r = self.state_right.cumulative_mask.copy() if self.state_right.cumulative_mask is not None else None
+                        # Zuerst prüfen wir, ob die Kamera und das Status-Objekt überhaupt existieren!
+                        backup_mask_l = self.state_left.cumulative_mask.copy() if (self.use_left and self.state_left and self.state_left.cumulative_mask is not None) else None
+                        backup_mask_r = self.state_right.cumulative_mask.copy() if (self.use_right and self.state_right and self.state_right.cumulative_mask is not None) else None
                         
                         if self.sm.save_current_match(player_name):
                             self.log("SYSTEM", "Match erfolgreich gespeichert!")
                             
                             # ---> NEU: Wir stellen das visuelle Gedächtnis wieder her! <---
-                            # So bleiben die alten Löcher dem System bekannt, nur die Trefferliste ist jetzt leer.
-                            self.state_left.cumulative_mask = backup_mask_l
-                            self.state_right.cumulative_mask = backup_mask_r
+                            # Auch hier nur für die aktiven Kameras
+                            if self.use_left and self.state_left:
+                                self.state_left.cumulative_mask = backup_mask_l
+                            if self.use_right and self.state_right:
+                                self.state_right.cumulative_mask = backup_mask_r
                             
                             # ---> NEU: Nur den Kamera-Puffer leeren, KEINE neuen Referenzen erzwingen <---
                             self.log("SYSTEM", "Leere Kamera-Puffer nach Pause...")
@@ -873,6 +954,7 @@ class TargetTracker:
                                 if self.use_left: self.cap_left.read()
                                 if self.use_right: self.cap_right.read()
                             # --------------------------------------------------------
+                            
                             
                         else:
                             self.log("SYSTEM", "Speichern abgebrochen (Keine Treffer).")
