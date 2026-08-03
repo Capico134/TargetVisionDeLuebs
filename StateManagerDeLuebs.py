@@ -236,7 +236,7 @@ class StateManager:
         elif cam_r: cam_str = "Nur Rechts"
         else: cam_str = "Keine"
 
-        # --- NEU: Wir berechnen die Gesamtringzahl für die Highscore! ---
+        # Wir berechnen die Gesamtringzahl für die Highscore!
         gesamt_ringe = sum(s.get('score', 0.0) for s in self.shots)
         gesamt_ringe = round(gesamt_ringe, 1)
 
@@ -247,12 +247,16 @@ class StateManager:
             "kameras": cam_str,
             "treffer_links": len(self.get_shots_for_side('left')),
             "treffer_rechts": len(self.get_shots_for_side('right')),
-            "gesamtpunkte": len(self.shots), # (Die reine Schuss-Anzahl)
-            "gesamt_ringe": gesamt_ringe,    # <--- NEU: Die aufsummierte Zehntel-Wertung!
+            "gesamtpunkte": len(self.shots),
+            "gesamt_ringe": gesamt_ringe,
             "erkennungs_methode": self.config.get('Erkennung', 'erkennungs_methode'),
             "match_id": self.current_match_id,
             "version": self.dm.get_current_version(),
-            "timestamp": datetime.now().strftime("%d.%m.%y %H:%M:%S")
+            "timestamp": datetime.now().strftime("%d.%m.%y %H:%M:%S"),
+            
+            # ---> NEU: Nullpunkte direkt aus dem StateManager abrufen! <---
+            "center_l": self.nullpunkts.get('left') if cam_l else None,
+            "center_r": self.nullpunkts.get('right') if cam_r else None
         }
 
         # 2. Timeline
