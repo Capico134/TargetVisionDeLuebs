@@ -222,39 +222,62 @@ class StateManager:
             self.match_start_mono = time.monotonic()
             self.dm.write_log(f"SYSTEM: 🔄 Komplett neues Match gestartet (ID: {self.get_formatted_match_id()})")
 
-    def save_current_match(self, player_name="Schütze 1"):
+    def save_current_match(self, player_name_l="Schütze 1", player_name_r="Schütze 2"):
         """Erstellt die Match-JSON, packt sie ins ZIP und setzt das Match zurück."""
         if not self.shots:
             self.dm.write_log("SYSTEM: Speichern abgebrochen - Keine Treffer vorhanden.")
             return False
 
-        # Prüfen, welche Kameras aktiv waren
         cam_l = self.config.getboolean('Kameras', 'nutze_kamera_links')
         cam_r = self.config.getboolean('Kameras', 'nutze_kamera_rechts')
+        
         if cam_l and cam_r: cam_str = "Links & Rechts"
         elif cam_l: cam_str = "Nur Links"
         elif cam_r: cam_str = "Nur Rechts"
         else: cam_str = "Keine"
 
-        # Wir berechnen die Gesamtringzahl für die Highscore!
-        gesamt_ringe = sum(s.get('score', 0.0) for s in self.shots)
-        gesamt_ringe = round(gesamt_ringe, 1)
+        # Wir berechnen die Gesamtringzahl getrennt!
+        shots_l = self.get_shots_for_side('left')
+        shots_r = self.get_shots_for_side('right')
+        gesamt_l = round(sum(s.get('score', 0.0) for s in shots_l), 1)
+        gesamt_r = round(sum(s.get('score', 0.0) for s in shots_r), 1)
+
+        # ---> NEU: Cleveres Formatting für das Duell! <---
+        if cam_l and cam_r and player_name_l != player_name_r:
+            spieler_str = f"{player_name_l} / {player_name_r}"
+            ringe_str = f"{gesamt_l} / {gesamt_r}"
+        else:
+            spieler_str = player_name_l if cam_l else player_name_r
+            if cam_l and cam_r:
+                ringe_str = f"{gesamt_l} / {gesamt_r}"
+            elif cam_l:
+                ringe_str = str(gesamt_l)
+            else:
+                ringe_str = str(gesamt_r)
+
+        # ---> NEU: Schüsse getrennt formatieren <---
+        if cam_l and cam_r:
+            schuesse_str = f"{len(shots_l)} / {len(shots_r)}"
+        elif cam_l:
+            schuesse_str = str(len(shots_l))
+        else:
+            schuesse_str = str(len(shots_r))
 
         # 1. Metadaten für Highscore und JSON
         metadata = {
-            "spieler": player_name,  
+            "spieler": spieler_str,  
             "programm_name": "TargetVision",
             "kameras": cam_str,
-            "treffer_links": len(self.get_shots_for_side('left')),
-            "treffer_rechts": len(self.get_shots_for_side('right')),
+            "treffer_links": len(shots_l),
+            "treffer_rechts": len(shots_r),
             "gesamtpunkte": len(self.shots),
-            "gesamt_ringe": gesamt_ringe,
+            "gesamtpunkte_anzeige": schuesse_str, # <--- NEU: Die formatierte Anzeige
+            "gesamt_ringe_anzeige": ringe_str,    
+            "gesamt_ringe": gesamt_l + gesamt_r,  
             "erkennungs_methode": self.config.get('Erkennung', 'erkennungs_methode'),
             "match_id": self.current_match_id,
             "version": self.dm.get_current_version(),
             "timestamp": datetime.now().strftime("%d.%m.%y %H:%M:%S"),
-            
-            # ---> NEU: Nullpunkte direkt aus dem StateManager abrufen! <---
             "center_l": self.nullpunkts.get('left') if cam_l else None,
             "center_r": self.nullpunkts.get('right') if cam_r else None
         }
@@ -268,7 +291,7 @@ class StateManager:
                 "x": s['pos'][0],
                 "y": s['pos'][1],
                 "a": round(s['area'], 1),
-                "score": s.get('score', 0.0) # <--- NEU: Ringwertung des Einzelschusses!
+                "score": s.get('score', 0.0)
             })
 
         match_data = {"metadata": metadata, "timeline": timeline}
@@ -281,7 +304,7 @@ class StateManager:
 
         # 4. Highscore speichern und Match auf null setzen
         self.hm.save_highscore(metadata)
-        self.dm.write_log(f"SYSTEM: 🏆 Match {self.get_formatted_match_id()} gespeichert (Ringe: {gesamt_ringe})!")
+        self.dm.write_log(f"SYSTEM: 🏆 Match {self.get_formatted_match_id()} gespeichert (Ringe: {ringe_str})!")
         
         self.reset_match('all')
         return True

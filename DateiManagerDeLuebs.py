@@ -4,7 +4,7 @@ import cv2
 import configparser
 import subprocess
 import zipfile
-import json  # <--- Diese Zeile hat gefehlt!
+import json  
 from datetime import datetime
 
 class DateiManager:
@@ -20,8 +20,16 @@ class DateiManager:
         """Erstellt Ordner und leert das Log beim Start."""
         if not os.path.exists(self.DEBUG_FOLDER):
             os.makedirs(self.DEBUG_FOLDER)
+        else:
+            # ---> NEU (Punkt A): Löscht alte Debug-Bilder bei jedem Programmstart <---
+            alte_dateien = glob.glob(os.path.join(self.DEBUG_FOLDER, "*"))
+            for f in alte_dateien:
+                try:
+                    if os.path.isfile(f):
+                        os.remove(f)
+                except Exception:
+                    pass
             
-        # ---> NEU: Erstellt den Ordner für die Bug-Pakete, falls er fehlt
         if not os.path.exists(self.ZIP_FOLDER):
             os.makedirs(self.ZIP_FOLDER)    
 
@@ -46,7 +54,6 @@ class DateiManager:
 
     def save_debug_image(self, name, image):
         """Speichert Debug-Bilder intelligent als JPG (Fotos) oder PNG (Masken)."""
-        # Wenn der Name "diff" enthält, nutzen wir verlustfreies PNG, sonst JPG
         ext = ".png" if "diff" in name.lower() else ".jpg"
         path = os.path.join(self.DEBUG_FOLDER, f"{name}{ext}")
         cv2.imwrite(path, image)
@@ -212,7 +219,6 @@ darstellung_ohne_weissabgleich = yes
             self.update_ini_value('Erkennung', 'hybrid_riss_faktor', '1.5')
             needs_reload = True
             
-        # --- NEU: Auto-Patch für die Hough-Faktoren ---
         if not config.has_option('Erkennung', 'hough_min_faktor'):
             print("🔧 Führe Auto-Patch aus: Füge 'hough_min_faktor = 0.85' hinzu...")
             self.update_ini_value('Erkennung', 'hough_min_faktor', '0.85')
@@ -239,7 +245,6 @@ darstellung_ohne_weissabgleich = yes
             self.update_ini_value('Zielscheibe', 'aktive_scheibe', 'Luftgewehr_10m')
             needs_reload = True
             
-        # --- NEU: Auto-Patch für den Hauptschalter der Ringwertung ---
         if not config.has_option('Zielscheibe', 'ringwertung_aktiv'):
             print("🔧 Führe Auto-Patch aus: Füge 'ringwertung_aktiv = no' hinzu...")
             self.update_ini_value('Zielscheibe', 'ringwertung_aktiv', 'no')
@@ -264,30 +269,32 @@ darstellung_ohne_weissabgleich = yes
         return config
 
 
-
     def clear_debug_images(self, side):
-        """Löscht alte Debug-Bilder (JPG und PNG) einer spezifischen Kamera vor einem neuen Match."""
+        """Löscht alte Debug-Bilder einer spezifischen Kamera vor einem neuen Match absolut wasserdicht."""
         try:
-            if hasattr(self, 'debug_dir'):
-                ordner = self.debug_dir
-            elif hasattr(self, 'log_dir'):
-                ordner = self.log_dir
-            else:
-                ordner = "debug_bilder" # Fallback
+            ordner = self.DEBUG_FOLDER
 
-            # --- GEÄNDERT: Wir suchen jetzt explizit nach JPG und PNG ---
-            suchmuster_jpg = os.path.join(ordner, f"*{side}*.jpg")
-            suchmuster_png = os.path.join(ordner, f"*{side}*.png")
+            # ---> NEU (Punkt B & C): Robuste Suche, die "left", "links", "l" sauber von rechts trennt <---
+            if side == 'all':
+                suchmuster = ["*"]
+            elif side == 'left':
+                suchmuster = ["*left*", "*links*", "*_l.*", "*_l_*"]
+            elif side == 'right':
+                suchmuster = ["*right*", "*rechts*", "*_r.*", "*_r_*"]
+            else:
+                suchmuster = [f"*{side}*"]
+                
+            alte_bilder = []
+            for muster in suchmuster:
+                alte_bilder.extend(glob.glob(os.path.join(ordner, muster)))
             
-            # Beide Listen einfach zusammenhängen
-            alte_bilder = glob.glob(suchmuster_jpg) + glob.glob(suchmuster_png)
-            
-            for bild in alte_bilder:
-                try:
-                    os.remove(bild)
-                except Exception as e:
-                    pass
-            
+            # set() verhindert, dass wir versuchen, dieselbe Datei doppelt zu löschen
+            for bild in set(alte_bilder):
+                if os.path.isfile(bild):
+                    try:
+                        os.remove(bild)
+                    except Exception:
+                        pass
         except Exception as e:
             print(f"Fehler beim Aufräumen des Debug-Ordners: {e}")
 
@@ -297,7 +304,6 @@ darstellung_ohne_weissabgleich = yes
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         zip_filepath = os.path.join(self.ZIP_FOLDER, f"Debug_Paket_{timestamp}.zip")
         
-        # Aufruf der generischen Funktion
         return self.create_zip_package(zip_filepath)
 
     def create_zip_package(self, zip_filepath, match_data=None):
@@ -307,20 +313,17 @@ darstellung_ohne_weissabgleich = yes
         """
         try:
             with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                # 1. Config und Log hinzufügen
                 if os.path.exists(self.CONFIG_FILE):
                     zipf.write(self.CONFIG_FILE, os.path.basename(self.CONFIG_FILE))
                 if os.path.exists(self.LOG_FILE):
                     zipf.write(self.LOG_FILE, os.path.basename(self.LOG_FILE))
                 
-                # 2. Nur Dateien aus dem Debug-Ordner hinzufügen
                 if os.path.exists(self.DEBUG_FOLDER):
                     for file in os.listdir(self.DEBUG_FOLDER):
                         file_path = os.path.join(self.DEBUG_FOLDER, file)
                         if os.path.isfile(file_path):
                             zipf.write(file_path, os.path.join(self.DEBUG_FOLDER, file))
                             
-                # ---> NEU: match.json direkt in die ZIP schreiben <---
                 if match_data is not None:
                     json_str = json.dumps(match_data, indent=4)
                     zipf.writestr("match.json", json_str)
@@ -366,9 +369,8 @@ darstellung_ohne_weissabgleich = yes
                     json.dump(default_targets, f, indent=4)
             except IOError as e:
                 print(f"❌ Fehler beim Erstellen von {target_file}: {e}")
-                return default_targets # Wir geben sie trotzdem zurück, damit das Spiel läuft!
+                return default_targets 
 
-        # Datei laden
         try:
             with open(target_file, "r", encoding="utf-8") as f:
                 return json.load(f)

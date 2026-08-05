@@ -10,14 +10,12 @@ from PIL import Image, ImageTk, ImageDraw, ImageFont
 import configparser  
 
 class MatchDetailWindow(tk.Toplevel):
-    """Ein eigenständiges Fenster für die interaktive Detail-Ansicht (Zoom & Pan)."""
     def __init__(self, parent, match_id, zip_path):
         super().__init__(parent)
         self.title(f"TargetVision Detailauswertung - MATCH {match_id}")
         self.geometry("1400x800")
         self.configure(bg="#2c3e50")
         
-        # Lese den caliber_radius aus der config.ini 
         config = configparser.ConfigParser()
         config.read("config.ini")
         self.caliber_radius = config.getint('Erkennung', 'caliber_radius', fallback=11)
@@ -66,35 +64,62 @@ class MatchDetailWindow(tk.Toplevel):
         self.list_frame.pack(side="right", fill="y", padx=10, pady=10)
         self.list_frame.pack_propagate(False) 
         
-        tk.Label(self.list_frame, text="Treffer-Liste", font=('Arial', 16, 'bold'), bg="#34495e", fg="white").pack(pady=10)
+        cols = ("Nr", "Ringe")
         
-        cols = ("Nr", "Cam", "Ringe")
-        self.tree = ttk.Treeview(self.list_frame, columns=cols, show="headings", height=25)
-        self.tree.heading("Nr", text="#")
-        self.tree.heading("Cam", text="Cam")
-        self.tree.heading("Ringe", text="Ringe")
+        # ---> TABELLE LINKS <---
+        tk.Label(self.list_frame, text="Treffer Links", font=('Arial', 14, 'bold'), bg="#34495e", fg="white").pack(pady=(5,0))
+        self.tree_l = ttk.Treeview(self.list_frame, columns=cols, show="headings", height=10)
+        self.tree_l.heading("Nr", text="#")
+        self.tree_l.heading("Ringe", text="Ringe")
+        self.tree_l.column("Nr", width=60, anchor="center")
+        self.tree_l.column("Ringe", width=120, anchor="center")
+        self.tree_l.tag_configure("high_score", foreground="#00aa00") 
+        self.tree_l.pack(fill="x", padx=5, pady=2)
         
-        self.tree.column("Nr", width=60, anchor="center")
-        self.tree.column("Cam", width=80, anchor="center")
-        self.tree.column("Ringe", width=120, anchor="center")
-        
-        self.tree.tag_configure("high_score", foreground="#00aa00") 
-        self.tree.pack(fill="both", expand=True)
-        
-        # ---> NEU: Klick-Event für die Tabelle binden <---
-        self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
-        
-        total = 0.0
-        for i, hit in enumerate(self.timeline):
-            cam = "L" if hit['s'] == 'l' else "R"
-            score = hit.get('score', 0.0)
-            total += score
-            tag = ("high_score",) if score >= 10.0 else ()
-            self.tree.insert("", "end", values=(i+1, cam, f"{score:.1f}"), tags=tag)
-            
-        tk.Label(self.list_frame, text=f"Gesamt: {total:.1f}", font=('Arial', 18, 'bold'), bg="#34495e", fg="#00ff00").pack(pady=10)
-        tk.Label(self.list_frame, text="Mausrad: Zoomen\nMausklick+Ziehen: Pannen\nZeile klicken: Treffer markieren", font=('Arial', 10), bg="#34495e", fg="#bdc3c7").pack(pady=5)
+        self.lbl_sum_l = tk.Label(self.list_frame, text="Gesamt: 0.0", font=('Arial', 14, 'bold'), bg="#34495e", fg="#00ff00")
+        self.lbl_sum_l.pack(pady=(0, 10))
 
+        # ---> TABELLE RECHTS <---
+        tk.Label(self.list_frame, text="Treffer Rechts", font=('Arial', 14, 'bold'), bg="#34495e", fg="white").pack(pady=(5,0))
+        self.tree_r = ttk.Treeview(self.list_frame, columns=cols, show="headings", height=10)
+        self.tree_r.heading("Nr", text="#")
+        self.tree_r.heading("Ringe", text="Ringe")
+        self.tree_r.column("Nr", width=60, anchor="center")
+        self.tree_r.column("Ringe", width=120, anchor="center")
+        self.tree_r.tag_configure("high_score", foreground="#00aa00") 
+        self.tree_r.pack(fill="x", padx=5, pady=2)
+        
+        self.lbl_sum_r = tk.Label(self.list_frame, text="Gesamt: 0.0", font=('Arial', 14, 'bold'), bg="#34495e", fg="#00ff00")
+        self.lbl_sum_r.pack(pady=(0, 10))
+        
+        tk.Label(self.list_frame, text="Mausrad: Zoomen | Klick+Ziehen: Pannen", font=('Arial', 10), bg="#34495e", fg="#bdc3c7").pack(side="bottom", pady=5)
+
+        # Events binden (mit Seitenzuordnung)
+        self.tree_l.bind("<<TreeviewSelect>>", lambda e: self.on_tree_select(e, 'l'))
+        self.tree_r.bind("<<TreeviewSelect>>", lambda e: self.on_tree_select(e, 'r'))
+        
+        # Daten einfüllen
+        total_l, total_r = 0.0, 0.0
+        idx_l, idx_r = 1, 1
+        
+        for i, hit in enumerate(self.timeline):
+            score = hit.get('score', 0.0)
+            tag = ("high_score",) if score >= 10.0 else ()
+            
+            # Wir nutzen die versteckte iid, um den Index aus der Timeline zu speichern!
+            if hit['s'] == 'l':
+                self.tree_l.insert("", "end", iid=str(i), values=(idx_l, f"{score:.1f}"), tags=tag)
+                total_l += score
+                idx_l += 1
+            else:
+                self.tree_r.insert("", "end", iid=str(i), values=(idx_r, f"{score:.1f}"), tags=tag)
+                total_r += score
+                idx_r += 1
+                
+        self.lbl_sum_l.config(text=f"Gesamt: {total_l:.1f}")
+        self.lbl_sum_r.config(text=f"Gesamt: {total_r:.1f}")
+
+        # Canvas Setup
         self.img_frame = tk.Frame(self, bg="#2c3e50")
         self.img_frame.pack(side="left", fill="both", expand=True)
 
@@ -132,9 +157,11 @@ class MatchDetailWindow(tk.Toplevel):
 
     def update_images(self):
         try:
-            font = ImageFont.truetype("arial.ttf", 15)
+            # Ein leicht fetterer Font liest sich im Kreis besser
+            font = ImageFont.truetype("arialbd.ttf", int(14 * (self.zoom_factor * 0.7)))
         except IOError:
-            font = ImageFont.load_default()
+            try: font = ImageFont.truetype("arial.ttf", int(14 * (self.zoom_factor * 0.7)))
+            except: font = ImageFont.load_default()
 
         if self.orig_img_l:
             new_w = int(self.orig_img_l.width * self.zoom_factor)
@@ -160,11 +187,11 @@ class MatchDetailWindow(tk.Toplevel):
             self.canvas_r.create_image(0, 0, anchor="nw", image=self.photo_r)
             self.canvas_r.config(scrollregion=self.canvas_r.bbox("all"))
             
-        # ---> NEU: Nach dem Zoomen das Fadenkreuz direkt neu über das Bild zeichnen <---
-        self.on_tree_select(None)
+        self.on_tree_select(None, None)
 
     def draw_hits(self, draw, side, font):
-        for i, hit in enumerate(self.timeline):
+        idx = 1
+        for hit in self.timeline:
             if hit['s'] == side:
                 cx = hit['x'] * self.zoom_factor
                 cy = hit['y'] * self.zoom_factor
@@ -173,52 +200,64 @@ class MatchDetailWindow(tk.Toplevel):
                 r = self.caliber_radius * self.zoom_factor 
                 draw.ellipse((cx-r, cy-r, cx+r, cy+r), outline="red", width=4)
                 
-                if score > 0.0:
-                    score_str = f"{score:.1f}"
-                    text_x, text_y = cx + r + 5, cy - 8 
-                    draw.text((text_x + 1, text_y + 1), score_str, fill="black", font=font)
-                    color = "#00ff00" if score >= 10.0 else "#ffff00"
-                    draw.text((text_x, text_y), score_str, fill=color, font=font)
+                id_str = str(idx)
+                
+                # ---> NEU: Zentrierte Nummern IM Kreis <---
+                try:
+                    bbox = font.getbbox(id_str)
+                    tw = bbox[2] - bbox[0]
+                    th = bbox[3] - bbox[1]
+                except AttributeError:
+                    tw, th = draw.textsize(id_str, font=font)
+                
+                # Exakt mittig setzen
+                text_x = cx - (tw / 2)
+                text_y = cy - (th / 2) - int(2 * self.zoom_factor) # Leichter optischer Ausgleich
+                
+                # Schwarzer Outline-Schatten für Kontrast auf hellen UND dunklen Löchern
+                outline_color = "black"
+                draw.text((text_x-1, text_y-1), id_str, fill=outline_color, font=font)
+                draw.text((text_x+1, text_y-1), id_str, fill=outline_color, font=font)
+                draw.text((text_x-1, text_y+1), id_str, fill=outline_color, font=font)
+                draw.text((text_x+1, text_y+1), id_str, fill=outline_color, font=font)
+                
+                color = "#00ff00" if score >= 10.0 else "#ffffff"
+                draw.text((text_x, text_y), id_str, fill=color, font=font)
+                
+                idx += 1
 
-    # ---> NEU: Die exakte, dezentere (aber knallige) Markierung <---
-    def on_tree_select(self, event):
-        # 1. Alte Markierungen komplett von beiden Canvas-Flächen löschen
+    def on_tree_select(self, event, side):
         if self.orig_img_l: self.canvas_l.delete("highlight")
         if self.orig_img_r: self.canvas_r.delete("highlight")
 
-        selected = self.tree.selection()
-        if not selected:
+        # Selektion bereinigen (Wer in Tabelle L klickt, hebt R auf)
+        if side == 'l':
+            self.tree_r.selection_remove(self.tree_r.selection())
+            tree = self.tree_l
+        elif side == 'r':
+            self.tree_l.selection_remove(self.tree_l.selection())
+            tree = self.tree_r
+        else:
             return
 
-        # 2. Ausgewählten Treffer aus der Timeline holen
-        item = selected[0]
-        values = self.tree.item(item, "values")
-        try:
-            # Zeilennummer (beginnt bei 1) in Index (beginnt bei 0) umrechnen
-            shot_idx = int(values[0]) - 1 
-        except ValueError:
-            return
+        selected = tree.selection()
+        if not selected: return
 
-        if shot_idx < 0 or shot_idx >= len(self.timeline):
-            return
+        # Timeline-Index aus der versteckten IID auslesen!
+        timeline_idx = int(selected[0])
+        if timeline_idx < 0 or timeline_idx >= len(self.timeline): return
 
-        hit = self.timeline[shot_idx]
-        side = hit['s']
+        hit = self.timeline[timeline_idx]
         
-        # 3. Position an den aktuellen Zoom anpassen
         cx = hit['x'] * self.zoom_factor
         cy = hit['y'] * self.zoom_factor
         r = self.caliber_radius * self.zoom_factor
         
-        # Welches Canvas ist das richtige?
-        canvas = self.canvas_l if side == 'l' else self.canvas_r
-        
+        canvas = self.canvas_l if hit['s'] == 'l' else self.canvas_r
         if canvas:
-            # 4. Exakt deckungsgleich zeichnen!
-            # Gleicher Radius, gleiche Linienstärke (width=4), 
-            # aber knalliges Cyan ("#00ffff")
-            canvas.create_oval(cx - r, cy - r, cx + r, cy + r, 
-                               outline="#00ffff", width=7, tags="highlight")
+            canvas.create_oval(cx - r, cy - r, cx + r, cy + r, outline="#00ffff", width=7, tags="highlight")
+
+
 class HighscoreViewer:
     def __init__(self, root):
         self.root = root
@@ -290,14 +329,31 @@ class HighscoreViewer:
         self.tree.bind("<Button-3>", self.show_context_menu)
         self.tree.bind("<Delete>", lambda event: self.delete_selected_entries())
 
+    def load_and_display_data(self):
+        try:
+            with open(self.file_path, "r", encoding="utf-8") as file:
+                self.data = json.load(file)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.data = []
+
+        self.update_treeview(self.data)
+        self.sort_column("ID", True)
+
     def sort_column(self, col, reverse):
         def convert_value(value):
             try:
                 if col == "Datum":
                     return dt.datetime.strptime(value, "%d.%m.%y %H:%M:%S")
-                elif col in ["ID", "Schüsse"]:
+                elif col == "ID":
                     return int(value)
+                elif col == "Schüsse":
+                    # Splittet z.B. "10 / 5" und addiert es (15), damit korrekt nach Summe sortiert wird
+                    if "/" in str(value):
+                        return sum(int(v.strip()) for v in str(value).split("/"))
+                    return int(value) if str(value).isdigit() else 0
                 elif col == "Ringe":
+                    if "/" in str(value):
+                        return sum(float(v.strip()) for v in str(value).split("/"))
                     return float(value) if value != "-" else -1.0
                 return value
             except ValueError:
@@ -311,16 +367,6 @@ class HighscoreViewer:
             
         self.tree.heading(col, command=lambda: self.sort_column(col, not reverse))
 
-    def load_and_display_data(self):
-        try:
-            with open(self.file_path, "r", encoding="utf-8") as file:
-                self.data = json.load(file)
-        except (FileNotFoundError, json.JSONDecodeError):
-            self.data = []
-
-        self.update_treeview(self.data)
-        self.sort_column("ID", True)
-
     def update_treeview(self, data):
         for row in self.tree.get_children():
             self.tree.delete(row)
@@ -330,13 +376,19 @@ class HighscoreViewer:
             datum = hs.get("timestamp", "-")
             spieler = hs.get("spieler", "Unbekannt")
             kameras = hs.get("kameras", "Unbekannt")
-            schuesse = hs.get("gesamtpunkte", 0)
             
-            ringe = hs.get("gesamt_ringe", 0.0) 
-            ringe_str = f"{ringe:.1f}" if ringe > 0.0 else "-"
+            # ---> NEU: Schüsse formatiert anzeigen (mit Fallback für alte Savegames)
+            schuesse_str = hs.get("gesamtpunkte_anzeige")
+            if not schuesse_str:
+                schuesse_str = str(hs.get("gesamtpunkte", 0))
             
-            self.tree.insert("", "end", values=(match_id, datum, spieler, kameras, schuesse, ringe_str))
-
+            # Ringe holen
+            ringe_str = hs.get("gesamt_ringe_anzeige")
+            if not ringe_str:
+                ringe = hs.get("gesamt_ringe", 0.0) 
+                ringe_str = f"{ringe:.1f}" if ringe > 0.0 else "-"
+            
+            self.tree.insert("", "end", values=(match_id, datum, spieler, kameras, schuesse_str, ringe_str))
     def apply_filters(self):
         self.update_treeview(self.data)
         filtered_items = []
