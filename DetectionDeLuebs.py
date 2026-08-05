@@ -297,9 +297,9 @@ class TargetDetector:
             if not state.target_present:
                 self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> SCHEIBE ({abs(diff):.1f}% unter Limit {state.min_area}%)")
                 state.target_present = True
-                
-                if hasattr(self.dm, 'clear_debug_images'):
-                    self.dm.clear_debug_images(state.side)
+                #SOOOOOOOOOOOOOOOOOOOOONEEEEEEEEEEEEEEEEESCHEIIIIIIIIIIIIISSSSSSSSSSEEEEEEEEEEEEEEEEEEE
+                #if hasattr(self.dm, 'clear_debug_images'):
+                #    self.dm.clear_debug_images(state.side)
                 
                 if current_ref is None:
                     self.set_reference_image(frame, state.side)
