@@ -274,6 +274,7 @@ class TargetDetector:
                 shot_idx = sum(1 for s in self.sm.shots if s['side'] == side) 
                 self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff", thresh_new)
                 self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_orig", frame)
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff_gesamt", state.cumulative_mask)
 
             return True
         else:
@@ -291,7 +292,7 @@ class TargetDetector:
         if bg_visible:
             if state.target_present:
                 self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> WAND (+{diff:.1f}% über Limit {state.min_area}%)")
-                self.log(state.side, "ZIELSCHEIBE VERLASSEN. (Pausiert)")
+                self.log(state.side, "Scheibe außer Sicht -> Warte auf Zielscheibe...")
                 state.target_present = False
         else:
             if not state.target_present:
