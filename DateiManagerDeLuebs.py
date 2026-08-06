@@ -138,6 +138,7 @@ erkennungs_methode = C
 # Für Methode C: Ab welchem Vergrößerungs-Faktor (im Vergleich zum Normal-Kaliber) ein unsauberes Loch
 # nicht mehr als "Normal" gilt und den Hough-Algorithmus auslöst. (Standard: 1.5)
 hybrid_riss_faktor = 1.5
+hybrid_sichel_faktor = 0.75
 # Für Methode C: Begrenzungen für den Hough-Algorithmus (Faktor bezogen auf caliber_radius)
 hough_min_faktor = 0.85
 hough_max_faktor = 1.15
@@ -217,6 +218,11 @@ darstellung_ohne_weissabgleich = yes
         if not config.has_option('Erkennung', 'hybrid_riss_faktor'):
             print("🔧 Führe Auto-Patch aus: Füge 'hybrid_riss_faktor = 1.5' hinzu...")
             self.update_ini_value('Erkennung', 'hybrid_riss_faktor', '1.5')
+            needs_reload = True
+        
+        if not config.has_option('Erkennung', 'hybrid_sichel_faktor'):
+            print("🔧 Führe Auto-Patch aus: Füge 'hybrid_sichel_faktor = 0.75' hinzu...")
+            self.update_ini_value('Erkennung', 'hybrid_sichel_faktor', '0.75')
             needs_reload = True
             
         if not config.has_option('Erkennung', 'hough_min_faktor'):
@@ -337,40 +343,9 @@ darstellung_ohne_weissabgleich = yes
             return False
             
     def load_targets(self):
-        """Lädt die zielscheiben.json oder erstellt sie mit DSB-Standardwerten neu."""
+        """Lädt die zielscheiben.json aus dem Projektverzeichnis."""
         target_file = "zielscheiben.json"
         
-        if not os.path.exists(target_file):
-            print(f"🔧 Erstelle Standard-Zielscheiben-Datei: {target_file}")
-            default_targets = {
-                "Luftpistole_10m": {
-                    "name": "Luftpistole 10m (DSB)",
-                    "kaliber_mm": 4.5,
-                    "spiegel_durchmesser_mm": 59.5,
-                    "ringe_durchmesser_mm": {
-                        "10": 11.5, "9": 27.5, "8": 43.5, "7": 59.5, "6": 75.5,
-                        "5": 91.5, "4": 107.5, "3": 123.5, "2": 139.5, "1": 155.5
-                    },
-                    "innenzehner_mm": 5.0
-                },
-                "Luftgewehr_10m": {
-                    "name": "Luftgewehr 10m (DSB)",
-                    "kaliber_mm": 4.5,
-                    "spiegel_durchmesser_mm": 30.5,
-                    "ringe_durchmesser_mm": {
-                        "10": 0.5, "9": 5.5, "8": 10.5, "7": 15.5, "6": 20.5,
-                        "5": 25.5, "4": 30.5, "3": 35.5, "2": 40.5, "1": 45.5
-                    },
-                    "innenzehner_mm": 0.5
-                }
-            }
-            try:
-                with open(target_file, "w", encoding="utf-8") as f:
-                    json.dump(default_targets, f, indent=4)
-            except IOError as e:
-                print(f"❌ Fehler beim Erstellen von {target_file}: {e}")
-                return default_targets 
-
         try:
             with open(target_file, "r", encoding="utf-8") as f:
                 return json.load(f)

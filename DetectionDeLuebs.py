@@ -22,6 +22,7 @@ class TargetDetector:
         self.hit_tolerance = config.getint('Erkennung', 'hit_tolerance', fallback=15)
         self.erkennungs_methode = config.get('Erkennung', 'erkennungs_methode', fallback='C').upper()
         self.hybrid_riss_faktor = config.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.5)
+        self.hybrid_sichel_faktor = config.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=0.75)
         self.hough_min_f = config.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85)
         self.hough_max_f = config.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15)
         self.ausloeser_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
@@ -166,8 +167,13 @@ class TargetDetector:
                 if self.erkennungs_methode == 'C':
                     (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
                     
-                    if radius > (self.caliber_radius * self.hybrid_riss_faktor):  
-                        self.log(side, f"🛠️ Unsauberes Loch (Radius: {radius:.1f}px) -> Aktiviere HoughCircles...")
+                    #min_grenze = self.caliber_radius * self.hough_min_f  # Entspricht 0.85
+                    #max_grenze = self.caliber_radius * self.hough_max_f  # Entspricht 1.15
+
+                    #if (radius < min_grenze) or (radius > max_grenze):
+                    if (radius > (self.caliber_radius * self.hybrid_riss_faktor)) or (radius < (self.caliber_radius * self.hybrid_sichel_faktor)):
+                        self.log(side, f"🛠️ Sichel oder Riss erkannt (Radius: {radius:.1f}px) -> Aktiviere HoughCircles...")
+                        # Hier übernimmt der Hough-Algorithmus
                         mask = np.zeros_like(thresh_new)
                         cv2.drawContours(mask, [cnt], -1, 255, -1)
                         
