@@ -6,6 +6,7 @@ import subprocess
 import zipfile
 import json  
 from datetime import datetime
+from AuditedConfig import AuditedConfigParser
 
 class DateiManager:
     def __init__(self):
@@ -200,7 +201,8 @@ darstellung_ohne_weissabgleich = yes
 """)
             print("Standard config.ini erstellt.")
 
-        config = configparser.ConfigParser()
+        # ---> NEU: Initialisierung des Spions (AuditedConfigParser) <---
+        config = AuditedConfigParser(log_callback=self.write_log)
         config.read(self.CONFIG_FILE, encoding='utf-8')
 
         # --- AUTO-PATCH / MIGRATION ---
