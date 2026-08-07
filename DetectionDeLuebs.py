@@ -187,8 +187,8 @@ class TargetDetector:
                         min_r = max(2, int(self.caliber_radius * self.hough_min_f))
                         max_r = int(self.caliber_radius * self.hough_max_f)
                         
-                        circles = cv2.HoughCircles(mask_blurred, cv2.HOUGH_GRADIENT, dp=1, minDist=20,
-                                                   param1=40, param2=10, 
+                        circles = cv2.HoughCircles(mask_blurred, cv2.HOUGH_GRADIENT, dp=1, minDist=2,
+                                                   param1=30, param2=7, 
                                                    minRadius=min_r, maxRadius=max_r)
                         
                         hough_success = False

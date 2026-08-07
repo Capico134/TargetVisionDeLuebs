@@ -264,38 +264,41 @@ class StateManager:
         else:
             schuesse_str = str(len(shots_r))
 
-        # 1. Metadaten für Highscore und JSON
+        # Nullpunkte sicher abgreifen
+        center_l_raw = self.nullpunkts.get('left')
+        center_r_raw = self.nullpunkts.get('right')
+
+        # 1. Metadaten für Highscore und JSON (mit explizitem Typen-Cast für NumPy-Sicherheit)
         metadata = {
             "spieler": spieler_str,  
             "programm_name": "TargetVision",
             "kameras": cam_str,
-            "treffer_links": len(shots_l),
-            "treffer_rechts": len(shots_r),
-            "gesamtpunkte": len(self.shots),
-            "gesamtpunkte_anzeige": schuesse_str, # <--- NEU: Die formatierte Anzeige
+            "treffer_links": int(len(shots_l)),
+            "treffer_rechts": int(len(shots_r)),
+            "gesamtpunkte": int(len(self.shots)),
+            "gesamtpunkte_anzeige": schuesse_str, 
             "gesamt_ringe_anzeige": ringe_str,    
-            "gesamt_ringe": gesamt_l + gesamt_r,  
-            "erkennungs_methode": self.config.get('Erkennung', 'erkennungs_methode'),
-            "match_id": self.current_match_id,
-            "version": self.dm.get_current_version(),
+            "gesamt_ringe": float(gesamt_l + gesamt_r),  
+            "erkennungs_methode": str(self.config.get('Erkennung', 'erkennungs_methode')),
+            "match_id": int(self.current_match_id),
+            "version": str(self.dm.get_current_version()),
             "timestamp": datetime.now().strftime("%d.%m.%y %H:%M:%S"),
-            "center_l": self.nullpunkts.get('left') if cam_l else None,
-            "center_r": self.nullpunkts.get('right') if cam_r else None,
-            # ---> NEU: Das Fortsetzungs-Flag für das Labor <---
-            "fortsetzung_links": self.state_left.is_fortsetzung if (cam_l and self.state_left) else False,
-            "fortsetzung_rechts": self.state_right.is_fortsetzung if (cam_r and self.state_right) else False
+            "center_l": [int(center_l_raw[0]), int(center_l_raw[1])] if (cam_l and center_l_raw) else None,
+            "center_r": [int(center_r_raw[0]), int(center_r_raw[1])] if (cam_r and center_r_raw) else None,
+            "fortsetzung_links": bool(self.state_left.is_fortsetzung) if (cam_l and self.state_left) else False,
+            "fortsetzung_rechts": bool(self.state_right.is_fortsetzung) if (cam_r and self.state_right) else False
         }
 
-        # 2. Timeline
+        # 2. Timeline (Hier waschen wir die x/y Koordinaten in Standard-Ints)
         timeline = []
         for s in self.shots:
             timeline.append({
-                "t": round(s['t_mono'], 3),
+                "t": round(float(s['t_mono']), 3),
                 "s": "l" if s['side'] == 'left' else "r",
-                "x": s['pos'][0],
-                "y": s['pos'][1],
-                "a": round(s['area'], 1),
-                "score": s.get('score', 0.0)
+                "x": int(s['pos'][0]),
+                "y": int(s['pos'][1]),
+                "a": round(float(s['area']), 1),
+                "score": float(s.get('score', 0.0))
             })
 
         match_data = {"metadata": metadata, "timeline": timeline}
