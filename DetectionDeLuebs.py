@@ -23,6 +23,7 @@ class TargetDetector:
         self.erkennungs_methode = config.get('Erkennung', 'erkennungs_methode', fallback='C').upper()
         self.hybrid_riss_faktor = config.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.5)
         self.hybrid_sichel_faktor = config.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=0.75)
+        self.hybrid_discard_faktor = config.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5)
         self.hough_min_f = config.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85)
         self.hough_max_f = config.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15)
         self.ausloeser_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
@@ -157,6 +158,10 @@ class TargetDetector:
 
         contours, _ = cv2.findContours(thresh_new, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         new_shots_found_this_frame = []
+        
+        # NEU: Flag, um zu merken, ob wir Riesen-Risse maskieren müssen
+        update_mask_only = False 
+        
         if self.ausloeser_erschuetterung or len(contours) > 0:
             self.log(side, f"Analysiere Konturen... (Neuer Zuwachs: {change_percent:.2f}% | Konturen: {len(contours)})")
 
@@ -167,13 +172,14 @@ class TargetDetector:
                 if self.erkennungs_methode == 'C':
                     (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
                     
-                    #min_grenze = self.caliber_radius * self.hough_min_f  # Entspricht 0.85
-                    #max_grenze = self.caliber_radius * self.hough_max_f  # Entspricht 1.15
-
-                    #if (radius < min_grenze) or (radius > max_grenze):
+                    # ---> NEU: Der Discard-Check für Riesen-Konturen <---
+                    if radius > (self.caliber_radius * self.hybrid_discard_faktor):
+                        self.log(side, f"🚫 Störung ignoriert (Radius {radius:.1f}px > Limit). Wird maskiert, nicht gewertet!")
+                        update_mask_only = True
+                        continue # Überspringt die Treffer-Auswertung für diese Kontur!
+                    
                     if (radius > (self.caliber_radius * self.hybrid_riss_faktor)) or (radius < (self.caliber_radius * self.hybrid_sichel_faktor)):
                         self.log(side, f"🛠️ Sichel oder Riss erkannt (Radius: {radius:.1f}px) -> Aktiviere HoughCircles...")
-                        # Hier übernimmt der Hough-Algorithmus
                         mask = np.zeros_like(thresh_new)
                         cv2.drawContours(mask, [cnt], -1, 255, -1)
                         
@@ -184,13 +190,47 @@ class TargetDetector:
                         circles = cv2.HoughCircles(mask_blurred, cv2.HOUGH_GRADIENT, dp=1, minDist=20,
                                                    param1=40, param2=10, 
                                                    minRadius=min_r, maxRadius=max_r)
+                        
+                        hough_success = False
+                        
                         if circles is not None:
-                            cx, cy = int(circles[0][0][0]), int(circles[0][0][1])
-                            self.log(side, "✅ HoughCircles erfolgreich: Zentrum wurde korrigiert.")
-                        else:
-                            self.log(side, "⚠️ HoughCircles ohne Ergebnis. Analysiere Abrisskante...")
+                            # Wir haben Hough-Ergebnisse. Starte Ranking!
+                            best_coverage = -1
+                            best_cx, best_cy = int(circle_x), int(circle_y)
+                            
+                            found_circles = np.round(circles[0, :]).astype("int")
+                            self.log(side, f"🔎 HoughCircles hat {len(found_circles)} Kandidaten gefunden. Starte Ranking...")
+                            
+                            for (hx, hy, hr) in found_circles:
+                                circle_mask = np.zeros_like(thresh_new)
+                                cv2.circle(circle_mask, (hx, hy), hr, 255, -1)
+                                
+                                intersection = cv2.bitwise_and(thresh_new, circle_mask)
+                                pixels_in_circle = cv2.countNonZero(circle_mask)
+                                pixels_in_intersection = cv2.countNonZero(intersection)
+                                
+                                coverage_percent = (pixels_in_intersection / pixels_in_circle) * 100 if pixels_in_circle > 0 else 0
+                                
+                                if coverage_percent > best_coverage:
+                                    best_coverage = coverage_percent
+                                    best_cx, best_cy = hx, hy
+
+                            self.log(side, f"📊 Bester Kreis hat {best_coverage:.1f}% Weißanteil.")
+
+                            # Reduziert auf 5% wie gewünscht
+                            if best_coverage >= 5.0:
+                                cx, cy = best_cx, best_cy
+                                self.log(side, "✅ HoughCircles erfolgreich: Zentrum wurde über Weiß-Ranking korrigiert.")
+                                hough_success = True
+                            else:
+                                self.log(side, "⚠️ Hough-Sieger hat zu wenig Weißanteil (< 5%). Verwerfe Hough-Ergebnis!")
+
+                        # Gemeinsamer Fallback-Pfad für "Hough liefert Müll" UND "Hough findet nichts"
+                        if not hough_success:
+                            self.log(side, "⚠️ Wechsle zu Abrisskante / Fallback...")
                             erfolg_abriss = False
                             
+                            # 1. Check: Gibt es überhaupt alte Löcher für eine Abrisskante?
                             if state.cumulative_mask is not None and cv2.countNonZero(state.cumulative_mask) > 0:
                                 kernel_dilate = np.ones((5, 5), np.uint8)
                                 old_holes = cv2.dilate(state.cumulative_mask, kernel_dilate, iterations=1)
@@ -198,10 +238,13 @@ class TargetDetector:
                                 intersection = cv2.bitwise_and(old_holes, mask)
                                 inter_contours, _ = cv2.findContours(intersection, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                                 
-                                self.save_debug_image(f"abrisskante_schnittmenge_{side}", intersection)
+                                ts_abriss = datetime.now().strftime('%H%M%S_%f')[:-3]
+                                self.save_debug_image(f"abrisskante_schnittmenge_{side}_{ts_abriss}", intersection)
                                 
+                                # 2. Check: Gibt es eine Schnittmenge?
                                 if inter_contours:
                                     largest_inter = max(inter_contours, key=cv2.contourArea)
+                                    # 3. Check: Ist die Schnittmenge groß genug?
                                     if cv2.contourArea(largest_inter) > 3:
                                         M_int = cv2.moments(largest_inter)
                                         if M_int["m00"] != 0:
@@ -221,21 +264,32 @@ class TargetDetector:
                                                     nx = dx / dist
                                                     ny = dy / dist
                                                     
-                                                    # VARIANTE A: SHADOW-MODE (Aktuell aktiv - nur Loggen)
+                                                    # VARIANTE A: SHADOW-MODE
                                                     test_cx = int(cx_int + nx * self.caliber_radius)
                                                     test_cy = int(cy_int + ny * self.caliber_radius)
                                                     self.log(side, f"🧪 TEST-ABRISSKANTE: Theoretisches Zentrum bei X:{test_cx} Y:{test_cy}")
                                                     
-                                                    # VARIANTE B: SCHARF-MODUS (Einkommentieren, wenn die Tests gut waren)
+                                                    # VARIANTE B: SCHARF-MODUS
                                                     # cx = int(cx_int + nx * self.caliber_radius)
                                                     # cy = int(cy_int + ny * self.caliber_radius)
                                                     # self.log(side, f"🎯 Abrisskante AKTIV! Zentrum gesetzt auf X:{cx} Y:{cy}")
                                                     # erfolg_abriss = True 
+                                                else:
+                                                    self.log(side, "⚠️ Abrisskante gescheitert: Schwerpunkte liegen exakt aufeinander.")
+                                        else:
+                                            self.log(side, "⚠️ Abrisskante gescheitert: Schnittmenge hat keine berechenbare Masse.")
+                                    else:
+                                        self.log(side, "⚠️ Abrisskante gescheitert: Schnittmenge ist zu winzig (< 3px).")
+                                else:
+                                    self.log(side, "⚠️ Abrisskante gescheitert: Keine Überlappung mit alten Löchern gefunden.")
+                            else:
+                                self.log(side, "⚠️ Abrisskante übersprungen: Noch keine alten Treffer auf der Scheibe vorhanden.")
 
                             # FALLBACK FÜR BEIDE MODI
                             if not erfolg_abriss:
                                 cx, cy = int(circle_x), int(circle_y)
-                                self.log(side, f"⚠️ Verwende FALLBACK-Zentrum für Wertung: X:{cx} Y:{cy}")
+                                self.log(side, f"⚠️ Verwende FALLBACK-Zentrum (minEnclosingCircle) für Wertung: X:{cx} Y:{cy}")
+                                
                     else:
                         cx, cy = int(circle_x), int(circle_y)
                         
@@ -250,39 +304,49 @@ class TargetDetector:
                     (circle_x, circle_y), _ = cv2.minEnclosingCircle(cnt)
                     cx, cy = int(circle_x), int(circle_y)
 
+                # Doppelzählungs-Schutz (mit reparierter Logik!)
                 is_new = True
+                clipping_factor = 0.15
                 for shot in self.sm.shots:
                     if shot['side'] == side:
                         dist = np.hypot(shot['pos'][0] - cx, shot['pos'][1] - cy)
+                        if dist < self.caliber_radius * clipping_factor:
+                            is_new = False
+                            break
 
                 if is_new:
                     new_shots_found_this_frame.append({'cx': cx, 'cy': cy, 'area': area})
                     self.log(side, f"-> NEUES LOCH GEFUNDEN: Pos ({cx}, {cy}) | Fläche {area:.1f}px")
                 
-        if new_shots_found_this_frame:
-            for s in self.sm.shots:
-                if s['side'] == side:
-                    s['is_new'] = False
-
-            for sd in new_shots_found_this_frame:
-                shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'])
-                self.log(side, f"💥 Treffer gewertet: {shot['score']} Ringe!")
+        # ---> BLOCK FÜR TREFFER UND DISCARD-MASKEN <---
+        if new_shots_found_this_frame or update_mask_only:
             
+            # Echte Treffer dem StateManager übergeben
+            if new_shots_found_this_frame:
+                for s in self.sm.shots:
+                    if s['side'] == side:
+                        s['is_new'] = False
+
+                for sd in new_shots_found_this_frame:
+                    shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'])
+                    self.log(side, f"💥 Treffer gewertet: {shot['score']} Ringe!")
+                self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!")
+            
+            # Maske für BEIDE Fälle (Treffer & Discard-Risse) updaten
             state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, thresh_raw)
             self.save_debug_image(f"diff_gesamt_{side}", state.cumulative_mask)
-            self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!")
-            
             self.save_debug_image(f"diff_letzter_treffer_{side}", thresh_new)
             self.save_debug_image(f"letzte_aufnahme_{side}", frame)
             
-            if self.debug_alle_bilder_speichern:
+            # Bei puren Masken-Updates speichern wir keine separaten Schuss_XX Dateien ab
+            if self.debug_alle_bilder_speichern and new_shots_found_this_frame:
                 ts = datetime.now().strftime('%H%M%S_%f')[:-3]
                 shot_idx = sum(1 for s in self.sm.shots if s['side'] == side) 
                 self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff", thresh_new)
                 self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_orig", frame)
                 self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff_gesamt", state.cumulative_mask)
 
-            return True
+            return True if new_shots_found_this_frame else False
         else:
             if self.ausloeser_erschuetterung:
                 self.log(side, "Keine validen neuen Treffer im Bild gefunden.")

@@ -1,6 +1,7 @@
 # Nutzerdaten ignorieren
 debug_bilder/
 debug_pakete/
+labor_export/
 savegames/
 __pycache__/
 *.pyc

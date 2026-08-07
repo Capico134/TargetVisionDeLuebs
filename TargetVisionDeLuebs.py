@@ -159,8 +159,12 @@ class TargetTracker:
             self.dm.clear_debug_images(side)
         
         state = self.state_left if side == 'left' else self.state_right
+        
+        # ---> NEU: Wir merken uns, dass dieses Match auf einer sauberen Scheibe beginnt
+        state.is_fortsetzung = False 
+        
         if frame is not None:
-            self.detector.set_reference_image(frame, side) # <--- Delegiert an den Detector!
+            self.detector.set_reference_image(frame, side) 
             state.target_present = True
             
         self.log(side, "MANUELLER RESET: Referenz gelockt (Pausenerkennung bleibt AKTIV).")
@@ -548,10 +552,22 @@ class TargetTracker:
                         if self.sm.save_current_match(player_name_l, player_name_r):
                             self.log("SYSTEM", "Match erfolgreich gespeichert!")
                             
+                            # 1. Den Ordner fegen (löscht alle Schüsse/Diffs des alten Matches)
+                            if self.use_left: self.dm.clear_debug_images('left', keep_startmask=True)
+                            if self.use_right: self.dm.clear_debug_images('right', keep_startmask=True)
+                            
+                            # 2. Die Masken wiederherstellen UND speichern
                             if self.use_left and self.state_left:
                                 self.state_left.cumulative_mask = backup_mask_l
+                                if backup_mask_l is not None:
+                                    self.dm.save_debug_image("cumulative_startmask_left", backup_mask_l)
+                                    self.state_left.is_fortsetzung = True  # Flag für JSON setzen
+                                    
                             if self.use_right and self.state_right:
                                 self.state_right.cumulative_mask = backup_mask_r
+                                if backup_mask_r is not None:
+                                    self.dm.save_debug_image("cumulative_startmask_right", backup_mask_r)
+                                    self.state_right.is_fortsetzung = True 
                             
                             self.log("SYSTEM", "Leere Kamera-Puffer nach Pause...")
                             for _ in range(10): 

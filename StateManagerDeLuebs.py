@@ -63,6 +63,7 @@ class CameraState:
         self.still_counter = 0
         self.target_present = False
         self.is_initialized = False 
+        self.is_fortsetzung = False
         self.last_scan_time = 0 
         
         self.motion_threshold = config.getint('Erkennung', 'motion_threshold')
@@ -279,7 +280,10 @@ class StateManager:
             "version": self.dm.get_current_version(),
             "timestamp": datetime.now().strftime("%d.%m.%y %H:%M:%S"),
             "center_l": self.nullpunkts.get('left') if cam_l else None,
-            "center_r": self.nullpunkts.get('right') if cam_r else None
+            "center_r": self.nullpunkts.get('right') if cam_r else None,
+            # ---> NEU: Das Fortsetzungs-Flag für das Labor <---
+            "fortsetzung_links": self.state_left.is_fortsetzung if (cam_l and self.state_left) else False,
+            "fortsetzung_rechts": self.state_right.is_fortsetzung if (cam_r and self.state_right) else False
         }
 
         # 2. Timeline

@@ -139,6 +139,7 @@ erkennungs_methode = C
 # nicht mehr als "Normal" gilt und den Hough-Algorithmus auslöst. (Standard: 1.5)
 hybrid_riss_faktor = 1.5
 hybrid_sichel_faktor = 0.75
+hybrid_discard_faktor = 2.5
 # Für Methode C: Begrenzungen für den Hough-Algorithmus (Faktor bezogen auf caliber_radius)
 hough_min_faktor = 0.85
 hough_max_faktor = 1.15
@@ -224,7 +225,12 @@ darstellung_ohne_weissabgleich = yes
             print("🔧 Führe Auto-Patch aus: Füge 'hybrid_sichel_faktor = 0.75' hinzu...")
             self.update_ini_value('Erkennung', 'hybrid_sichel_faktor', '0.75')
             needs_reload = True
-            
+        
+        if not config.has_option('Erkennung', 'hybrid_discard_faktor'):
+            print("🔧 Führe Auto-Patch aus: Füge 'hybrid_discard_faktor = 2.5' hinzu...")
+            self.update_ini_value('Erkennung', 'hybrid_discard_faktor', '2.5')
+            needs_reload = True
+        
         if not config.has_option('Erkennung', 'hough_min_faktor'):
             print("🔧 Führe Auto-Patch aus: Füge 'hough_min_faktor = 0.85' hinzu...")
             self.update_ini_value('Erkennung', 'hough_min_faktor', '0.85')
@@ -244,6 +250,17 @@ darstellung_ohne_weissabgleich = yes
                     needs_reload = True
             except ValueError:
                 pass 
+
+        if config.has_option('Erkennung', 'hit_tolerance'):
+            try:
+                current_value = config.getint('Erkennung', 'hit_tolerance')
+                if current_value < 25:
+                    print(f"🔧 Führe Auto-Patch aus: Erhöhe 'hit_tolerance' von {current_value} auf 25...")
+                    self.update_ini_value('Erkennung', 'hit_tolerance', '25')
+                    needs_reload = True
+            except ValueError:
+                pass 
+
 
         if not config.has_section('Zielscheibe'):
             print("🔧 Führe Auto-Patch aus: Füge Sektion '[Zielscheibe]' hinzu...")
@@ -275,12 +292,14 @@ darstellung_ohne_weissabgleich = yes
         return config
 
 
-    def clear_debug_images(self, side):
-        """Löscht alte Debug-Bilder einer spezifischen Kamera vor einem neuen Match absolut wasserdicht."""
+    def clear_debug_images(self, side, keep_startmask=False):
+        """
+        Löscht alte Debug-Bilder einer spezifischen Kamera.
+        Wenn keep_startmask=True, werden cumulative_startmask und referenz_bilder behalten.
+        """
         try:
             ordner = self.DEBUG_FOLDER
 
-            # ---> NEU (Punkt B & C): Robuste Suche, die "left", "links", "l" sauber von rechts trennt <---
             if side == 'all':
                 suchmuster = ["*"]
             elif side == 'left':
@@ -294,9 +313,15 @@ darstellung_ohne_weissabgleich = yes
             for muster in suchmuster:
                 alte_bilder.extend(glob.glob(os.path.join(ordner, muster)))
             
-            # set() verhindert, dass wir versuchen, dieselbe Datei doppelt zu löschen
             for bild in set(alte_bilder):
                 if os.path.isfile(bild):
+                    basename = os.path.basename(bild)
+                    
+                    # ---> NEU: Ausnahme-Regel für den "Besen" <---
+                    if keep_startmask:
+                        if basename.startswith("cumulative_startmask_") or basename.startswith("referenz_"):
+                            continue # Überspringen, nicht löschen!
+                            
                     try:
                         os.remove(bild)
                     except Exception:
