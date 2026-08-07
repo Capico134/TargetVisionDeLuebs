@@ -49,7 +49,10 @@ class DateiManager:
             return "1.1.0-dev"
 
     def write_log(self, log_msg):
-        """Schreibt eine fertige Nachricht in die Textdatei."""
+        """Schreibt eine fertige Nachricht in die Textdatei UND in die Konsole."""
+        # 1. Sofortige Ausgabe in der CMD-Konsole
+        print(log_msg) 
+        # 2. Archivierung in der Textdatei
         with open(self.LOG_FILE, "a", encoding="utf-8") as f:
             f.write(log_msg + "\n")
 
@@ -101,7 +104,7 @@ class DateiManager:
 
         with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
             f.writelines(lines)
-        print(f"💾 config.ini Update: [{target_section}] {target_key} = {new_value}")
+        self.write_log(f"SYSTEM: 💾 config.ini Update: [{target_section}] {target_key} = {new_value}")
 
 
     def load_or_create_config(self):
@@ -199,7 +202,7 @@ vollbild = no
 # Hübscht das Bild für das Auge auf (mehr Farbe/Kontrast), ohne die Erkennung zu beeinflussen
 darstellung_ohne_weissabgleich = yes
 """)
-            print("Standard config.ini erstellt.")
+            self.write_log("SYSTEM: 🆕 Standard config.ini erstellt.")
 
         # ---> NEU: Initialisierung des Spions (AuditedConfigParser) <---
         config = AuditedConfigParser(log_callback=self.write_log)
