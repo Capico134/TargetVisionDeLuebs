@@ -249,7 +249,7 @@ class TargetTracker:
         avg_scale = (self.scale_x + self.scale_y) / 2
         final_radius = max(2, int(self.caliber_radius * avg_scale))
         
-        # ---> GEÄNDERT: TREFFER ZEICHNEN (Nach Seite getrennt, Nummer mittig im Kreis) <---
+        # ---> TREFFER ZEICHNEN (Nach Seite getrennt, Nummer mittig im Kreis) <---
         for side in ['left', 'right']:
             side_shots = self.sm.get_shots_for_side(side)
             for idx, shot in enumerate(side_shots):
@@ -316,43 +316,66 @@ class TargetTracker:
                     
                     cv2.ellipse(combined_view, (fb_cx, fb_cy), (fb_ideal_rx, fb_ideal_ry), 0, 0, 360, (0, 255, 0), 2, cv2.LINE_AA)
         
-        # Beenden Button
-        ex1, ey1 = win_w - 110, 10
-        ex2, ey2 = win_w - 10, 40
-        cv2.rectangle(combined_view, (ex1, ey1), (ex2, ey2), (60, 60, 60), -1) 
-        cv2.rectangle(combined_view, (ex1, ey1), (ex2, ey2), (255, 255, 255), 1) 
-        cv2.putText(combined_view, "Beenden", (ex1 + 18, ey1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-        self.btn_exit_coords = (ex1, ey1, ex2, ey2)
+        # --- BUTTON-LEISTE OBEN RECHTS ---
+        gap = 10     # Abstand zwischen den Buttons
+        start_y = 10
+        
+        # Hilfsfunktion für zentrierten Text mit dynamischer Button-Breite
+        def draw_button(view, text, right_x, bg_color):
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.5
+            thickness = 1
+            
+            # 1. Textgröße berechnen
+            (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, thickness)
+            
+            # 2. Button-Breite anpassen (Textbreite + 20 Pixel Puffer)
+            btn_w = text_w + 20
+            btn_h = 30
+            
+            # 3. Koordinaten berechnen (Wir zeichnen von rechts nach links)
+            x1 = right_x - btn_w
+            y1 = start_y
+            x2 = right_x
+            y2 = start_y + btn_h
+            
+            # Button Hintergrund und Rand
+            cv2.rectangle(view, (x1, y1), (x2, y2), bg_color, -1)
+            cv2.rectangle(view, (x1, y1), (x2, y2), (255, 255, 255), 1)
+            
+            # Text zentrieren
+            text_x = x1 + (btn_w - text_w) // 2
+            text_y = y1 + (btn_h + text_h) // 2
+            
+            cv2.putText(view, text, (text_x, text_y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+            
+            # Gibt die Klick-Koordinaten zurück UND den neuen X-Startpunkt für den nächsten Button
+            return (x1, y1, x2, y2), x1 - gap
 
-        # Bug ZIP Button
-        zx1, zy1 = win_w - 230, 10
-        zx2, zy2 = win_w - 120, 40
-        cv2.rectangle(combined_view, (zx1, zy1), (zx2, zy2), (40, 120, 40), -1)
-        cv2.rectangle(combined_view, (zx1, zy1), (zx2, zy2), (255, 255, 255), 1) 
-        cv2.putText(combined_view, "Bug ZIP", (zx1 + 20, zy1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-        self.btn_zip_coords = (zx1, zy1, zx2, zy2)
+        # Startpunkt ganz rechts am Fensterrand
+        x_cursor = win_w - 10
         
-        # Highscore Button
-        hx1, hy1 = win_w - 560, 10
-        hx2, hy2 = win_w - 420, 40
-        cv2.rectangle(combined_view, (hx1, hy1), (hx2, hy2), (50, 150, 200), -1) 
-        cv2.rectangle(combined_view, (hx1, hy1), (hx2, hy2), (255, 255, 255), 1) 
-        cv2.putText(combined_view, "Highscore", (hx1 + 30, hy1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-        self.btn_highscore_coords = (hx1, hy1, hx2, hy2)
+        # Buttons von rechts nach links aufbauen
+        # 1. Beenden (Grau)
+        self.btn_exit_coords, x_cursor = draw_button(combined_view, "Beenden", x_cursor, (60, 60, 60))
         
-        # Match Speichern Button
-        sx1, sy1 = win_w - 410, 10
-        sx2, sy2 = win_w - 240, 40
-        cv2.rectangle(combined_view, (sx1, sy1), (sx2, sy2), (180, 70, 70), -1) 
-        cv2.rectangle(combined_view, (sx1, sy1), (sx2, sy2), (255, 255, 255), 1) 
-        cv2.putText(combined_view, "Match Speichern", (sx1 + 15, sy1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-        self.btn_save_coords = (sx1, sy1, sx2, sy2)
+        # 2. Bug ZIP (Grün)
+        self.btn_zip_coords, x_cursor = draw_button(combined_view, "Bug ZIP", x_cursor, (40, 120, 40))
         
-        # ---> GEÄNDERT: HUD / Trefferliste (Getrennt für beide Seiten) <---
+        # 3. Highscore (Blau)
+        self.btn_highscore_coords, x_cursor = draw_button(combined_view, "Highscore", x_cursor, (50, 150, 200))
+        
+        # 4. Match Speichern (Rot)
+        self.btn_save_coords, x_cursor = draw_button(combined_view, "Match Speichern", x_cursor, (180, 70, 70))
+        
+        # 5. Offline Labor (Lila)
+        self.btn_labor_coords, x_cursor = draw_button(combined_view, "Offline Labor", x_cursor, (150, 50, 150))
+        
+        # ---> HUD / Trefferliste (Getrennt für beide Seiten) <---
         if getattr(self, 'ringwertung_aktiv', False):
-            start_y = 80  
+            start_y_hud = 80  
             line_h = 25   
-            max_items = max(5, (win_h - start_y - 80) // line_h)
+            max_items = max(5, (win_h - start_y_hud - 80) // line_h)
             box_w = 110  
 
             for side in ['left', 'right']:
@@ -369,7 +392,6 @@ class TargetTracker:
                 
                 # Links dockt links an, rechts dockt rechts an!
                 if side == 'left':
-                    #box_x = 10 #ALT HIER LINKS 
                     box_x = max(10, scaled_w_left - box_w - 10)
                 else:
                     box_x = win_w - box_w - 10
@@ -377,12 +399,12 @@ class TargetTracker:
                 box_h = (len(display_shots) + 2) * line_h
                 
                 hud_overlay = combined_view.copy()
-                cv2.rectangle(hud_overlay, (box_x - 10, start_y - 25), (box_x + box_w, start_y + box_h), (20, 20, 20), -1)
+                cv2.rectangle(hud_overlay, (box_x - 10, start_y_hud - 25), (box_x + box_w, start_y_hud + box_h), (20, 20, 20), -1)
                 cv2.addWeighted(hud_overlay, 0.4, combined_view, 0.6, 0, combined_view)
                 
                 titel = "Treffer (L)" if side == 'left' else "Treffer (R)"
-                cv2.putText(combined_view, titel, (box_x - 5, start_y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-                cv2.line(combined_view, (box_x - 5, start_y - 2), (box_x + box_w - 5, start_y - 2), (100, 100, 100), 1)
+                cv2.putText(combined_view, titel, (box_x - 5, start_y_hud - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.line(combined_view, (box_x - 5, start_y_hud - 2), (box_x + box_w - 5, start_y_hud - 2), (100, 100, 100), 1)
                 
                 for i, shot in enumerate(display_shots):
                     shot_num = start_idx + i + 1
@@ -390,16 +412,16 @@ class TargetTracker:
                     text_color = (0, 255, 255) if score_val < 10.0 else (0, 255, 0)
                     text = f" {shot_num}:"
                     score_str = f"{score_val:.1f}"
-                    y_pos = start_y + 20 + (i * line_h)
+                    y_pos = start_y_hud + 20 + (i * line_h)
                     
                     cv2.putText(combined_view, text, (box_x - 5, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
                     cv2.putText(combined_view, score_str, (box_x + 50, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.55, text_color, 1, cv2.LINE_AA)
 
-                cv2.line(combined_view, (box_x - 5, start_y + 8 + len(display_shots) * line_h), (box_x + box_w - 5, start_y + 8 + len(display_shots) * line_h), (100, 100, 100), 1)
+                cv2.line(combined_view, (box_x - 5, start_y_hud + 8 + len(display_shots) * line_h), (box_x + box_w - 5, start_y_hud + 8 + len(display_shots) * line_h), (100, 100, 100), 1)
                 gesamt = sum(s.get('score', 0.0) for s in side_shots)
                 gesamt_text = "Ges.:"
                 gesamt_val = f"{gesamt:.1f}"
-                y_sum = start_y + 28 + len(display_shots) * line_h
+                y_sum = start_y_hud + 28 + len(display_shots) * line_h
                 
                 cv2.putText(combined_view, gesamt_text, (box_x - 5, y_sum), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
                 cv2.putText(combined_view, gesamt_val, (box_x + 45, y_sum), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (50, 200, 255), 2, cv2.LINE_AA)
@@ -575,6 +597,15 @@ class TargetTracker:
                                 if self.use_right: self.cap_right.read()
                         else:
                             self.log("SYSTEM", "Speichern abgebrochen (Keine Treffer).")
+                    return
+
+            # ---> NEU: Offline Labor Button <---
+            if getattr(self, 'btn_labor_coords', None):
+                lx1, ly1, lx2, ly2 = self.btn_labor_coords
+                if lx1 <= x <= lx2 and ly1 <= y <= ly2:
+                    self.log("SYSTEM", "Öffne Offline-Labor...")
+                    # Subprozess starten, damit das Hauptfenster weiterlaufen kann
+                    subprocess.Popen(["python", "offline_labor.py"])
                     return
 
     def run(self):

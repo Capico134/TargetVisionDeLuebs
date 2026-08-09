@@ -232,8 +232,8 @@ darstellung_ohne_weissabgleich = yes
             needs_reload = True
         
         if not config.has_option('Erkennung', 'hybrid_sichel_faktor'):
-            print("🔧 Führe Auto-Patch aus: Füge 'hybrid_sichel_faktor = 0.75' hinzu...")
-            self.update_ini_value('Erkennung', 'hybrid_sichel_faktor', '0.75')
+            print("🔧 Führe Auto-Patch aus: Füge 'hybrid_sichel_faktor = 0.95' hinzu...")
+            self.update_ini_value('Erkennung', 'hybrid_sichel_faktor', '0.95')
             needs_reload = True
         
         if not config.has_option('Erkennung', 'hybrid_discard_faktor'):

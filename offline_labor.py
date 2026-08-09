@@ -122,6 +122,7 @@ class OfflineLaborApp:
         self.max_aspect_ratio_var = tk.DoubleVar(value=3.5)
         
         self.zoom_factor = 1.0
+        self.view_mode_var = tk.IntVar(value=1)
         
         self.setup_ui()
         
@@ -185,9 +186,41 @@ class OfflineLaborApp:
         self.btn_next = tk.Button(nav_frame, text="Weiter ▶", state=tk.DISABLED, command=self.next_shot)
         self.btn_next.pack(side=tk.RIGHT, expand=True, fill=tk.X)
         
-        param_frame = tk.LabelFrame(control_frame, text=" Erkennungs-Parameter (Live) ", pady=10, padx=10)
-        param_frame.pack(fill=tk.BOTH, expand=True)
+        # ---> NEU: Ansichts-Steuerung <---
+        view_frame = tk.LabelFrame(control_frame, text=" Rechte Bildhälfte ", pady=10, padx=10)
+        view_frame.pack(fill=tk.X, pady=(0, 15))
         
+        tk.Radiobutton(view_frame, text="1) Diff-Bild (Letzter Schuss)", variable=self.view_mode_var, value=1, command=self.update_image_display).pack(anchor=tk.W)
+        tk.Radiobutton(view_frame, text="2) Diff-Gesamt-Bild (Historie)", variable=self.view_mode_var, value=2, command=self.update_image_display).pack(anchor=tk.W)
+        tk.Radiobutton(view_frame, text="3) Überlagerung (Ref + Diff + Gesamt)", variable=self.view_mode_var, value=3, command=self.update_image_display).pack(anchor=tk.W)
+        
+        # ---> NEU: Scrollbarer Bereich für die Parameter <---
+        param_outer_frame = tk.LabelFrame(control_frame, text=" Erkennungs-Parameter (Live) ", pady=5, padx=5)
+        param_outer_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Canvas und Scrollbar erstellen
+        canvas = tk.Canvas(param_outer_frame, borderwidth=0, highlightthickness=0)
+        scrollbar = tk.Scrollbar(param_outer_frame, orient="vertical", command=canvas.yview)
+        
+        # Das eigentliche Frame für die Slider, das im Canvas liegt
+        param_frame = tk.Frame(canvas)
+        
+        # Scrollregion dynamisch anpassen, wenn Slider hinzugefügt werden
+        param_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        # Fenster im Canvas erstellen und so konfigurieren, dass es die volle Breite nutzt
+        canvas_window = canvas.create_window((0, 0), window=param_frame, anchor="nw")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_window, width=e.width))
+        
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # --- Hier kommen die Slider in das neue scrollbare param_frame ---
         self.make_slider(param_frame, "hit_tolerance:", self.hit_tolerance_var, 1, 100)
         self.make_slider(param_frame, "min_hole_area:", self.min_hole_area_var, 5, 500)
         self.make_slider(param_frame, "caliber_radius:", self.caliber_radius_var, 5, 50)
@@ -202,13 +235,34 @@ class OfflineLaborApp:
         
         self.make_slider(param_frame, "hough_param1 (Kanten):", self.hough_param1_var, 10, 100)
         self.make_slider(param_frame, "hough_param2 (Strenge):", self.hough_param2_var, 1, 20)
-        # ---> NEU <---
+        
         tk.Label(param_frame, text="--- Bild-Filterung ---", fg="gray").pack(pady=(10, 5))
         self.make_slider(param_frame, "morph_kernel_size:", self.morph_kernel_var, 3, 15)
         self.make_slider(param_frame, "max_aspect_ratio (Sichel):", self.max_aspect_ratio_var, 1.5, 6.0, 0.1)
         
-        tk.Checkbutton(param_frame, text="💾 Simulations-Bilder auf SSD exportieren", 
+        tk.Checkbutton(param_frame, text="💾 Simulations-Bilder exportieren", 
                        variable=self.export_images_var, fg="#00aaff").pack(anchor=tk.W, pady=(15, 0))
+
+        # ---> NEU: Scroll-Fix für das Mausrad im gesamten Parameter-Block <---
+        def _on_mousewheel(event):
+            # Check für Scrollrichtung (Windows/Mac: delta, Linux: num 4/5)
+            if event.num == 4 or getattr(event, 'delta', 0) > 0:
+                canvas.yview_scroll(-1, "units")
+            elif event.num == 5 or getattr(event, 'delta', 0) < 0:
+                canvas.yview_scroll(1, "units")
+
+        def _bind_scroll_recursive(widget):
+            # Bindet das Event an das aktuelle Element
+            widget.bind("<MouseWheel>", _on_mousewheel)
+            widget.bind("<Button-4>", _on_mousewheel)
+            widget.bind("<Button-5>", _on_mousewheel)
+            # Geht rekursiv durch alle Unter-Elemente (Labels, Slider, Frames)
+            for child in widget.winfo_children():
+                _bind_scroll_recursive(child)
+
+        # Die Funktion auf das Canvas und das Frame loslassen
+        _bind_scroll_recursive(canvas)
+        _bind_scroll_recursive(param_frame)
 
     def print_log(self, side, msg):
         """Simuliert den Log-Output der Engine in der GUI"""
@@ -379,9 +433,23 @@ class OfflineLaborApp:
                 color = (0, 0, 255) if shot.get('is_new', False) else (0, 255, 0)
                 cv2.circle(live_img, shot['pos'], r, color, 2)
 
-        # ---> NEU: Bilder für butterweiches Zoomen im RAM zwischenspeichern <---
+        # ---> NEU: Alle nötigen Bilder aus der Engine fischen <---
+        h, w = live_img.shape[:2]
+        
+        diff_gesamt_img = d_dm.debug_images.get(f"diff_gesamt_{side}")
+        if diff_gesamt_img is None:
+            diff_gesamt_img = np.zeros((h, w), dtype=np.uint8)
+            
+        ref_img = d_dm.debug_images.get(f"referenz_{side}")
+        if ref_img is None:
+            ref_img = np.zeros((h, w, 3), dtype=np.uint8)
+
+        # Bilder für butterweiches Zoomen im RAM zwischenspeichern
         self.last_live_img = live_img
         self.last_diff_img = diff_img
+        self.last_diff_gesamt_img = diff_gesamt_img
+        self.last_ref_img = ref_img
+        
         self.update_image_display()
         
     def update_image_display(self):
@@ -389,18 +457,54 @@ class OfflineLaborApp:
         if getattr(self, 'last_live_img', None) is None: return
 
         h, w = self.last_live_img.shape[:2]
+        mode = self.view_mode_var.get()
+        
+        # Hilfsfunktion, um Graustufen-Bilder sicher in Farbe (3 Kanäle) zu konvertieren
+        def to_bgr(img):
+            if img is None: return np.zeros((h, w, 3), dtype=np.uint8)
+            if len(img.shape) == 2: return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+            return img
+
+        diff_bgr = to_bgr(self.last_diff_img)
+        
+        # Entscheidung, was rechts angezeigt werden soll
+        if mode == 1:
+            right_img = diff_bgr
+        elif mode == 2:
+            right_img = to_bgr(self.last_diff_gesamt_img)
+        else: # Modus 3: Die Überlagerung
+            ref = to_bgr(self.last_ref_img)
+            
+            # Mitte: Aktuelles Diff-Bild mit 80% Transparenz auf das Referenzbild legen
+            composite = cv2.addWeighted(ref, 0.65, diff_bgr, 0.65, 0)
+            
+            # Oben: Diff-Gesamt-Bild (Schwarz ausblenden, Weiß zu Grün machen)
+            diff_gesamt = self.last_diff_gesamt_img
+            if diff_gesamt is not None:
+                ## Maske aus dem Gesamt-Diff generieren (alles Weiße wird zu True)
+                #mask = (cv2.cvtColor(diff_gesamt, cv2.COLOR_BGR2GRAY) > 127) if len(diff_gesamt.shape) == 3 else (diff_gesamt > 127)
+                # ---> KORREKTUR: Alles Schwarze (< 127) wird zu True für die grüne Farbe <---
+                mask = (cv2.cvtColor(diff_gesamt, cv2.COLOR_BGR2GRAY) < 127) if len(diff_gesamt.shape) == 3 else (diff_gesamt < 127)
+                
+                # Komplett grünes Bild in der Größe des Composites erzeugen
+                green_overlay = np.zeros_like(composite)
+                green_overlay[:] = (0, 255, 0) # Grün in BGR
+                
+                # Nur dort, wo die Maske weiß ist, das Grün mit 50% über das Composite blenden
+                composite[mask] = cv2.addWeighted(composite[mask], 0.5, green_overlay[mask], 0.5, 0)
+                
+            right_img = composite
         
         # Zoom-Faktor einrechnen
         self.current_scale = (550 / h) * self.zoom_factor
         self.current_img_w = int(w * self.current_scale)
         new_h = int(h * self.current_scale)
         
-        # NEAREST-Interpolation: Macht die Pixel beim starken Zoomen eckig und scharf,
-        # perfekt um Grauschleier oder feine Masken-Details beim Debuggen zu analysieren!
+        # NEAREST-Interpolation für scharfe Pixel-Grenzen beim Zoomen
         resized_live = cv2.resize(self.last_live_img, (self.current_img_w, new_h), interpolation=cv2.INTER_NEAREST)
-        resized_diff = cv2.resize(self.last_diff_img, (self.current_img_w, new_h), interpolation=cv2.INTER_NEAREST)
+        resized_right = cv2.resize(right_img, (self.current_img_w, new_h), interpolation=cv2.INTER_NEAREST)
         
-        combined = np.hstack((resized_live, resized_diff))
+        combined = np.hstack((resized_live, resized_right))
         img_pil = Image.fromarray(cv2.cvtColor(combined, cv2.COLOR_BGR2RGB))
         
         self.tk_image = ImageTk.PhotoImage(img_pil)
