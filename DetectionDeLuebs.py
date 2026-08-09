@@ -22,7 +22,7 @@ class TargetDetector:
         self.hit_tolerance = config.getint('Erkennung', 'hit_tolerance', fallback=15)
         self.erkennungs_methode = config.get('Erkennung', 'erkennungs_methode', fallback='C').upper()
         self.hybrid_riss_faktor = config.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.5)
-        self.hybrid_sichel_faktor = config.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=0.75)
+        self.hybrid_sichel_faktor = config.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=0.95)
         self.hybrid_discard_faktor = config.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5)
         self.hough_min_f = config.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85)
         self.hough_max_f = config.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15)
@@ -30,6 +30,12 @@ class TargetDetector:
         self.max_img_change = config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
         self.debug_alle_bilder_speichern = config.getboolean('Erkennung', 'debug_alle_bilder_speichern', fallback=False)
         self.ringwertung_aktiv = config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+        
+        # Neue Parameter
+        self.hough_param1 = config.getint('Erkennung', 'hough_param1', fallback=25)
+        self.hough_param2 = config.getint('Erkennung', 'hough_param2', fallback=5)
+        self.morph_kernel_size = config.getint('Erkennung', 'morph_kernel_size', fallback=6)
+        self.max_aspect_ratio = config.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5)
 
         # Internes Gedächtnis des Detectors
         self.ref_left = None
@@ -59,7 +65,7 @@ class TargetDetector:
         spiegel_mm = targets[aktive_scheibe_id].get('spiegel_durchmesser_mm', 30.5)
         gray_frame = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
         
-        _, thresh = cv2.threshold(gray_frame, 80, 255, cv2.THRESH_BINARY_INV)
+        _, thresh = cv2.threshold(gray_frame, 100, 255, cv2.THRESH_BINARY_INV)
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours: return None
             
@@ -138,11 +144,15 @@ class TargetDetector:
         diff_gray = cv2.cvtColor(diff_bgr, cv2.COLOR_BGR2GRAY)
         _, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY) 
 
-        kernel = np.ones((6, 6), np.uint8)
+        # ---> NEU: Dynamischer Morph-Kernel <---
+        k_size = self.morph_kernel_size
+        kernel = np.ones((k_size, k_size), np.uint8)
         thresh_raw = cv2.morphologyEx(thresh_raw, cv2.MORPH_CLOSE, kernel)
 
         if state.cumulative_mask is not None:
             thresh_new = cv2.subtract(thresh_raw, state.cumulative_mask)
+            # ---> NEU: Zerstört alle grauen Reste aus eventuell unsauberen Masken <---
+            _, thresh_new = cv2.threshold(thresh_new, 127, 255, cv2.THRESH_BINARY)
         else:
             thresh_new = thresh_raw.copy()
             state.cumulative_mask = np.zeros_like(thresh_raw)
@@ -168,18 +178,41 @@ class TargetDetector:
         for cnt in contours:
             area = cv2.contourArea(cnt)
             if area > self.min_hole_area:
+                
+                # ---> NEU: Der Anti-Verschiebungs-Filter (Aspect Ratio) <---
+                # Wir legen ein umschließendes Rechteck um die Kontur
+                rx, ry, rw, rh = cv2.boundingRect(cnt)
+                
+                # Wir verhindern eine Division durch Null, falls w oder h mal 0 sein sollte
+                if rw == 0 or rh == 0: continue
+                
+                # Seitenverhältnis berechnen (immer den größeren durch den kleineren Wert teilen)
+                aspect_ratio = max(rw/rh, rh/rw)
+                # ---> NEU: Dynamisches Aspect-Ratio-Limit <---
+                if aspect_ratio > self.max_aspect_ratio:
+                    self.log(side, f"🚫 Störung ignoriert (Zu schmal/lang: Ratio {aspect_ratio:.1f} > {self.max_aspect_ratio:.1f}). Maskiert!")
+                    update_mask_only = True
+                    continue # Springt sofort zur nächsten Kontur!
+                # -------------------------------------------------------------
                
                 if self.erkennungs_methode == 'C':
                     (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
                     
+                    # ---> NEU: Vorberechnung der Limits für das perfekte Log <---
+                    limit_sichel = self.caliber_radius * self.hybrid_sichel_faktor
+                    limit_riss = self.caliber_radius * self.hybrid_riss_faktor
+                    limit_discard = self.caliber_radius * self.hybrid_discard_faktor
+                    
+                    self.log(side, f"🔍 Check Kontur: Radius={radius:.1f}px | Limits: Sichel<{limit_sichel:.1f}, Normal, Riss>{limit_riss:.1f}, Discard>{limit_discard:.1f}")
+                    
                     # ---> NEU: Der Discard-Check für Riesen-Konturen <---
-                    if radius > (self.caliber_radius * self.hybrid_discard_faktor):
-                        self.log(side, f"🚫 Störung ignoriert (Radius {radius:.1f}px > Limit). Wird maskiert, nicht gewertet!")
+                    if radius > limit_discard:
+                        self.log(side, f"🚫 Störung ignoriert (Radius {radius:.1f}px > Limit {limit_discard:.1f}px). Wird maskiert, nicht gewertet!")
                         update_mask_only = True
                         continue # Überspringt die Treffer-Auswertung für diese Kontur!
                     
-                    if (radius > (self.caliber_radius * self.hybrid_riss_faktor)) or (radius < (self.caliber_radius * self.hybrid_sichel_faktor)):
-                        self.log(side, f"🛠️ Sichel oder Riss erkannt (Radius: {radius:.1f}px) -> Aktiviere HoughCircles...")
+                    if (radius > limit_riss) or (radius < limit_sichel):
+                        self.log(side, f"🛠️ Sichel/Riss bestätigt -> Aktiviere HoughCircles...")
                         mask = np.zeros_like(thresh_new)
                         cv2.drawContours(mask, [cnt], -1, 255, -1)
                         
@@ -188,15 +221,17 @@ class TargetDetector:
                         max_r = int(self.caliber_radius * self.hough_max_f)
                         
                         circles = cv2.HoughCircles(mask_blurred, cv2.HOUGH_GRADIENT, dp=1, minDist=2,
-                                                   param1=30, param2=7, 
+                                                   param1=self.hough_param1, param2=self.hough_param2, 
                                                    minRadius=min_r, maxRadius=max_r)
                         
                         hough_success = False
                         
                         if circles is not None:
-                            # Wir haben Hough-Ergebnisse. Starte Ranking!
-                            best_coverage = -1
+                            # Wir haben Hough-Ergebnisse. Starte Kombi-Ranking!
+                            best_score = -1
                             best_cx, best_cy = int(circle_x), int(circle_y)
+                            winner_new = 0
+                            winner_raw = 0
                             
                             found_circles = np.round(circles[0, :]).astype("int")
                             self.log(side, f"🔎 HoughCircles hat {len(found_circles)} Kandidaten gefunden. Starte Ranking...")
@@ -205,26 +240,38 @@ class TargetDetector:
                                 circle_mask = np.zeros_like(thresh_new)
                                 cv2.circle(circle_mask, (hx, hy), hr, 255, -1)
                                 
-                                intersection = cv2.bitwise_and(thresh_new, circle_mask)
                                 pixels_in_circle = cv2.countNonZero(circle_mask)
-                                pixels_in_intersection = cv2.countNonZero(intersection)
+                                if pixels_in_circle == 0: continue
                                 
-                                coverage_percent = (pixels_in_intersection / pixels_in_circle) * 100 if pixels_in_circle > 0 else 0
+                                # 1. Check: Anteil am NEUEN Riss (thresh_new)
+                                intersection_new = cv2.bitwise_and(thresh_new, circle_mask)
+                                pixels_in_new = cv2.countNonZero(intersection_new)
+                                coverage_new = (pixels_in_new / pixels_in_circle) * 100 
                                 
-                                if coverage_percent > best_coverage:
-                                    best_coverage = coverage_percent
+                                # 2. Check: Anteil am GESAMTEN Lochbild (thresh_raw)
+                                intersection_raw = cv2.bitwise_and(thresh_raw, circle_mask)
+                                pixels_in_raw = cv2.countNonZero(intersection_raw)
+                                coverage_raw = (pixels_in_raw / pixels_in_circle) * 100 
+                                
+                                # Der ultimative Realitäts-Check (Max. 200 Score)
+                                total_score = coverage_new + coverage_raw
+                                
+                                if total_score > best_score:
+                                    best_score = total_score
                                     best_cx, best_cy = hx, hy
+                                    winner_new = coverage_new
+                                    winner_raw = coverage_raw
 
-                            self.log(side, f"📊 Bester Kreis hat {best_coverage:.1f}% Weißanteil.")
+                            self.log(side, f"📊 Hough-Sieger: Score {best_score:.1f} (Neu: {winner_new:.1f}% + Gesamt: {winner_raw:.1f}%)")
 
-                            # Reduziert auf 5% wie gewünscht
-                            if best_coverage >= 5.0:
+                            # Er MUSS mind. 5% vom neuen Riss haben, darf also nicht zu 100% in einem alten Loch liegen
+                            if winner_new >= 5.0:
                                 cx, cy = best_cx, best_cy
-                                self.log(side, "✅ HoughCircles erfolgreich: Zentrum wurde über Weiß-Ranking korrigiert.")
+                                self.log(side, "✅ HoughCircles erfolgreich: Zentrum über Kombi-Ranking korrigiert.")
                                 hough_success = True
                             else:
-                                self.log(side, "⚠️ Hough-Sieger hat zu wenig Weißanteil (< 5%). Verwerfe Hough-Ergebnis!")
-
+                                self.log(side, "⚠️ Hough-Sieger hat zu wenig Anteil am neuen Riss (< 5%). Verwerfe Hough!")
+                                
                         # Gemeinsamer Fallback-Pfad für "Hough liefert Müll" UND "Hough findet nichts"
                         if not hough_success:
                             self.log(side, "⚠️ Wechsle zu Abrisskante / Fallback...")
@@ -291,6 +338,8 @@ class TargetDetector:
                                 self.log(side, f"⚠️ Verwende FALLBACK-Zentrum (minEnclosingCircle) für Wertung: X:{cx} Y:{cy}")
                                 
                     else:
+                        # HIER IST DIE ÄNDERUNG:
+                        self.log(side, f"✅ Loch ist in der Norm (Radius {radius:.1f}px). Überspringe Hough!")
                         cx, cy = int(circle_x), int(circle_y)
                         
                 elif self.erkennungs_methode == 'B':

@@ -21,6 +21,10 @@ class DummyConfig:
         if key == 'min_hole_area': return self.app.min_hole_area_var.get()
         if key == 'caliber_radius': return self.app.caliber_radius_var.get()
         if key == 'hit_tolerance': return self.app.hit_tolerance_var.get()
+        if key == 'hough_param1': return self.app.hough_param1_var.get()
+        if key == 'hough_param2': return self.app.hough_param2_var.get()
+        # ---> NEU <---
+        if key == 'morph_kernel_size': return self.app.morph_kernel_var.get()
         return fallback
         
     def getfloat(self, section, key, fallback=0.0):
@@ -29,7 +33,9 @@ class DummyConfig:
         if key == 'hybrid_discard_faktor': return self.app.hybrid_discard_faktor_var.get()
         if key == 'hough_min_faktor': return self.app.hough_min_faktor_var.get()
         if key == 'hough_max_faktor': return self.app.hough_max_faktor_var.get()
-        if key == 'max_image_change_percent': return 90.0 # Hoch setzen, damit das Labor alles frisst
+        if key == 'max_image_change_percent': return 90.0
+        # ---> NEU <---
+        if key == 'max_aspect_ratio': return self.app.max_aspect_ratio_var.get()
         return fallback
         
     def get(self, section, key, fallback=''):
@@ -104,12 +110,18 @@ class OfflineLaborApp:
         self.min_hole_area_var = tk.IntVar(value=25)
         self.caliber_radius_var = tk.IntVar(value=11)
         self.hybrid_riss_faktor_var = tk.DoubleVar(value=1.5)
-        self.hybrid_sichel_faktor_var = tk.DoubleVar(value=0.75)
+        self.hybrid_sichel_faktor_var = tk.DoubleVar(value=0.95)
         self.hybrid_discard_faktor_var = tk.DoubleVar(value=2.5)
         self.hough_min_faktor_var = tk.DoubleVar(value=0.85)
         self.hough_max_faktor_var = tk.DoubleVar(value=1.15)
         
+        self.hough_param1_var = tk.IntVar(value=25)
+        self.hough_param2_var = tk.IntVar(value=5)
+        # ---> NEU <---
+        self.morph_kernel_var = tk.IntVar(value=6)
+        self.max_aspect_ratio_var = tk.DoubleVar(value=3.5)
         
+        self.zoom_factor = 1.0
         
         self.setup_ui()
         
@@ -131,6 +143,10 @@ class OfflineLaborApp:
         self.lbl_file = tk.Label(top_frame, text="Kein ZIP ausgewählt", fg="gray", font=("Arial", 10))
         self.lbl_file.pack(side=tk.LEFT, padx=15)
         
+        # ---> NEU: Das Koordinaten-Label oben rechts <---
+        self.lbl_coords = tk.Label(top_frame, text="Maus nicht im Bild", font=("Consolas", 12, "bold"), fg="#3498db")
+        self.lbl_coords.pack(side=tk.RIGHT, padx=15)
+        
         # MAIN FRAME
         main_frame = tk.Frame(self.root, padx=10, pady=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -140,9 +156,19 @@ class OfflineLaborApp:
         self.image_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
         
         self.lbl_image = tk.Label(self.image_frame, text="Warte auf ZIP-Datei...", bg="#222222", fg="gray", font=("Arial", 14))
-        self.lbl_image.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+        # ---> NEU: Das Bild hart oben links (NW = North-West) verankern <---
+        self.lbl_image.place(x=0, y=0, anchor=tk.NW)
         
-        self.log_text = tk.Text(self.image_frame, height=10, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
+        # ---> NEU: Maus-Events binden <---
+        self.lbl_image.bind('<Motion>', self.on_mouse_move)
+        self.lbl_image.bind('<Leave>', self.on_mouse_leave)
+        
+        # ---> NEU: Zoom-Events (Mausrad) <---
+        self.lbl_image.bind('<MouseWheel>', self.on_mouse_scroll) # Windows / Mac
+        self.lbl_image.bind('<Button-4>', self.on_mouse_scroll)   # Linux (Hoch)
+        self.lbl_image.bind('<Button-5>', self.on_mouse_scroll)   # Linux (Runter)
+        
+        self.log_text = tk.Text(self.image_frame, height=18, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
         self.log_text.pack(side=tk.BOTTOM, fill=tk.X)
         
         # RECHTS: Steuerpult
@@ -173,6 +199,13 @@ class OfflineLaborApp:
         self.make_slider(param_frame, "hybrid_discard_faktor:", self.hybrid_discard_faktor_var, 1.5, 5.0, 0.1)
         self.make_slider(param_frame, "hough_min_faktor:", self.hough_min_faktor_var, 0.5, 1.0, 0.05)
         self.make_slider(param_frame, "hough_max_faktor:", self.hough_max_faktor_var, 1.0, 2.0, 0.05)
+        
+        self.make_slider(param_frame, "hough_param1 (Kanten):", self.hough_param1_var, 10, 100)
+        self.make_slider(param_frame, "hough_param2 (Strenge):", self.hough_param2_var, 1, 20)
+        # ---> NEU <---
+        tk.Label(param_frame, text="--- Bild-Filterung ---", fg="gray").pack(pady=(10, 5))
+        self.make_slider(param_frame, "morph_kernel_size:", self.morph_kernel_var, 3, 15)
+        self.make_slider(param_frame, "max_aspect_ratio (Sichel):", self.max_aspect_ratio_var, 1.5, 6.0, 0.1)
         
         tk.Checkbutton(param_frame, text="💾 Simulations-Bilder auf SSD exportieren", 
                        variable=self.export_images_var, fg="#00aaff").pack(anchor=tk.W, pady=(15, 0))
@@ -235,6 +268,41 @@ class OfflineLaborApp:
             # Tkinter feuert Events oft mehrfach bei Scrollen, process_and_display regelt das
             self.process_and_display()
 
+    def on_mouse_move(self, event):
+        if getattr(self, 'tk_image', None) is None or not hasattr(self, 'current_scale'):
+            return
+            
+        x, y = event.x, event.y
+        
+        # Prüfen, ob wir im linken oder rechten Bild sind
+        if x < self.current_img_w:
+            real_x = int(x / self.current_scale)
+            real_y = int(y / self.current_scale)
+            self.lbl_coords.config(text=f"Live-Bild -> X: {real_x:04d} | Y: {real_y:04d}")
+        else:
+            real_x = int((x - self.current_img_w) / self.current_scale)
+            real_y = int(y / self.current_scale)
+            self.lbl_coords.config(text=f"Diff-Bild -> X: {real_x:04d} | Y: {real_y:04d}")
+
+    def on_mouse_leave(self, event):
+        self.lbl_coords.config(text="Maus nicht im Bild")
+        
+    def on_mouse_scroll(self, event):
+        # Prüfen, ob nach oben (num 4 / delta > 0) oder unten gescrollt wurde
+        if event.num == 4 or getattr(event, 'delta', 0) > 0:
+            self.zoom_factor *= 1.15  # 15% Reinzoomen
+        elif event.num == 5 or getattr(event, 'delta', 0) < 0:
+            self.zoom_factor *= 0.85  # 15% Rauszoomen
+            
+        # Grenzen setzen (Minimal 20% der Originalgröße, Maximal 10-facher Zoom)
+        self.zoom_factor = max(0.2, min(self.zoom_factor, 10.0))
+        
+        # Bild blitzschnell neu zeichnen
+        self.update_image_display()
+        
+        # Koordinaten-Anzeige manuell triggern, damit sie nach dem Zoom sofort stimmt
+        self.on_mouse_move(event)    
+
     def process_and_display(self):
         if not self.orig_files or not self.current_zip_path: return
         self.lbl_shot_info.config(text=f"Schuss {self.current_index + 1} / {len(self.orig_files)}")
@@ -282,9 +350,16 @@ class OfflineLaborApp:
             # Wir spielen alle Bilder der Seite ab, um die Maske perfekt aufzubauen
             for i in range(target_idx + 1):
                 img = self.get_img(zf, side_origs[i])
-                detector.detect_new_shot(img, side)
+                
+                # ---> NEU: Die unübersehbare Trennlinie vor dem aktuellen Schuss <---
                 if i == target_idx:
+                    self.log_text.insert(tk.END, "\n" + "▼"*70 + "\n")
+                    self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR DEN AKTUELLEN SCHUSS ({i+1})  ███\n")
+                    self.log_text.insert(tk.END, "▼"*70 + "\n\n")
+                    
                     live_img = img.copy()
+                    
+                detector.detect_new_shot(img, side)
 
         # 4. VISUALISIERUNG DER ENGINE-ERGEBNISSE
         # Hole das Diff-Bild direkt aus dem Dummy-DateiManager der Engine!
@@ -304,12 +379,28 @@ class OfflineLaborApp:
                 color = (0, 0, 255) if shot.get('is_new', False) else (0, 255, 0)
                 cv2.circle(live_img, shot['pos'], r, color, 2)
 
-        # Side-by-Side anordnen
-        h, w = live_img.shape[:2]
-        scale = 550 / h
-        new_w, new_h = int(w * scale), int(h * scale)
+        # ---> NEU: Bilder für butterweiches Zoomen im RAM zwischenspeichern <---
+        self.last_live_img = live_img
+        self.last_diff_img = diff_img
+        self.update_image_display()
         
-        combined = np.hstack((cv2.resize(live_img, (new_w, new_h)), cv2.resize(diff_img, (new_w, new_h))))
+    def update_image_display(self):
+        """Zeichnet die zwischengespeicherten Bilder mit dem aktuellen Zoom-Faktor neu"""
+        if getattr(self, 'last_live_img', None) is None: return
+
+        h, w = self.last_live_img.shape[:2]
+        
+        # Zoom-Faktor einrechnen
+        self.current_scale = (550 / h) * self.zoom_factor
+        self.current_img_w = int(w * self.current_scale)
+        new_h = int(h * self.current_scale)
+        
+        # NEAREST-Interpolation: Macht die Pixel beim starken Zoomen eckig und scharf,
+        # perfekt um Grauschleier oder feine Masken-Details beim Debuggen zu analysieren!
+        resized_live = cv2.resize(self.last_live_img, (self.current_img_w, new_h), interpolation=cv2.INTER_NEAREST)
+        resized_diff = cv2.resize(self.last_diff_img, (self.current_img_w, new_h), interpolation=cv2.INTER_NEAREST)
+        
+        combined = np.hstack((resized_live, resized_diff))
         img_pil = Image.fromarray(cv2.cvtColor(combined, cv2.COLOR_BGR2RGB))
         
         self.tk_image = ImageTk.PhotoImage(img_pil)

@@ -58,7 +58,8 @@ class DateiManager:
 
     def save_debug_image(self, name, image):
         """Speichert Debug-Bilder intelligent als JPG (Fotos) oder PNG (Masken)."""
-        ext = ".png" if "diff" in name.lower() else ".jpg"
+        # ---> NEU: "mask" hinzugefügt <---
+        ext = ".png" if "diff" in name.lower() or "mask" in name.lower() else ".jpg"
         path = os.path.join(self.DEBUG_FOLDER, f"{name}{ext}")
         cv2.imwrite(path, image)
 
@@ -130,6 +131,8 @@ px_pro_mm_x_rechts = 5.0
 px_pro_mm_y_rechts = 5.0
 
 [Erkennung]
+max_aspect_ratio = 3.5
+morph_kernel_size = 6
 # Auslöser für die Auswertung:
 # yes = Auslösen erst durch Bewegungen im Kamerabild (Z.B. durch Bewegung der laufenden Scheibe, sehr ressourcenschonend)
 # no = Dauerhaftes Scannen (Für statische Scheiben, Webcams, Lasertraining)
@@ -142,11 +145,13 @@ erkennungs_methode = C
 # Für Methode C: Ab welchem Vergrößerungs-Faktor (im Vergleich zum Normal-Kaliber) ein unsauberes Loch
 # nicht mehr als "Normal" gilt und den Hough-Algorithmus auslöst. (Standard: 1.5)
 hybrid_riss_faktor = 1.5
-hybrid_sichel_faktor = 0.75
+hybrid_sichel_faktor = 0.95
 hybrid_discard_faktor = 2.5
 # Für Methode C: Begrenzungen für den Hough-Algorithmus (Faktor bezogen auf caliber_radius)
 hough_min_faktor = 0.85
 hough_max_faktor = 1.15
+hough_param1 = 25
+hough_param2 = 5
 # Mindestfläche in Pixeln, die eine Farb/Helligkeitsänderung haben muss, um als Loch zu gelten.
 min_hole_area = 25
 # Sperr-Radius um bestehende Treffer (in Pixeln) gegen Doppelzählungen.
@@ -266,6 +271,15 @@ darstellung_ohne_weissabgleich = yes
             except ValueError:
                 pass 
 
+        if config.has_option('Erkennung', 'hybrid_sichel_faktor'):
+            try:
+                current_value = config.getint('Erkennung', 'hybrid_sichel_faktor')
+                if current_value < 0.95:
+                    print(f"🔧 Führe Auto-Patch aus: Erhöhe 'hybrid_sichel_faktor' von {current_value} auf 0.95...")
+                    self.update_ini_value('Erkennung', 'hybrid_sichel_faktor', '0.95')
+                    needs_reload = True
+            except ValueError:
+                pass 
 
         if not config.has_section('Zielscheibe'):
             print("🔧 Führe Auto-Patch aus: Füge Sektion '[Zielscheibe]' hinzu...")
@@ -290,6 +304,28 @@ darstellung_ohne_weissabgleich = yes
             print("🔧 Führe Auto-Patch aus: Füge 'debug_alle_bilder_speichern = yes' hinzu...")
             self.update_ini_value('Erkennung', 'debug_alle_bilder_speichern', 'yes')
             needs_reload = True
+
+        if not config.has_option('Erkennung', 'hough_param1'):
+            self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'hough_param1 = 25' hinzu...")
+            self.update_ini_value('Erkennung', 'hough_param1', '25')
+            needs_reload = True
+            
+        if not config.has_option('Erkennung', 'hough_param2'):
+            self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'hough_param2 = 5' hinzu...")
+            self.update_ini_value('Erkennung', 'hough_param2', '5')
+            needs_reload = True
+
+        if not config.has_option('Erkennung', 'morph_kernel_size'):
+            self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'morph_kernel_size = 6' hinzu...")
+            self.update_ini_value('Erkennung', 'morph_kernel_size', '6')
+            needs_reload = True
+            
+        if not config.has_option('Erkennung', 'max_aspect_ratio'):
+            self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'max_aspect_ratio = 3.5' hinzu...")
+            self.update_ini_value('Erkennung', 'max_aspect_ratio', '3.5')
+            needs_reload = True
+
+
         
         if needs_reload:
             config.read(self.CONFIG_FILE, encoding='utf-8')
