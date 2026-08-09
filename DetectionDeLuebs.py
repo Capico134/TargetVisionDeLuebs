@@ -353,14 +353,24 @@ class TargetDetector:
                     (circle_x, circle_y), _ = cv2.minEnclosingCircle(cnt)
                     cx, cy = int(circle_x), int(circle_y)
 
-                # Doppelzählungs-Schutz (mit reparierter Logik!)
+                # Doppelzählungs-Schutz (Getrennt nach Historie und aktueller Frame-Schleife)
                 is_new = True
-                clipping_factor = 0.15
+                # 1. Prüfung gegen Historie (alte Treffer aus vorherigen Frames) -> Sehr streng (0.15)
+                clipping_factor_history = 0.15
                 for shot in self.sm.shots:
                     if shot['side'] == side:
                         dist = np.hypot(shot['pos'][0] - cx, shot['pos'][1] - cy)
-                        if dist < self.caliber_radius * clipping_factor:
+                        if dist < self.caliber_radius * clipping_factor_history:
                             is_new = False
+                            break
+                # 2. Prüfung gegen Fragmente aus DIESEM Frame -> Großzügig (0.75), um Sichel-Risse abzuwürgen
+                if is_new:
+                    clipping_factor_current = 0.75
+                    for new_shot in new_shots_found_this_frame:
+                        dist = np.hypot(new_shot['cx'] - cx, new_shot['cy'] - cy)
+                        if dist < self.caliber_radius * clipping_factor_current:
+                            is_new = False
+                            self.log(side, f"⚠️ Treffer ignoriert: Zu nah ({dist:.1f}px) an anderem Fragment im selben Frame!")
                             break
 
                 if is_new:

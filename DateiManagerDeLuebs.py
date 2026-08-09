@@ -145,7 +145,7 @@ erkennungs_methode = C
 # Für Methode C: Ab welchem Vergrößerungs-Faktor (im Vergleich zum Normal-Kaliber) ein unsauberes Loch
 # nicht mehr als "Normal" gilt und den Hough-Algorithmus auslöst. (Standard: 1.5)
 hybrid_riss_faktor = 1.5
-hybrid_sichel_faktor = 0.95
+hybrid_sichel_faktor = 1.05
 hybrid_discard_faktor = 2.5
 # Für Methode C: Begrenzungen für den Hough-Algorithmus (Faktor bezogen auf caliber_radius)
 hough_min_faktor = 0.85
@@ -273,10 +273,10 @@ darstellung_ohne_weissabgleich = yes
 
         if config.has_option('Erkennung', 'hybrid_sichel_faktor'):
             try:
-                current_value = config.getint('Erkennung', 'hybrid_sichel_faktor')
-                if current_value < 0.95:
-                    print(f"🔧 Führe Auto-Patch aus: Erhöhe 'hybrid_sichel_faktor' von {current_value} auf 0.95...")
-                    self.update_ini_value('Erkennung', 'hybrid_sichel_faktor', '0.95')
+                current_value = config.getfloat('Erkennung', 'hybrid_sichel_faktor')
+                if current_value < 1.05:
+                    print(f"🔧 Führe Auto-Patch aus: Erhöhe 'hybrid_sichel_faktor' von {current_value} auf 1.05...")
+                    self.update_ini_value('Erkennung', 'hybrid_sichel_faktor', '1.05')
                     needs_reload = True
             except ValueError:
                 pass 
