@@ -122,6 +122,8 @@ class OfflineLaborApp:
         self.max_aspect_ratio_var = tk.DoubleVar(value=3.5)
         
         self.zoom_factor = 1.0
+        self.pan_x = 0
+        self.pan_y = 0
         self.view_mode_var = tk.IntVar(value=1)
         
         self.setup_ui()
@@ -152,12 +154,11 @@ class OfflineLaborApp:
         main_frame = tk.Frame(self.root, padx=10, pady=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # LINKS: Bild-Ansicht
-        self.image_frame = tk.LabelFrame(main_frame, text=" Live-Labor (Original + Marker | Aktuelles Diff) ", bg="#222222", fg="white")
+        # LINKS: Bild-Ansicht (Text für den Nutzer als Hilfestellung angepasst)
+        self.image_frame = tk.LabelFrame(main_frame, text=" Live-Labor (Mausrad = Zoom | Linksklick = Bewegen | Rechtsklick = Reset) ", bg="#222222", fg="white")
         self.image_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
         
         self.lbl_image = tk.Label(self.image_frame, text="Warte auf ZIP-Datei...", bg="#222222", fg="gray", font=("Arial", 14))
-        # ---> NEU: Das Bild hart oben links (NW = North-West) verankern <---
         self.lbl_image.place(x=0, y=0, anchor=tk.NW)
         
         # ---> NEU: Maus-Events binden <---
@@ -169,8 +170,13 @@ class OfflineLaborApp:
         self.lbl_image.bind('<Button-4>', self.on_mouse_scroll)   # Linux (Hoch)
         self.lbl_image.bind('<Button-5>', self.on_mouse_scroll)   # Linux (Runter)
         
+        # ---> NEU: Drag & Drop (Verschieben) + Reset <---
+        self.lbl_image.bind('<ButtonPress-1>', self.on_drag_start)
+        self.lbl_image.bind('<B1-Motion>', self.on_drag_motion)
+        self.lbl_image.bind('<Button-3>', self.reset_view) # Rechtsklick = Reset
         self.log_text = tk.Text(self.image_frame, height=18, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
         self.log_text.pack(side=tk.BOTTOM, fill=tk.X)
+        # -------------------------------------------
         
         # RECHTS: Steuerpult
         control_frame = tk.Frame(main_frame, width=400)
@@ -340,8 +346,40 @@ class OfflineLaborApp:
 
     def on_mouse_leave(self, event):
         self.lbl_coords.config(text="Maus nicht im Bild")
+
+    def on_drag_start(self, event):
+        """Merkt sich die Startkoordinaten beim Klicken"""
+        # Wir nutzen x_root/y_root, weil das die absoluten Bildschirmkoordinaten sind.
+        # So zittert das Bild nicht, wenn sich das Label unter der Maus wegbewegt.
+        self.drag_start_x = event.x_root
+        self.drag_start_y = event.y_root
+        self.start_pan_x = self.pan_x
+        self.start_pan_y = self.pan_y
+
+    def on_drag_motion(self, event):
+        """Verschiebt das Bild während des Ziehens"""
+        if getattr(self, 'tk_image', None) is None: return
+        
+        dx = event.x_root - self.drag_start_x
+        dy = event.y_root - self.drag_start_y
+        
+        self.pan_x = self.start_pan_x + dx
+        self.pan_y = self.start_pan_y + dy
+        
+        # Das ist der ganze Trick: Wir verschieben einfach das Tkinter-Label!
+        self.lbl_image.place(x=self.pan_x, y=self.pan_y)
+        
+    def reset_view(self, event=None):
+        """Setzt Zoom und Position zurück (z.B. bei Rechtsklick)"""
+        self.zoom_factor = 1.0
+        self.pan_x = 0
+        self.pan_y = 0
+        self.lbl_image.place(x=0, y=0)
+        self.update_image_display()
         
     def on_mouse_scroll(self, event):
+        old_zoom = self.zoom_factor
+        
         # Prüfen, ob nach oben (num 4 / delta > 0) oder unten gescrollt wurde
         if event.num == 4 or getattr(event, 'delta', 0) > 0:
             self.zoom_factor *= 1.15  # 15% Reinzoomen
@@ -351,11 +389,20 @@ class OfflineLaborApp:
         # Grenzen setzen (Minimal 20% der Originalgröße, Maximal 10-facher Zoom)
         self.zoom_factor = max(0.2, min(self.zoom_factor, 10.0))
         
+        # ---> NEU: Das Bild zur Maus hin zoomen (wie bei Google Maps) <---
+        if self.zoom_factor != old_zoom:
+            scale_change = self.zoom_factor / old_zoom
+            
+            # Berechnet, wie weit der Pixel unter der Maus "wegrutschen" würde und zieht das Label nach
+            self.pan_x -= (event.x * scale_change - event.x)
+            self.pan_y -= (event.y * scale_change - event.y)
+            self.lbl_image.place(x=self.pan_x, y=self.pan_y)
+        
         # Bild blitzschnell neu zeichnen
         self.update_image_display()
         
         # Koordinaten-Anzeige manuell triggern, damit sie nach dem Zoom sofort stimmt
-        self.on_mouse_move(event)    
+        self.on_mouse_move(event)   
 
     def process_and_display(self):
         if not self.orig_files or not self.current_zip_path: return

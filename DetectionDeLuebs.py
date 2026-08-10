@@ -55,6 +55,31 @@ class TargetDetector:
         live_float += diff
         return np.clip(live_float, 0, 255).astype(np.uint8)
 
+    def calculate_hole_score(self, cx, cy, radius, thresh_new, thresh_raw):
+        """
+        Berechnet die Qualität eines potenziellen Schusslochs (Score 0 bis 200).
+        Prüft, wie viel Weißanteil im perfekten Kreisumfang vorhanden ist.
+        """
+        circle_mask = np.zeros_like(thresh_new)
+        cv2.circle(circle_mask, (int(cx), int(cy)), int(radius), 255, -1)
+        
+        pixels_in_circle = cv2.countNonZero(circle_mask)
+        if pixels_in_circle == 0: 
+            return 0.0, 0.0, 0.0
+            
+        # 1. Check: Anteil am NEUEN Riss (thresh_new)
+        intersection_new = cv2.bitwise_and(thresh_new, circle_mask)
+        pixels_in_new = cv2.countNonZero(intersection_new)
+        coverage_new = (pixels_in_new / pixels_in_circle) * 100 
+        
+        # 2. Check: Anteil am GESAMTEN Lochbild (thresh_raw)
+        intersection_raw = cv2.bitwise_and(thresh_raw, circle_mask)
+        pixels_in_raw = cv2.countNonZero(intersection_raw)
+        coverage_raw = (pixels_in_raw / pixels_in_circle) * 100 
+        
+        total_score = coverage_new + coverage_raw
+        return total_score, coverage_new, coverage_raw
+
     def ninja_kalibrierungs_check(self, ref_bgr, side):
         """Findet den Nullpunkt mit dem unbestechlichen 'Weißen-Punkt-Sniper'."""
         aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
@@ -237,24 +262,8 @@ class TargetDetector:
                             self.log(side, f"🔎 HoughCircles hat {len(found_circles)} Kandidaten gefunden. Starte Ranking...")
                             
                             for (hx, hy, hr) in found_circles:
-                                circle_mask = np.zeros_like(thresh_new)
-                                cv2.circle(circle_mask, (hx, hy), hr, 255, -1)
-                                
-                                pixels_in_circle = cv2.countNonZero(circle_mask)
-                                if pixels_in_circle == 0: continue
-                                
-                                # 1. Check: Anteil am NEUEN Riss (thresh_new)
-                                intersection_new = cv2.bitwise_and(thresh_new, circle_mask)
-                                pixels_in_new = cv2.countNonZero(intersection_new)
-                                coverage_new = (pixels_in_new / pixels_in_circle) * 100 
-                                
-                                # 2. Check: Anteil am GESAMTEN Lochbild (thresh_raw)
-                                intersection_raw = cv2.bitwise_and(thresh_raw, circle_mask)
-                                pixels_in_raw = cv2.countNonZero(intersection_raw)
-                                coverage_raw = (pixels_in_raw / pixels_in_circle) * 100 
-                                
-                                # Der ultimative Realitäts-Check (Max. 200 Score)
-                                total_score = coverage_new + coverage_raw
+                                # ---> NEU: Einzeiler statt großem Code-Block <---
+                                total_score, coverage_new, coverage_raw = self.calculate_hole_score(hx, hy, hr, thresh_new, thresh_raw)
                                 
                                 if total_score > best_score:
                                     best_score = total_score
@@ -362,20 +371,33 @@ class TargetDetector:
                         dist = np.hypot(shot['pos'][0] - cx, shot['pos'][1] - cy)
                         if dist < self.caliber_radius * clipping_factor_history:
                             is_new = False
+                            self.log(side, f"⚠️ Treffer ignoriert: Zu nah ({dist:.1f}px) an bekanntem alten Schuss aus vorherigen Frames!")
                             break
-                # 2. Prüfung gegen Fragmente aus DIESEM Frame -> Großzügig (0.75), um Sichel-Risse abzuwürgen
+                # 2. Prüfung gegen Fragmente aus DIESEM Frame -> Großzügig (0.95), um Sichel-Risse abzuwürgen
                 if is_new:
-                    clipping_factor_current = 0.75
-                    for new_shot in new_shots_found_this_frame:
-                        dist = np.hypot(new_shot['cx'] - cx, new_shot['cy'] - cy)
+                    # ---> NEU: Score für den aktuellen Kandidaten berechnen (mit Standard-Kaliberradius)
+                    candidate_score, _, _ = self.calculate_hole_score(cx, cy, self.caliber_radius, thresh_new, thresh_raw)
+                    
+                    clipping_factor_current = 0.95
+                    for i, existing_shot in enumerate(new_shots_found_this_frame):
+                        dist = np.hypot(existing_shot['cx'] - cx, existing_shot['cy'] - cy)
                         if dist < self.caliber_radius * clipping_factor_current:
+                            
+                            # ---> NEU: Das Sichel-Duell! Wer hat den höheren Weißanteil? <---
+                            if candidate_score > existing_shot['score']:
+                                self.log(side, f"🔄Aussortieren von Dublikaten: Sichel-Duell: Ersetze altes Fragment (Score {candidate_score:.1f} > {existing_shot['score']:.1f})")
+                                # Überschreibe den Verlierer mit dem neuen, besseren Kandidaten
+                                new_shots_found_this_frame[i] = {'cx': cx, 'cy': cy, 'area': area, 'score': candidate_score}
+                            else:
+                                self.log(side, f"⚠️ Treffer ignoriert: Verliert Sichel-Duell gegen besseres Fragment (Score {existing_shot['score']:.1f} > {candidate_score:.1f})!")
+                            
                             is_new = False
-                            self.log(side, f"⚠️ Treffer ignoriert: Zu nah ({dist:.1f}px) an anderem Fragment im selben Frame!")
                             break
 
                 if is_new:
-                    new_shots_found_this_frame.append({'cx': cx, 'cy': cy, 'area': area})
-                    self.log(side, f"-> NEUES LOCH GEFUNDEN: Pos ({cx}, {cy}) | Fläche {area:.1f}px")
+                    # ---> NEU: Den Score mit abspeichern, damit spätere Fragmente dagegen antreten können!
+                    new_shots_found_this_frame.append({'cx': cx, 'cy': cy, 'area': area, 'score': candidate_score})
+                    self.log(side, f"-> NEUES LOCH GEFUNDEN: Pos ({cx}, {cy}) | Fläche {area:.1f}px | Score {candidate_score:.1f}")
                 
         # ---> BLOCK FÜR TREFFER UND DISCARD-MASKEN <---
         if new_shots_found_this_frame or update_mask_only:
