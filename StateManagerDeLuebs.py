@@ -274,6 +274,11 @@ class StateManager:
         center_l_raw = self.nullpunkts.get('left')
         center_r_raw = self.nullpunkts.get('right')
 
+        # ---> NEU: Startzeit aus dem monotonic-Timer rückwärts berechnen <---
+        dauer_sekunden = time.monotonic() - getattr(self, 'match_start_mono', time.monotonic())
+        start_zeit_timestamp = time.time() - dauer_sekunden
+        start_zeit_str = datetime.fromtimestamp(start_zeit_timestamp).strftime("%d.%m.%y %H:%M:%S")
+
         # 1. Metadaten für Highscore und JSON (mit explizitem Typen-Cast für NumPy-Sicherheit)
         metadata = {
             "spieler": spieler_str,  
@@ -288,6 +293,7 @@ class StateManager:
             "erkennungs_methode": str(self.config.get('Erkennung', 'erkennungs_methode')),
             "match_id": int(self.current_match_id),
             "version": str(self.dm.get_current_version()),
+            "start_zeit": start_zeit_str,  # <--- NEU: Rückberechnete Startzeit
             "timestamp": datetime.now().strftime("%d.%m.%y %H:%M:%S"),
             "center_l": [int(center_l_raw[0]), int(center_l_raw[1])] if (cam_l and center_l_raw) else None,
             "center_r": [int(center_r_raw[0]), int(center_r_raw[1])] if (cam_r and center_r_raw) else None,

@@ -48,13 +48,22 @@ class MatchDetailWindow(tk.Toplevel):
                     config.read("config.ini")
                     self.caliber_radius = config.getint('Erkennung', 'caliber_radius', fallback=11)
                 
+                # ---> NEU: Erst PNG versuchen (neue Version), dann Fallback auf JPG (alte Version) <---
                 try:
-                    self.orig_img_l = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_left.jpg")))
-                except KeyError: pass
+                    self.orig_img_l = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_left.png")))
+                except KeyError:
+                    try:
+                        self.orig_img_l = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_left.jpg")))
+                    except KeyError:
+                        pass
                 
                 try:
-                    self.orig_img_r = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_right.jpg")))
-                except KeyError: pass
+                    self.orig_img_r = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_right.png")))
+                except KeyError:
+                    try:
+                        self.orig_img_r = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_right.jpg")))
+                    except KeyError:
+                        pass
                 
         except Exception as e:
             messagebox.showerror("Fehler beim Lesen", f"Das ZIP konnte nicht gelesen werden:\n{e}")
@@ -509,11 +518,12 @@ class HighscoreViewer:
 
                 # --- HEADER ---
                 info_lines.extend([
-                    f"MATCH ID: {match_id:06d}",
-                    f"VERSION:  {meta.get('version', 'Unbekannt')}",  # <--- DIESE ZEILE HINZUFÜGEN
-                    f"SPIELER:  {meta.get('spieler', 'Unbekannt')}",
-                    f"DATUM:    {meta.get('timestamp', 'Unbekannt')}",
-                    f"KAMERAS:  {meta.get('kameras', 'Unbekannt')}",
+                    f"{'MATCH ID:':<13} {match_id:06d}",
+                    f"{'VERSION:':<13} {meta.get('version', 'Unbekannt')}",
+                    f"{'SPIELER:':<13} {meta.get('spieler', 'Unbekannt')}",
+                    f"{'START:':<13} {meta.get('start_zeit', 'Unbekannt')}",
+                    f"{'GESPEICHERT:':<13} {meta.get('timestamp', 'Unbekannt')}",
+                    f"{'KAMERAS:':<13} {meta.get('kameras', 'Unbekannt')}",
                     "-" * 85,
                     "WICHTIGSTE ERKENNUNGS-PARAMETER (Aus Config-Snapshot):"
                 ])

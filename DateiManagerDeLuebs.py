@@ -56,11 +56,16 @@ class DateiManager:
         with open(self.LOG_FILE, "a", encoding="utf-8") as f:
             f.write(log_msg + "\n")
 
+    #def save_debug_image(self, name, image):
+    #    """Speichert Debug-Bilder intelligent als JPG (Fotos) oder PNG (Masken)."""
+    #    # ---> NEU: "mask" hinzugefügt <---
+    #    ext = ".png" if "diff" in name.lower() or "mask" in name.lower() else ".jpg"
+    #    path = os.path.join(self.DEBUG_FOLDER, f"{name}{ext}")
+    #    cv2.imwrite(path, image)
+
     def save_debug_image(self, name, image):
-        """Speichert Debug-Bilder intelligent als JPG (Fotos) oder PNG (Masken)."""
-        # ---> NEU: "mask" hinzugefügt <---
-        ext = ".png" if "diff" in name.lower() or "mask" in name.lower() else ".jpg"
-        path = os.path.join(self.DEBUG_FOLDER, f"{name}{ext}")
+        """Speichert alle Debug-Bilder konsequent als verlustfreies PNG."""
+        path = os.path.join(self.DEBUG_FOLDER, f"{name}.png")
         cv2.imwrite(path, image)
 
     def update_ini_value(self, target_section, target_key, new_value):
