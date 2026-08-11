@@ -69,18 +69,26 @@ class TargetTracker:
         self.trigger_reset_right = False
         self.trigger_exit = False
         
-    def log(self, side, text):
+    # ---> NEU: Der Parameter show_gui=False <---
+    def log(self, side, text, show_gui=False):
         timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
         log_msg = f"[{timestamp}] [{side.upper()}] {text}"
         
         print(log_msg)
         self.dm.write_log(log_msg)
             
-        gui_text = text if len(text) <= 45 else text[:42] + "..."
-        if side == 'left' or side == 'SYSTEM':
-            self.msg_left = gui_text
-        if side == 'right' or side == 'SYSTEM':
-            self.msg_right = gui_text
+        if show_gui:
+            # ---> NEU: Filtert alle Emojis (Zeichen mit sehr hohem Unicode-Wert) heraus, 
+            # lässt aber normale Buchstaben und deutsche Umlaute (ä, ö, ü) in Ruhe! <---
+            gui_text = "".join(c for c in text if ord(c) < 1000).strip()
+            
+            # Text kürzen, falls zu lang
+            gui_text = gui_text if len(gui_text) <= 45 else gui_text[:42] + "..."
+            
+            if side == 'left' or side == 'SYSTEM':
+                self.msg_left = gui_text
+            if side == 'right' or side == 'SYSTEM':
+                self.msg_right = gui_text
 
     def apply_crop(self, frame, side):
         if frame is None: return None
@@ -110,7 +118,7 @@ class TargetTracker:
                 self.log(state.side, "Status: Keine Scheibe vorhanden (Warte auf Einfahren).")
                 state.target_present = False
             else:
-                self.log(state.side, "Status: Scheibe direkt im Bild erkannt! Speichere Initial-Referenz.")
+                self.log(state.side, "Status: Scheibe direkt im Bild erkannt! Speichere Initial-Referenz.", True)
                 state.target_present = True
                 self.detector.set_reference_image(frame, state.side) # <--- Delegiert an den Detector!
             state.is_initialized = True
@@ -167,7 +175,7 @@ class TargetTracker:
             self.detector.set_reference_image(frame, side) 
             state.target_present = True
             
-        self.log(side, "MANUELLER RESET: Referenz gelockt (Pausenerkennung bleibt AKTIV).")
+        self.log(side, "MANUELLER RESET: Referenz gelockt (Pausenerkennung bleibt AKTIV).", True)
 
     def process_resets(self, frame_l, frame_r):
         if self.trigger_reset_left:
@@ -464,9 +472,9 @@ class TargetTracker:
             if getattr(self, 'btn_zip_coords', None):
                 zx1, zy1, zx2, zy2 = self.btn_zip_coords
                 if zx1 <= x <= zx2 and zy1 <= y <= zy2:
-                    self.log("SYSTEM", "Generiere Debug-Paket... Bitte warten.")
+                    self.log("SYSTEM", "Generiere Debug-Paket... Bitte warten.", True)
                     self.dm.create_debug_zip()
-                    self.log("SYSTEM", "Debug-ZIP wurde erfolgreich gespeichert!")
+                    self.log("SYSTEM", "Debug-ZIP wurde erfolgreich gespeichert!", True)
                     return
             
             # Reset Button (Links)
@@ -487,7 +495,7 @@ class TargetTracker:
             if getattr(self, 'btn_highscore_coords', None):
                 hx1, hy1, hx2, hy2 = self.btn_highscore_coords
                 if hx1 <= x <= hx2 and hy1 <= y <= hy2:
-                    self.log("SYSTEM", "Öffne Highscore-Tabelle...")
+                    self.log("SYSTEM", "Öffne Highscore-Tabelle...", True)
                     subprocess.Popen(["python", "HighscoreViewDeLuebs.py"])
                     return
                         
@@ -566,13 +574,13 @@ class TargetTracker:
                         self.last_player_name_r = player_name_r if player_name_l != player_name_r else ""
                         
                         log_msg = f"Speichere Match für {player_name_l} / {player_name_r}..." if player_name_l != player_name_r else f"Speichere Match für {player_name_l}..."
-                        self.log("SYSTEM", log_msg)
+                        self.log("SYSTEM", log_msg, True)
                         
                         backup_mask_l = self.state_left.cumulative_mask.copy() if (self.use_left and self.state_left and self.state_left.cumulative_mask is not None) else None
                         backup_mask_r = self.state_right.cumulative_mask.copy() if (self.use_right and self.state_right and self.state_right.cumulative_mask is not None) else None
                         
                         if self.sm.save_current_match(player_name_l, player_name_r):
-                            self.log("SYSTEM", "Match erfolgreich gespeichert!")
+                            self.log("SYSTEM", "Match erfolgreich gespeichert!", True)
                             
                             # 1. Den Ordner fegen (löscht alle Schüsse/Diffs des alten Matches)
                             if self.use_left: self.dm.clear_debug_images('left', keep_startmask=True)
@@ -596,14 +604,14 @@ class TargetTracker:
                                 if self.use_left: self.cap_left.read()
                                 if self.use_right: self.cap_right.read()
                         else:
-                            self.log("SYSTEM", "Speichern abgebrochen (Keine Treffer).")
+                            self.log("SYSTEM", "Speichern abgebrochen (Keine Treffer).", True)
                     return
 
             # ---> NEU: Offline Labor Button <---
             if getattr(self, 'btn_labor_coords', None):
                 lx1, ly1, lx2, ly2 = self.btn_labor_coords
                 if lx1 <= x <= lx2 and ly1 <= y <= ly2:
-                    self.log("SYSTEM", "Öffne Offline-Labor...")
+                    self.log("SYSTEM", "Öffne Offline-Labor...", True)
                     # Subprozess starten, damit das Hauptfenster weiterlaufen kann
                     subprocess.Popen(["python", "offline_labor.py"])
                     return
@@ -620,7 +628,7 @@ class TargetTracker:
             cv2.resizeWindow(self.window_name, 1280, 720) 
             
         cv2.setMouseCallback(self.window_name, self.on_mouse_click)
-        self.log("SYSTEM", "=== PROGRAMM GESTARTET ===")
+        self.log("SYSTEM", "=== PROGRAMM GESTARTET ===", True)
 
         while True:
             frame_l, frame_r = self.read_frames()

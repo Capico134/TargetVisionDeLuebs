@@ -112,11 +112,11 @@ class TargetDetector:
         
         if max_val > 100:
             cx, cy = max_loc
-            self.log("SYSTEM", f"🎯 Weißer Punkt exakt zentriert auf X:{cx} Y:{cy}")
+            self.log("SYSTEM", f"🎯 Weißer Punkt exakt zentriert auf X:{cx} Y:{cy}", True)
             punkt_gefunden = True
         else:
             cx, cy = int(x + (w / 2)), int(y + (h / 2))
-            self.log("SYSTEM", f"⚠️ Kein weißer Punkt! Fallback auf Erdnuss-Mitte.")
+            self.log("SYSTEM", f"⚠️ Kein weißer Punkt! Fallback auf Erdnuss-Mitte.", True)
             punkt_gefunden = False
 
         seite_str = "links" if side == 'left' else "rechts"
@@ -152,7 +152,7 @@ class TargetDetector:
             mitte = self.ninja_kalibrierungs_check(bgr_blur, side)
             if mitte:
                 self.sm.set_nullpunkt(side, mitte[0], mitte[1]) 
-                self.log("SYSTEM", f"🎯 Nullpunkt {side.upper()} gesetzt auf X:{int(mitte[0])} Y:{int(mitte[1])}")
+                self.log("SYSTEM", f"🎯 Nullpunkt {side.upper()} gesetzt auf X:{int(mitte[0])} Y:{int(mitte[1])}", True)
 
     def detect_new_shot(self, frame, side):
         state = self.sm.state_left if side == 'left' else self.sm.state_right
@@ -207,12 +207,10 @@ class TargetDetector:
                 # ---> NEU: Der Anti-Verschiebungs-Filter (Aspect Ratio) <---
                 # Wir legen ein umschließendes Rechteck um die Kontur
                 rx, ry, rw, rh = cv2.boundingRect(cnt)
-                
                 # Wir verhindern eine Division durch Null, falls w oder h mal 0 sein sollte
                 if rw == 0 or rh == 0: continue
-                
                 # Seitenverhältnis berechnen (immer den größeren durch den kleineren Wert teilen)
-                aspect_ratio = max(rw/rh, rh/rw)
+                aspect_ratio = rh/rw #max(rw/rh, rh/rw) #ERSTMAL NUR SEHR SCHMALE SCHÜSSE FILTERN (nicht sehr flache)
                 # ---> NEU: Dynamisches Aspect-Ratio-Limit <---
                 if aspect_ratio > self.max_aspect_ratio:
                     self.log(side, f"🚫 Störung ignoriert (Zu schmal/lang: Ratio {aspect_ratio:.1f} > {self.max_aspect_ratio:.1f}). Maskiert!")
@@ -411,7 +409,7 @@ class TargetDetector:
                 for sd in new_shots_found_this_frame:
                     shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'])
                     self.log(side, f"💥 Treffer gewertet: {shot['score']} Ringe!")
-                self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!")
+                self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!", True)
             
             # Maske für BEIDE Fälle (Treffer & Discard-Risse) updaten
             state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, thresh_raw)

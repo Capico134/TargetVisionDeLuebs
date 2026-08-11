@@ -270,7 +270,8 @@ class OfflineLaborApp:
         _bind_scroll_recursive(canvas)
         _bind_scroll_recursive(param_frame)
 
-    def print_log(self, side, msg):
+    # ---> NEU: Parameter 'show_gui' hinzugefügt, damit das Programm nicht crasht <---
+    def print_log(self, side, msg, show_gui=False):
         """Simuliert den Log-Output der Engine in der GUI"""
         self.log_text.insert(tk.END, f"[{side.upper()}] {msg}\n")
         self.log_text.see(tk.END)

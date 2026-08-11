@@ -419,6 +419,9 @@ class HighscoreViewer:
             self.tree.selection_set(item)
             context_menu = tk.Menu(self.root, tearoff=0)
             context_menu.add_command(label="🎯 Treffer-Bilder anzeigen", command=self.show_hit_images, font=('Arial', 14))
+            # ---> NEU: Der Log & Config Button <---
+            context_menu.add_command(label="📋 Log & Config anzeigen", command=self.show_text_log, font=('Arial', 14))
+            
             context_menu.add_separator()
             context_menu.add_command(label="🗑️ Match löschen", command=self.delete_selected_entries, font=('Arial', 14))
             context_menu.post(event.x_root, event.y_root)
@@ -458,6 +461,154 @@ class HighscoreViewer:
             return
             
         MatchDetailWindow(self.root, match_id, zip_path)
+
+    def show_text_log(self):
+        selected = self.tree.selection()
+        if not selected: return
+        
+        match_id = int(self.tree.item(selected[0], "values")[0])
+        zip_path = os.path.join("savegames", "logs", f"MATCH{match_id:06d}.zip")
+        
+        if not os.path.exists(zip_path):
+            messagebox.showerror("Fehler", f"Die Datei {zip_path} existiert nicht mehr.")
+            return
+
+        log_window = tk.Toplevel(self.root)
+        log_window.title(f"Detail-Log & Config: MATCH {match_id:06d}")
+        log_window.geometry("1150x800")
+        
+        info_lines = []
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as zipf:
+                # 1. Match JSON auslesen
+                match_data = json.loads(zipf.read("match.json").decode('utf-8'))
+                meta = match_data.get("metadata", match_data)
+                
+                # ---> NEU: Zentren auslesen <---
+                center_l = meta.get('center_l', [0, 0])
+                center_r = meta.get('center_r', [0, 0])
+                
+                # 2. Config laden
+                config = configparser.ConfigParser()
+                try:
+                    config_str = zipf.read("config.ini").decode('utf-8')
+                    config.read_string(config_str)
+                except KeyError:
+                    pass 
+                
+                # ---> NEU: Umrechnungsfaktoren (px -> mm) auslesen <---
+                px_x_l, px_y_l = 5.0, 5.8
+                px_x_r, px_y_r = 5.0, 5.8
+                
+                if config.has_section('Kameras'):
+                    cam_sec = config['Kameras']
+                    px_x_l = cam_sec.getfloat('px_pro_mm_x_links', fallback=5.0)
+                    px_y_l = cam_sec.getfloat('px_pro_mm_y_links', fallback=5.8)
+                    px_x_r = cam_sec.getfloat('px_pro_mm_x_rechts', fallback=5.0)
+                    px_y_r = cam_sec.getfloat('px_pro_mm_y_rechts', fallback=5.8)
+
+                # --- HEADER ---
+                info_lines.extend([
+                    f"MATCH ID: {match_id:06d}",
+                    f"SPIELER:  {meta.get('spieler', 'Unbekannt')}",
+                    f"DATUM:    {meta.get('timestamp', 'Unbekannt')}",
+                    f"KAMERAS:  {meta.get('kameras', 'Unbekannt')}",
+                    "-" * 85,
+                    "WICHTIGSTE ERKENNUNGS-PARAMETER (Aus Config-Snapshot):"
+                ])
+                
+                if config.has_section('Zielscheibe'):
+                    zs = config['Zielscheibe']
+                    info_lines.append(f"Scheibe: {zs.get('aktive_scheibe', '?')} | Ringwertung: {zs.get('ringwertung_aktiv', '?')}")
+                
+                if config.has_section('Erkennung'):
+                    erk = config['Erkennung']
+                    info_lines.extend([
+                        f"Methode: {erk.get('erkennungs_methode', 'C')} | Hit-Tolerance: {erk.get('hit_tolerance', '?')} | Min-Area: {erk.get('min_hole_area', '?')} | Caliber-Radius: {erk.get('caliber_radius', '?')}",
+                        f"Hybrid-Sicheln: < {erk.get('hybrid_sichel_faktor', '?')}x | Hybrid-Risse: > {erk.get('hybrid_riss_faktor', '?')}x | Discard: > {erk.get('hybrid_discard_faktor', '?')}x",
+                        f"Hough-Min: {erk.get('hough_min_faktor', '?')}x | Hough-Max: {erk.get('hough_max_faktor', '?')}x",
+                        f"Morph-Kernel: {erk.get('morph_kernel_size', '?')} | Max-Aspect-Ratio: {erk.get('max_aspect_ratio', '?')}"
+                    ])
+                else:
+                    info_lines.append("Keine Erkennungs-Sektion gefunden.")
+                
+                info_lines.append("-" * 85)
+                info_lines.append("")
+
+                # --- TIMELINE AUFBEREITEN ---
+                timeline = match_data.get("timeline", [])
+                first_t = timeline[0].get('t', 0.0) if timeline else 0.0
+                
+                hits_l = [h for h in timeline if h.get('s') == 'l']
+                hits_r = [h for h in timeline if h.get('s') == 'r']
+                
+                def build_side_table(hits, side_name):
+                    if not hits: return
+                    
+                    # Achsen und Zentren je nach Seite zuweisen
+                    if side_name == "LINKS":
+                        cx, cy = center_l[0], center_l[1]
+                        px_x, px_y = px_x_l, px_y_l
+                    else:
+                        cx, cy = center_r[0], center_r[1]
+                        px_x, px_y = px_x_r, px_y_r
+
+                    # Tabellenkopf (mit Info zur Umrechnung)
+                    info_lines.append(f"TREFFER-TIMELINE: {side_name} (Zentrum X:{cx}/Y:{cy} | px/mm X:{px_x}/Y:{px_y})")
+                    header = f"{'Nr':>4} | {'Zeit':>8} | {'Ringe':>6} | {'X-Pos':>7} | {'Y-Pos':>7} | {'X (mm)':>8} | {'Y (mm)':>8} | {'Fläche':>8}"
+                    info_lines.append(header)
+                    info_lines.append("-" * len(header))
+                    
+                    summe = 0.0
+                    for i, hit in enumerate(hits):
+                        t_rel = hit.get('t', 0.0) - first_t
+                        ringe = hit.get('score', 0.0)
+                        x, y = hit.get('x', 0), hit.get('y', 0)
+                        area = hit.get('a', hit.get('area', 0.0))
+                        summe += ringe
+                        
+                        # ---> NEU: Umrechnung in Millimeter <---
+                        # X-Achse: Normal (Treffer - Zentrum)
+                        x_mm = (x - cx) / px_x if px_x != 0 else 0.0
+                        # Y-Achse: Invertiert (Zentrum - Treffer), damit Oben = positiv
+                        y_mm = (cy - y) / px_y if px_y != 0 else 0.0
+                        
+                        info_lines.append(f"{i+1:4d} | {t_rel:7.1f}s | {ringe:6.1f} | {x:7.1f} | {y:7.1f} | {x_mm:8.2f} | {y_mm:8.2f} | {area:8.1f}")
+                    
+                    info_lines.append("-" * len(header))
+                    info_lines.append(f"GESAMTSUMME {side_name}: {summe:.1f} Ringe")
+                    info_lines.append("\n" + "-" * 85 + "\n")
+
+                build_side_table(hits_l, "LINKS")
+                build_side_table(hits_r, "RECHTS")
+
+                # --- ROH-LOG ---
+                info_lines.append("SYSTEM-LOG FÜR DIESES MATCH (treffer_log.txt):")
+                try:
+                    raw_log = zipf.read("treffer_log.txt").decode('utf-8')
+                    info_lines.append(raw_log)
+                except KeyError:
+                    info_lines.append("Keine treffer_log.txt im ZIP gefunden.")
+                    
+        except Exception as e:
+            info_lines.append(f"\n[FEHLER BEIM LESEN DES ZIP-ARCHIVS: {e}]")
+            
+        full_text = "\n".join(info_lines)
+        
+        text_widget = tk.Text(log_window, wrap="none", width=125, height=35, font=("Consolas", 12), bg="#1e1e1e", fg="#00ff00")
+        text_widget.insert("1.0", full_text)
+        text_widget.configure(state="disabled")
+        
+        x_scroll = tk.Scrollbar(log_window, orient="horizontal", command=text_widget.xview)
+        y_scroll = tk.Scrollbar(log_window, orient="vertical", command=text_widget.yview)
+        text_widget.configure(xscrollcommand=x_scroll.set, yscrollcommand=y_scroll.set)
+        
+        text_widget.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        
+        log_window.grid_rowconfigure(0, weight=1)
+        log_window.grid_columnconfigure(0, weight=1)
 
 if __name__ == "__main__":
     root = tk.Tk()
