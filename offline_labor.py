@@ -365,23 +365,61 @@ class OfflineLaborApp:
             self.process_and_display()
 
     def on_mouse_move(self, event):
-        if getattr(self, 'tk_image', None) is None or not hasattr(self, 'current_scale'):
+        # Wenn noch kein Bild geladen ist, tu nichts
+        if getattr(self, 'base_combined_img', None) is None or not hasattr(self, 'current_scale'):
             return
             
         x, y = event.x, event.y
+        img_h, img_w = self.base_combined_img.shape[:2]
+        
+        # Sicherheits-Check: Befindet sich die Maus überhaupt innerhalb des Bildes?
+        if x < 0 or y < 0 or x >= img_w or y >= img_h:
+            self.on_mouse_leave(event)
+            return
+            
+        # Wir nehmen das Base-Image und zeichnen nur auf dieser Kopie herum
+        temp_img = self.base_combined_img.copy()
+        
+        # Den aktuellen Radius an den Zoom-Faktor anpassen
+        r = int(self.caliber_radius_var.get() * self.current_scale)
+        
+        # Neon-Blau / Cyan in BGR-Farbraum
+        neon_blue = (255, 255, 0)
         
         # Prüfen, ob wir im linken oder rechten Bild sind
         if x < self.current_img_w:
             real_x = int(x / self.current_scale)
             real_y = int(y / self.current_scale)
             self.lbl_coords.config(text=f"Live-Bild -> X: {real_x:04d} | Y: {real_y:04d}")
+            
+            # ---> NEU: Fadenkreuz im RECHTEN Bild einzeichnen <---
+            mirror_x = x + self.current_img_w
+            cv2.circle(temp_img, (mirror_x, y), r, neon_blue, 2)
+            cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) # Kleiner Punkt in der Mitte
+            
         else:
             real_x = int((x - self.current_img_w) / self.current_scale)
             real_y = int(y / self.current_scale)
             self.lbl_coords.config(text=f"Diff-Bild -> X: {real_x:04d} | Y: {real_y:04d}")
+            
+            # ---> NEU: Fadenkreuz im LINKEN Bild einzeichnen <---
+            mirror_x = x - self.current_img_w
+            cv2.circle(temp_img, (mirror_x, y), r, neon_blue, 2)
+            cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) # Kleiner Punkt in der Mitte
+
+        # Das temporäre Bild mit dem Overlay blitzschnell ins Tkinter-Label werfen
+        img_pil = Image.fromarray(cv2.cvtColor(temp_img, cv2.COLOR_BGR2RGB))
+        self.tk_image = ImageTk.PhotoImage(img_pil)
+        self.lbl_image.config(image=self.tk_image)
 
     def on_mouse_leave(self, event):
         self.lbl_coords.config(text="Maus nicht im Bild")
+        
+        # ---> NEU: Wieder das cleane Base-Image anzeigen, wenn die Maus weg ist <---
+        if getattr(self, 'base_combined_img', None) is not None:
+            img_pil = Image.fromarray(cv2.cvtColor(self.base_combined_img, cv2.COLOR_BGR2RGB))
+            self.tk_image = ImageTk.PhotoImage(img_pil)
+            self.lbl_image.config(image=self.tk_image)
 
     def on_drag_start(self, event):
         """Merkt sich die Startkoordinaten beim Klicken"""
@@ -768,8 +806,11 @@ class OfflineLaborApp:
         resized_right = cv2.resize(right_img, (self.current_img_w, new_h), interpolation=cv2.INTER_NEAREST)
         
         combined = np.hstack((resized_live, resized_right))
-        img_pil = Image.fromarray(cv2.cvtColor(combined, cv2.COLOR_BGR2RGB))
         
+        # ---> NEU: Das nackte Bild ohne Maus-Overlay als Base-Image merken <---
+        self.base_combined_img = combined.copy()
+        
+        img_pil = Image.fromarray(cv2.cvtColor(combined, cv2.COLOR_BGR2RGB))
         self.tk_image = ImageTk.PhotoImage(img_pil)
         self.lbl_image.config(image=self.tk_image, text="")
 
