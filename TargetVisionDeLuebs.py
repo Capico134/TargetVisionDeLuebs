@@ -74,7 +74,7 @@ class TargetTracker:
         timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
         log_msg = f"[{timestamp}] [{side.upper()}] {text}"
         
-        print(log_msg)
+        #print(log_msg)
         self.dm.write_log(log_msg)
             
         if show_gui:
@@ -120,7 +120,8 @@ class TargetTracker:
             else:
                 self.log(state.side, "Status: Scheibe direkt im Bild erkannt! Speichere Initial-Referenz.", True)
                 state.target_present = True
-                self.detector.set_reference_image(frame, state.side) # <--- Delegiert an den Detector!
+                self.detector.set_reference_image(frame, state.side)
+                self.log(state.side, "-" * 60) # <--- NEU: Trenner für Initial-Referenz
             state.is_initialized = True
             return
 
@@ -137,7 +138,8 @@ class TargetTracker:
                     if state.still_counter >= state.stillness_limit:
                         state.is_moving = False
                         self.log(state.side, "Bewegung beendet (Bild stabil).")
-                        self.detector.check_background_and_evaluate(frame, state) # <--- Delegiert an den Detector!
+                        self.detector.check_background_and_evaluate(frame, state) 
+                        self.log(state.side, "-" * 60) # <--- NEU: Block der Frame-Auswertung abschließen
         else:
             current_time = time.time()
             if current_time - state.last_scan_time > 1.5:
@@ -176,6 +178,7 @@ class TargetTracker:
             state.target_present = True
             
         self.log(side, "MANUELLER RESET: Referenz gelockt (Pausenerkennung bleibt AKTIV).", True)
+        self.log(side, "-" * 60) # <--- NEU: Trenner für Reset-Referenz
 
     def process_resets(self, frame_l, frame_r):
         if self.trigger_reset_left:

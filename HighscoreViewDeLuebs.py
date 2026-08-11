@@ -510,6 +510,7 @@ class HighscoreViewer:
                 # --- HEADER ---
                 info_lines.extend([
                     f"MATCH ID: {match_id:06d}",
+                    f"VERSION:  {meta.get('version', 'Unbekannt')}",  # <--- DIESE ZEILE HINZUFÜGEN
                     f"SPIELER:  {meta.get('spieler', 'Unbekannt')}",
                     f"DATUM:    {meta.get('timestamp', 'Unbekannt')}",
                     f"KAMERAS:  {meta.get('kameras', 'Unbekannt')}",

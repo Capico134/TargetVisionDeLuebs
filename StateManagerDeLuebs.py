@@ -122,7 +122,10 @@ class StateManager:
         # --- NEU ---
         self.ringwertung_aktiv = config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         
+        #self.dm.write_log(f"SYSTEM: 🔄 Neues Match initialisiert (ID: {self.get_formatted_match_id()})")
+        self.dm.write_log("\n" + "="*80)
         self.dm.write_log(f"SYSTEM: 🔄 Neues Match initialisiert (ID: {self.get_formatted_match_id()})")
+        self.dm.write_log("="*80 + "\n")
 
     def get_next_match_id(self):
         highest_id = 0
@@ -221,7 +224,10 @@ class StateManager:
         if not self.shots:
             self.current_match_id = self.get_next_match_id()
             self.match_start_mono = time.monotonic()
+            # self.dm.write_log(f"SYSTEM: 🔄 Komplett neues Match gestartet...") <-- LÖSCHEN und ersetzen durch:
+            self.dm.write_log("\n" + "="*80)
             self.dm.write_log(f"SYSTEM: 🔄 Komplett neues Match gestartet (ID: {self.get_formatted_match_id()})")
+            self.dm.write_log("="*80 + "\n")
 
     def save_current_match(self, player_name_l="Schütze 1", player_name_r="Schütze 2"):
         """Erstellt die Match-JSON, packt sie ins ZIP und setzt das Match zurück."""
