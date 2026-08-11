@@ -1,3 +1,4 @@
+import json
 import tkinter as tk
 from tkinter import filedialog, ttk
 import zipfile
@@ -146,6 +147,10 @@ class OfflineLaborApp:
         self.lbl_file = tk.Label(top_frame, text="Kein ZIP ausgewählt", fg="gray", font=("Arial", 10))
         self.lbl_file.pack(side=tk.LEFT, padx=15)
         
+        # ---> HIER WANDERT DER BUTTON HIN <---
+        self.btn_compare = tk.Button(top_frame, text="📊 Match-Abweichung messen", command=self.show_comparison, font=("Arial", 10, "bold"))
+        self.btn_compare.pack(side=tk.LEFT, padx=20)        
+        
         # ---> NEU: Das Koordinaten-Label oben rechts <---
         self.lbl_coords = tk.Label(top_frame, text="Maus nicht im Bild", font=("Consolas", 12, "bold"), fg="#3498db")
         self.lbl_coords.pack(side=tk.RIGHT, padx=15)
@@ -185,12 +190,22 @@ class OfflineLaborApp:
         nav_frame = tk.LabelFrame(control_frame, text=" Schuss-Navigation ", pady=10, padx=10)
         nav_frame.pack(fill=tk.X, pady=(0, 15))
         
-        self.btn_prev = tk.Button(nav_frame, text="◀ Zurück", state=tk.DISABLED, command=self.prev_shot)
-        self.btn_prev.pack(side=tk.LEFT, expand=True, fill=tk.X)
+        # ---> NEU: 5 Buttons mit fester Breite und ohne Expand <---
+        self.btn_first = tk.Button(nav_frame, text="<<", state=tk.DISABLED, command=self.first_shot, width=3)
+        self.btn_first.pack(side=tk.LEFT, padx=(0, 2))
+        self.btn_prev = tk.Button(nav_frame, text="◀ Zurück", state=tk.DISABLED, command=self.prev_shot, width=8)
+        self.btn_prev.pack(side=tk.LEFT)
+        # Das Label in der Mitte dehnt sich aus (expand=True), um den Platz zu füllen
         self.lbl_shot_info = tk.Label(nav_frame, text="Schuss - / -", font=("Arial", 10, "bold"))
         self.lbl_shot_info.pack(side=tk.LEFT, expand=True, fill=tk.X)
-        self.btn_next = tk.Button(nav_frame, text="Weiter ▶", state=tk.DISABLED, command=self.next_shot)
-        self.btn_next.pack(side=tk.RIGHT, expand=True, fill=tk.X)
+        self.btn_last = tk.Button(nav_frame, text=">>", state=tk.DISABLED, command=self.last_shot, width=3)
+        self.btn_last.pack(side=tk.RIGHT, padx=(2, 0))
+        self.btn_next = tk.Button(nav_frame, text="Weiter ▶", state=tk.DISABLED, command=self.next_shot, width=8)
+        self.btn_next.pack(side=tk.RIGHT)
+        
+        ## ---> NEU: Der Vergleichs-Button <---
+        #self.btn_compare = tk.Button(nav_frame, text="📊 Abweichung zum Original messen", command=self.show_comparison, bg="#2c3e50", fg="white")
+        #self.btn_compare.pack(side=tk.BOTTOM, fill=tk.X, pady=(10,0))
         
         # ---> NEU: Ansichts-Steuerung <---
         view_frame = tk.LabelFrame(control_frame, text=" Rechte Bildhälfte ", pady=10, padx=10)
@@ -300,6 +315,13 @@ class OfflineLaborApp:
                         self.hough_min_faktor_var.set(parser.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85))
                         self.hough_max_faktor_var.set(parser.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15))
                 
+                # ---> NEU: Match.json laden <---
+                match_json_name = next((f for f in self.all_files if "match.json" in f), None)
+                if match_json_name:
+                    self.original_match_data = json.loads(zf.read(match_json_name).decode('utf-8'))
+                else:
+                    self.original_match_data = None
+                
             # Finde alle "_orig" Bilder und sortiere sie streng alphabetisch
             self.orig_files = sorted([f for f in self.all_files if "_orig" in f])
             if not self.orig_files:
@@ -309,6 +331,8 @@ class OfflineLaborApp:
             self.current_index = 0
             self.btn_prev.config(state=tk.NORMAL)
             self.btn_next.config(state=tk.NORMAL)
+            self.btn_first.config(state=tk.NORMAL)  # <--- NEU
+            self.btn_last.config(state=tk.NORMAL)   # <--- NEU
             self.process_and_display()
 
     def get_img(self, zf, name):
@@ -323,7 +347,18 @@ class OfflineLaborApp:
         if self.current_index < len(self.orig_files) - 1:
             self.current_index += 1
             self.process_and_display()
-            
+
+    def first_shot(self):
+        if self.orig_files and self.current_index > 0:
+            self.current_index = 0
+            self.process_and_display()
+
+    def last_shot(self):
+        if self.orig_files and self.current_index < len(self.orig_files) - 1:
+            self.current_index = len(self.orig_files) - 1
+            self.process_and_display() 
+
+ 
     def on_param_change(self, event=None):
         if self.current_zip_path:
             # Tkinter feuert Events oft mehrfach bei Scrollen, process_and_display regelt das
@@ -481,12 +516,17 @@ class OfflineLaborApp:
                 color = (0, 0, 255) if shot.get('is_new', False) else (0, 255, 0)
                 cv2.circle(live_img, shot['pos'], r, color, 2)
 
+        # ---> NEU: Daten für den späteren Vergleich merken <---
+        self.current_engine_shots = d_sm.shots 
+        self.current_side = side
+
         # ---> NEU: Alle nötigen Bilder aus der Engine fischen <---
         h, w = live_img.shape[:2]
         
         diff_gesamt_img = d_dm.debug_images.get(f"diff_gesamt_{side}")
         if diff_gesamt_img is None:
             diff_gesamt_img = np.zeros((h, w), dtype=np.uint8)
+            
             
         ref_img = d_dm.debug_images.get(f"referenz_{side}")
         if ref_img is None:
@@ -499,6 +539,181 @@ class OfflineLaborApp:
         self.last_ref_img = ref_img
         
         self.update_image_display()
+
+    def show_comparison(self):
+        if not self.current_zip_path or not getattr(self, 'original_match_data', None) or not self.orig_files:
+            return
+
+        # 1. Info-Fenster öffnen
+        comp_win = tk.Toplevel(self.root)
+        comp_win.title(f"📊 Integrations-Check: Live-Parameter vs. Original-Match")
+        comp_win.geometry("950x750")
+
+        txt = tk.Text(comp_win, font=("Consolas", 12), bg="#1e1e1e", fg="#00ff00", padx=10, pady=10)
+        txt.pack(fill=tk.BOTH, expand=True)
+        txt.insert(tk.END, "Führe komplette Neuberechnung aller Schüsse durch... Bitte warten...\n")
+        comp_win.update()
+
+        # 2. Voller Simulations-Durchlauf (Stumm im Hintergrund)
+        d_config = DummyConfig(self)
+        d_dm = DummyDateiManager(self)
+        d_sm = DummyStateManager()
+        # Stumme Log-Funktion, damit die Konsole nicht überflutet wird
+        detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
+
+        with zipfile.ZipFile(self.current_zip_path, 'r') as zf:
+            # Setze Referenzen und Startmasken für BEIDE Seiten
+            for s in ['left', 'right']:
+                ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
+                if ref_name:
+                    ref_img = self.get_img(zf, ref_name)
+                    detector.set_reference_image(ref_img, s)
+                
+                startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
+                if startmask_name:
+                    startmask_bgr = self.get_img(zf, startmask_name)
+                    startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
+                    state = d_sm.state_left if s == 'left' else d_sm.state_right
+                    state.cumulative_mask = startmask_gray
+
+            # Alle orig-Bilder durchjagen
+            for orig_name in self.orig_files:
+                img = self.get_img(zf, orig_name)
+                s = 'left' if 'left' in orig_name else 'right'
+                detector.detect_new_shot(img, s)
+
+        # 3. Ausgabe aufbereiten
+        txt.delete(1.0, tk.END)
+        txt.insert(tk.END, f"VERGLEICH: KOMPLETTES MATCH (Aktuelle Slider-Werte vs. Original-JSON)\n")
+        txt.insert(tk.END, "="*85 + "\n")
+
+        cal_r = self.caliber_radius_var.get()
+        
+        # Hilfsfunktion zum Zeichnen der Tabellen
+        def build_side_comparison(side_name, side_char):
+            orig_shots = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
+            curr_shots = [s for s in d_sm.shots if s.get('side') == side_name]
+            
+            if not orig_shots and not curr_shots: return 
+            
+            txt.insert(tk.END, f"\n--- KAMERA {side_name.upper()} ---\n")
+            txt.insert(tk.END, f"Original Treffer: {len(orig_shots)} | Neu berechnet: {len(curr_shots)}\n")
+            
+            # Der Header wurde auch leicht angepasst für perfekte Ausrichtung
+            header = f"{'Nr':>3} | {'Orig (Idx X,Y)':<16} | {'Neu (Idx X,Y)':<16} | {'dX':>4} | {'dY':>4} | {'Distanz':>8} | {'% Kaliber':>10}\n"
+            txt.insert(tk.END, header)
+            txt.insert(tk.END, "-"*88 + "\n")
+            
+            # ---> NEUER ALGORITHMUS: Sequenz-Alignment mit Lookahead <---
+            i = 0 # Index für orig
+            j = 0 # Index für curr
+            aligned = []
+            
+            # So weit darf ein Schuss abweichen, um noch als "der gleiche Schuss" zu gelten
+            threshold = cal_r * 2.5  
+            
+            while i < len(orig_shots) or j < len(curr_shots):
+                if i < len(orig_shots) and j < len(curr_shots):
+                    ox, oy = orig_shots[i]['x'], orig_shots[i]['y']
+                    cx, cy = int(curr_shots[j]['pos'][0]), int(curr_shots[j]['pos'][1])
+                    dist = np.hypot(cx - ox, cy - oy)
+                    
+                    if dist < threshold:
+                        # Perfektes Match
+                        aligned.append((i, j, dist))
+                        i += 1
+                        j += 1
+                    else:
+                        # LOOKAHEAD 1: Wurde ein neuer Schuss DAZWISCHEN gemogelt? (Einfügung)
+                        found_match = False
+                        for lookahead in range(1, min(6, len(curr_shots) - j)):
+                            nx, ny = int(curr_shots[j + lookahead]['pos'][0]), int(curr_shots[j + lookahead]['pos'][1])
+                            if np.hypot(nx - ox, ny - oy) < threshold:
+                                found_match = True
+                                # Alle Schüsse bis zum gefundenen Match sind NEU
+                                for k in range(lookahead):
+                                    aligned.append((None, j + k, None))
+                                j += lookahead
+                                break
+                                
+                        if found_match: continue
+                        
+                        # LOOKAHEAD 2: Wurde ein alter Schuss VERSCHLUCKT? (Löschung)
+                        for lookahead in range(1, min(6, len(orig_shots) - i)):
+                            nx, ny = orig_shots[i + lookahead]['x'], orig_shots[i + lookahead]['y']
+                            if np.hypot(cx - nx, cy - ny) < threshold:
+                                found_match = True
+                                # Alle Schüsse bis zum gefundenen Match FEHLEN nun
+                                for k in range(lookahead):
+                                    aligned.append((i + k, None, None))
+                                i += lookahead
+                                break
+                                
+                        if found_match: continue
+                        
+                        # Weder noch? Dann ist die Abweichung so extrem, dass wir es als "Ersetzt" werten
+                        aligned.append((i, j, dist))
+                        i += 1
+                        j += 1
+                        
+                elif i < len(orig_shots):
+                    aligned.append((i, None, None))
+                    i += 1
+                elif j < len(curr_shots):
+                    aligned.append((None, j, None))
+                    j += 1
+                    
+            # ---> AUSGABE DER ALIGNIERTEN LISTE (NEU FORMATIERT) <---
+            total_dist = 0.0
+            match_count = 0
+            
+            for idx, (orig_idx, curr_idx, dist) in enumerate(aligned):
+                if orig_idx is not None and curr_idx is not None:
+                    orig = orig_shots[orig_idx]
+                    curr = curr_shots[curr_idx]
+                    ox, oy = orig['x'], orig['y']
+                    cx, cy = int(curr['pos'][0]), int(curr['pos'][1])
+                    dx = cx - ox
+                    dy = cy - oy
+                    dist = np.hypot(dx, dy)
+                    
+                    # ---> NEU: Prozentrechnung auf Basis des Durchmessers <---
+                    cal_d = cal_r * 2
+                    pct = (dist / cal_d) * 100 if cal_d else 0
+                    
+                    total_dist += dist
+                    match_count += 1
+                    
+                    # Warn-Symbol jetzt bei > 25% vom Durchmesser (entspricht altem 50% vom Radius)
+                    warn = "⚠️" if pct > 25.0 else "  "
+                    
+                    # Strings vorformatieren für perfekte Tabellen-Zellen
+                    orig_str = f"O:{orig_idx+1:02d}  {ox:>3},{oy:>3}"
+                    curr_str = f"N:{curr_idx+1:02d}  {cx:>3},{cy:>3}"
+                    
+                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {curr_str:<16} | {dx:+4d} | {dy:+4d} | {dist:7.1f}p | {pct:8.1f}% {warn}\n")
+                    
+                elif orig_idx is not None:
+                    orig = orig_shots[orig_idx]
+                    orig_str = f"O:{orig_idx+1:02d}  {orig['x']:>3},{orig['y']:>3}"
+                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {'--- FEHLT ---':<16} |   -- |   -- |       -- |         -- ❌\n")
+                    
+                elif curr_idx is not None:
+                    curr = curr_shots[curr_idx]
+                    cx, cy = int(curr['pos'][0]), int(curr['pos'][1])
+                    curr_str = f"N:{curr_idx+1:02d}  {cx:>3},{cy:>3}"
+                    txt.insert(tk.END, f"{idx+1:3d} | {'--- FEHLT ---':<16} | {curr_str:<16} |   -- |   -- |       -- |         -- 🆕\n")
+
+            if match_count > 0:
+                avg_dist = total_dist / match_count
+                txt.insert(tk.END, "-"*88 + "\n")
+                txt.insert(tk.END, f"Ø Abweichung {side_name.upper()} (nur gematchte Treffer): {avg_dist:.2f} Pixel\n")
+
+        # Tabellen ausgeben
+        build_side_comparison('left', 'l')
+        build_side_comparison('right', 'r')
+        
+        txt.config(state=tk.DISABLED)
         
     def update_image_display(self):
         """Zeichnet die zwischengespeicherten Bilder mit dem aktuellen Zoom-Faktor neu"""
