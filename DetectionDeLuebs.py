@@ -221,20 +221,29 @@ class TargetDetector:
                 if self.erkennungs_methode == 'C':
                     (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
                     
-                    # ---> NEU: Vorberechnung der Limits für das perfekte Log <---
+                    # ---> NEU: IDEE 2 (Der Titelverteidiger) <---
+                    # Wir berechnen SOFORT, wie gut ein echtes Schussloch an dieser Position passen würde
+                    base_score, base_new, base_raw = self.calculate_hole_score(circle_x, circle_y, self.caliber_radius, thresh_new, thresh_raw)
+                    
                     limit_sichel = self.caliber_radius * self.hybrid_sichel_faktor
                     limit_riss = self.caliber_radius * self.hybrid_riss_faktor
                     limit_discard = self.caliber_radius * self.hybrid_discard_faktor
                     
-                    self.log(side, f"🔍 Check Kontur: Radius={radius:.1f}px | Limits: Sichel<{limit_sichel:.1f}, Normal, Riss>{limit_riss:.1f}, Discard>{limit_discard:.1f}")
+                    self.log(side, f"🔍 Check Kontur: Radius={radius:.1f}px | Base-Score: {base_score:.1f}")
                     
-                    # ---> NEU: Der Discard-Check für Riesen-Konturen <---
                     if radius > limit_discard:
                         self.log(side, f"🚫 Störung ignoriert (Radius {radius:.1f}px > Limit {limit_discard:.1f}px). Wird maskiert, nicht gewertet!")
                         update_mask_only = True
-                        continue # Überspringt die Treffer-Auswertung für diese Kontur!
+                        continue 
                     
-                    if (radius > limit_riss) or (radius < limit_sichel):
+                    # ---> NEU: IDEE 1 (Der Short-Circuit) <---
+                    # Wenn der minEnclosingCircle schon fast perfekt auf den Pixeln liegt (z.B. Score > 185 = >90% Überlappung in beiden Masken)
+                    # sparen wir uns jegliche weitere Hough-Berechnung. Das Loch ist makellos!
+                    if base_score > 185.0:
+                        self.log(side, f"✅ Loch ist absolut makellos (Score {base_score:.1f} > 185). Überspringe Hough!")
+                        cx, cy = int(circle_x), int(circle_y)
+                        
+                    elif (radius > limit_riss) or (radius < limit_sichel):
                         self.log(side, f"🛠️ Sichel/Riss bestätigt -> Aktiviere HoughCircles...")
                         mask = np.zeros_like(thresh_new)
                         cv2.drawContours(mask, [cnt], -1, 255, -1)
@@ -250,36 +259,42 @@ class TargetDetector:
                         hough_success = False
                         
                         if circles is not None:
-                            # Wir haben Hough-Ergebnisse. Starte Kombi-Ranking!
-                            best_score = -1
+                            # ---> NEU: Der Base-Score tritt als Titelverteidiger an! <---
+                            best_score = base_score
                             best_cx, best_cy = int(circle_x), int(circle_y)
-                            winner_new = 0
-                            winner_raw = 0
+                            winner_new = base_new
+                            winner_raw = base_raw
+                            hough_beat_base = False
                             
                             found_circles = np.round(circles[0, :]).astype("int")
-                            self.log(side, f"🔎 HoughCircles hat {len(found_circles)} Kandidaten gefunden. Starte Ranking...")
+                            self.log(side, f"🔎 Hough hat {len(found_circles)} Kandidaten. Duell gegen Base-Score ({base_score:.1f})...")
                             
                             for (hx, hy, hr) in found_circles:
-                                # ---> NEU: Einzeiler statt großem Code-Block <---
-                                total_score, coverage_new, coverage_raw = self.calculate_hole_score(hx, hy, hr, thresh_new, thresh_raw)
+                                # FAIRER KAMPF: Wir testen auch die Hough-Positionen mit dem echten Kaliberradius!
+                                total_score, coverage_new, coverage_raw = self.calculate_hole_score(hx, hy, self.caliber_radius, thresh_new, thresh_raw)
                                 
                                 if total_score > best_score:
                                     best_score = total_score
                                     best_cx, best_cy = hx, hy
                                     winner_new = coverage_new
                                     winner_raw = coverage_raw
+                                    hough_beat_base = True
 
-                            self.log(side, f"📊 Hough-Sieger: Score {best_score:.1f} (Neu: {winner_new:.1f}% + Gesamt: {winner_raw:.1f}%)")
+                            if hough_beat_base:
+                                self.log(side, f"🏆 Hough-Sieger triumphiert: Score {best_score:.1f} (Neu: {winner_new:.1f}% + Gesamt: {winner_raw:.1f}%)")
+                            else:
+                                self.log(side, f"🛡️ minEnclosingCircle verteidigt Titel! (Kein Hough-Kreis war besser als {base_score:.1f})")
 
-                            # Er MUSS mind. 5% vom neuen Riss haben, darf also nicht zu 100% in einem alten Loch liegen
                             if winner_new >= 5.0:
                                 cx, cy = best_cx, best_cy
-                                self.log(side, "✅ HoughCircles erfolgreich: Zentrum über Kombi-Ranking korrigiert.")
+                                if hough_beat_base:
+                                    self.log(side, "✅ Zentrum über HoughCircles optimiert.")
+                                else:
+                                    self.log(side, "✅ minEnclosingCircle gewinnt das Duell.")
                                 hough_success = True
                             else:
-                                self.log(side, "⚠️ Hough-Sieger hat zu wenig Anteil am neuen Riss (< 5%). Verwerfe Hough!")
+                                self.log(side, "⚠️ Sieger hat zu wenig Anteil am neuen Riss (< 5%). Verwerfe Sieger!")
                                 
-                        # Gemeinsamer Fallback-Pfad für "Hough liefert Müll" UND "Hough findet nichts"
                         if not hough_success:
                             self.log(side, "⚠️ Wechsle zu Abrisskante / Fallback...")
                             erfolg_abriss = False
@@ -407,7 +422,8 @@ class TargetDetector:
                         s['is_new'] = False
 
                 for sd in new_shots_found_this_frame:
-                    shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'])
+                    # Wir übergeben den berechneten Score explizit als Keyword-Argument
+                    shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'], cv_score=sd.get('score', 0.0))
                     self.log(side, f"💥 Treffer gewertet: {shot['score']} Ringe!")
                 self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!", True)
             
@@ -441,7 +457,7 @@ class TargetDetector:
         if bg_visible:
             if state.target_present:
                 self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> WAND (+{diff:.1f}% über Limit {state.min_area}%)")
-                self.log(state.side, "Scheibe außer Sicht -> Warte auf Zielscheibe...")
+                self.log(state.side, "Scheibe außer Sicht -> Warte auf Zielscheibe...", True)
                 state.target_present = False
         else:
             if not state.target_present:

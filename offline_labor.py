@@ -59,8 +59,8 @@ class DummyStateManager:
         self.state_right = DummyState('right')
         self.shots = []
         
-    def add_shot(self, side, cx, cy, area):
-        shot = {'side': side, 'pos': (cx, cy), 'area': area, 'score': 10.9, 'is_new': True}
+    def add_shot(self, side, cx, cy, area, cv_score=0.0, **kwargs):
+        shot = {'side': side, 'pos': (cx, cy), 'area': area, 'score': 10.9, 'is_new': True, 'cv_score': cv_score}
         self.shots.append(shot)
         return shot
         
@@ -110,8 +110,8 @@ class OfflineLaborApp:
         self.hit_tolerance_var = tk.IntVar(value=22)
         self.min_hole_area_var = tk.IntVar(value=25)
         self.caliber_radius_var = tk.IntVar(value=11)
-        self.hybrid_riss_faktor_var = tk.DoubleVar(value=1.5)
-        self.hybrid_sichel_faktor_var = tk.DoubleVar(value=0.95)
+        self.hybrid_riss_faktor_var = tk.DoubleVar(value=1.35)
+        self.hybrid_sichel_faktor_var = tk.DoubleVar(value=1.05)
         self.hybrid_discard_faktor_var = tk.DoubleVar(value=2.5)
         self.hough_min_faktor_var = tk.DoubleVar(value=0.85)
         self.hough_max_faktor_var = tk.DoubleVar(value=1.15)
@@ -637,10 +637,10 @@ class OfflineLaborApp:
             txt.insert(tk.END, f"\n--- KAMERA {side_name.upper()} ---\n")
             txt.insert(tk.END, f"Original Treffer: {len(orig_shots)} | Neu berechnet: {len(curr_shots)}\n")
             
-            # Der Header wurde auch leicht angepasst für perfekte Ausrichtung
-            header = f"{'Nr':>3} | {'Orig (Idx X,Y)':<16} | {'Neu (Idx X,Y)':<16} | {'dX':>4} | {'dY':>4} | {'Distanz':>8} | {'% Kaliber':>10}\n"
+            # Exakte Breiten: dX(4), dY(4), Distanz(8), % Kaliber(13), CV-Score(8)
+            header = f"{'Nr':>3} | {'Orig (Idx X,Y)':<16} | {'Neu (Idx X,Y)':<16} | {'dX':>4} | {'dY':>4} | {'Distanz':>8} | {'% Kaliber':<13} | {'CV-Score':>8}\n"
             txt.insert(tk.END, header)
-            txt.insert(tk.END, "-"*88 + "\n")
+            txt.insert(tk.END, "-"*99 + "\n")
             
             # ---> NEUER ALGORITHMUS: Sequenz-Alignment mit Lookahead <---
             i = 0 # Index für orig
@@ -715,36 +715,38 @@ class OfflineLaborApp:
                     dy = cy - oy
                     dist = np.hypot(dx, dy)
                     
-                    # ---> NEU: Prozentrechnung auf Basis des Durchmessers <---
                     cal_d = cal_r * 2
                     pct = (dist / cal_d) * 100 if cal_d else 0
                     
                     total_dist += dist
                     match_count += 1
                     
-                    # Warn-Symbol jetzt bei > 25% vom Durchmesser (entspricht altem 50% vom Radius)
-                    warn = "⚠️" if pct > 25.0 else "  "
+                    warn = "⚠️" if pct > 25.0 else ""
                     
-                    # Strings vorformatieren für perfekte Tabellen-Zellen
                     orig_str = f"O:{orig_idx+1:02d}  {ox:>3},{oy:>3}"
                     curr_str = f"N:{curr_idx+1:02d}  {cx:>3},{cy:>3}"
+                    cv_score = curr.get('cv_score', 0.0)
                     
-                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {curr_str:<16} | {dx:+4d} | {dy:+4d} | {dist:7.1f}p | {pct:8.1f}% {warn}\n")
+                    # Der Trick: Wir packen pct und warn in EINEN String und richten diesen linksbündig auf 13 Zeichen aus
+                    pct_str = f"{pct:.1f}% {warn}"
+                    
+                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {curr_str:<16} | {dx:+4d} | {dy:+4d} | {dist:7.1f}p | {pct_str:<13} | {cv_score:8.1f}\n")
                     
                 elif orig_idx is not None:
                     orig = orig_shots[orig_idx]
                     orig_str = f"O:{orig_idx+1:02d}  {orig['x']:>3},{orig['y']:>3}"
-                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {'--- FEHLT ---':<16} |   -- |   -- |       -- |         -- ❌\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {'--- FEHLT ---':<16} |   -- |   -- |       -- |         -- ❌ |       --\n")
                     
                 elif curr_idx is not None:
                     curr = curr_shots[curr_idx]
                     cx, cy = int(curr['pos'][0]), int(curr['pos'][1])
                     curr_str = f"N:{curr_idx+1:02d}  {cx:>3},{cy:>3}"
-                    txt.insert(tk.END, f"{idx+1:3d} | {'--- FEHLT ---':<16} | {curr_str:<16} |   -- |   -- |       -- |         -- 🆕\n")
+                    cv_score = curr.get('cv_score', 0.0)
+                    txt.insert(tk.END, f"{idx+1:3d} | {'--- FEHLT ---':<16} | {curr_str:<16} |   -- |   -- |       -- |         -- 🆕 | {cv_score:8.1f}\n")
 
             if match_count > 0:
                 avg_dist = total_dist / match_count
-                txt.insert(tk.END, "-"*88 + "\n")
+                txt.insert(tk.END, "-"*99 + "\n")
                 txt.insert(tk.END, f"Ø Abweichung {side_name.upper()} (nur gematchte Treffer): {avg_dist:.2f} Pixel\n")
 
         # Tabellen ausgeben

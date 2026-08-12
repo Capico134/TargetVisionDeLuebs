@@ -1,3 +1,4 @@
+import platform
 import cv2
 import numpy as np
 import time
@@ -22,8 +23,22 @@ class TargetTracker:
         print(f"🎯 TargetVision DeLübs     [v{self.version}]")
         self.window_name = f"TargetVision DeLuebs - v{self.version}"
         
+        # Erkennt automatisch das Betriebssystem ('Windows', 'Linux', 'Darwin' für Mac)
+        is_windows = platform.system() == 'Windows'
         self.use_left = config.getboolean('Kameras', 'nutze_kamera_links')
         self.use_right = config.getboolean('Kameras', 'nutze_kamera_rechts')
+        # ---> NEU: Kameraindizes aus der Config laden <---
+        cam_left_idx = config.getint('Kameras', 'cam_left_index')
+        cam_right_idx = config.getint('Kameras', 'cam_right_index')
+        # Erkennt automatisch das Betriebssystem ('Windows', 'Linux', 'Darwin' für Mac)
+        if is_windows:
+            # Unter Windows DirectShow für schnellen Start nutzen
+            self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_DSHOW) if self.use_left else None
+            self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_DSHOW) if self.use_right else None
+        else:
+            # Unter Linux/Mac den nativen Standard-Treiber (V4L2) verwenden
+            self.cap_left = cv2.VideoCapture(cam_left_idx) if self.use_left else None
+            self.cap_right = cv2.VideoCapture(cam_right_idx) if self.use_right else None
         
         # --- Nur noch Variablen, die wir explizit für die GUI/Steuerung brauchen ---
         self.caliber_radius = config.getint('Erkennung', 'caliber_radius')
@@ -35,19 +50,9 @@ class TargetTracker:
         
         # ---> NEU: Wir instanziieren den Detector und übergeben unsere log-Funktion als Callback! <---
         self.detector = TargetDetector(config, datei_manager, state_manager, self.log)
-        
-        slowstart = False
-        if slowstart:
-            self.cap_left = cv2.VideoCapture(config.getint('Kameras', 'cam_left_index')) if self.use_left else None
-            self.cap_right = cv2.VideoCapture(config.getint('Kameras', 'cam_right_index')) if self.use_right else None
-        else:
-            cam_left_idx = config.getint('Kameras', 'cam_left_index')
-            cam_right_idx = config.getint('Kameras', 'cam_right_index')
-            self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_DSHOW) if self.use_left else None
-            self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_DSHOW) if self.use_right else None
 
-        self.state_left = self.sm.state_left
-        self.state_right = self.sm.state_right
+        #self.state_left = self.sm.state_left
+        #self.state_right = self.sm.state_right
         
         self.current_crops = {'left': (0,0,0,0), 'right': (0,0,0,0)}
         self.raw_dims = {'left': (1,1), 'right': (1,1)}
@@ -129,7 +134,7 @@ class TargetTracker:
             has_motion = state.check_motion(frame)
             if has_motion:
                 if not state.is_moving:
-                    self.log(state.side, "Bewegung (Erschütterung/Fahrt) gestartet.")
+                    self.log(state.side, "Bewegung (Erschütterung/Fahrt) gestartet.", True)
                 state.is_moving = True
                 state.still_counter = 0
             else:
@@ -168,7 +173,7 @@ class TargetTracker:
         if hasattr(self.dm, 'clear_debug_images'):
             self.dm.clear_debug_images(side)
         
-        state = self.state_left if side == 'left' else self.state_right
+        state = self.sm.state_left if side == 'left' else self.sm.state_right
         
         # ---> NEU: Wir merken uns, dass dieses Match auf einer sauberen Scheibe beginnt
         state.is_fortsetzung = False 
@@ -279,7 +284,7 @@ class TargetTracker:
                 cv2.circle(combined_view, (final_x, final_y), max(1, int(2*avg_scale)), color, -1)
                 
                 # Dann die Treffer-Nummer absolut mittig darüberlegen
-                if getattr(self, 'ringwertung_aktiv', False):
+                if self.ringwertung_aktiv:
                     id_str = str(idx + 1)
                     
                     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -383,7 +388,7 @@ class TargetTracker:
         self.btn_labor_coords, x_cursor = draw_button(combined_view, "Offline Labor", x_cursor, (150, 50, 150))
         
         # ---> HUD / Trefferliste (Getrennt für beide Seiten) <---
-        if getattr(self, 'ringwertung_aktiv', False):
+        if self.ringwertung_aktiv:
             start_y_hud = 80  
             line_h = 25   
             max_items = max(5, (win_h - start_y_hud - 80) // line_h)
@@ -441,7 +446,7 @@ class TargetTracker:
 
     def check_keys(self):
         key = cv2.waitKey(self.poll_ms) & 0xFF
-        if getattr(self, 'trigger_exit', False):
+        if self.trigger_exit:
             return True
             
         try:
@@ -465,7 +470,7 @@ class TargetTracker:
     def on_mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
             # Beenden Button
-            if getattr(self, 'btn_exit_coords', None):
+            if self.btn_exit_coords:
                 ex1, ey1, ex2, ey2 = self.btn_exit_coords
                 if ex1 <= x <= ex2 and ey1 <= y <= ey2:
                     self.trigger_exit = True
@@ -579,8 +584,8 @@ class TargetTracker:
                         log_msg = f"Speichere Match für {player_name_l} / {player_name_r}..." if player_name_l != player_name_r else f"Speichere Match für {player_name_l}..."
                         self.log("SYSTEM", log_msg, True)
                         
-                        backup_mask_l = self.state_left.cumulative_mask.copy() if (self.use_left and self.state_left and self.state_left.cumulative_mask is not None) else None
-                        backup_mask_r = self.state_right.cumulative_mask.copy() if (self.use_right and self.state_right and self.state_right.cumulative_mask is not None) else None
+                        backup_mask_l = self.sm.state_left.cumulative_mask.copy() if (self.use_left and self.sm.state_left and self.sm.state_left.cumulative_mask is not None) else None
+                        backup_mask_r = self.sm.state_right.cumulative_mask.copy() if (self.use_right and self.sm.state_right and self.sm.state_right.cumulative_mask is not None) else None
                         
                         if self.sm.save_current_match(player_name_l, player_name_r):
                             self.log("SYSTEM", "Match erfolgreich gespeichert!", True)
@@ -590,17 +595,17 @@ class TargetTracker:
                             if self.use_right: self.dm.clear_debug_images('right', keep_startmask=True)
                             
                             # 2. Die Masken wiederherstellen UND speichern
-                            if self.use_left and self.state_left:
-                                self.state_left.cumulative_mask = backup_mask_l
+                            if self.use_left and self.sm.state_left:
+                                self.sm.state_left.cumulative_mask = backup_mask_l
                                 if backup_mask_l is not None:
                                     self.dm.save_debug_image("cumulative_startmask_left", backup_mask_l)
-                                    self.state_left.is_fortsetzung = True  # Flag für JSON setzen
+                                    self.sm.state_left.is_fortsetzung = True  # Flag für JSON setzen
                                     
-                            if self.use_right and self.state_right:
-                                self.state_right.cumulative_mask = backup_mask_r
+                            if self.use_right and self.sm.state_right:
+                                self.sm.state_right.cumulative_mask = backup_mask_r
                                 if backup_mask_r is not None:
                                     self.dm.save_debug_image("cumulative_startmask_right", backup_mask_r)
-                                    self.state_right.is_fortsetzung = True 
+                                    self.sm.state_right.is_fortsetzung = True 
                             
                             self.log("SYSTEM", "Leere Kamera-Puffer nach Pause...")
                             for _ in range(10): 
@@ -637,8 +642,8 @@ class TargetTracker:
             frame_l, frame_r = self.read_frames()
             self.process_resets(frame_l, frame_r)
 
-            if self.use_left: self.process_camera(frame_l, self.state_left)
-            if self.use_right: self.process_camera(frame_r, self.state_right)
+            if self.use_left: self.process_camera(frame_l, self.sm.state_left)
+            if self.use_right: self.process_camera(frame_r, self.sm.state_right)
 
             if time.time() - blink_timer > 0.3:
                 blink_state = not blink_state

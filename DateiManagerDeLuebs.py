@@ -149,7 +149,7 @@ ausloeser_durch_erschuetterung = no
 erkennungs_methode = C
 # Für Methode C: Ab welchem Vergrößerungs-Faktor (im Vergleich zum Normal-Kaliber) ein unsauberes Loch
 # nicht mehr als "Normal" gilt und den Hough-Algorithmus auslöst. (Standard: 1.5)
-hybrid_riss_faktor = 1.5
+hybrid_riss_faktor = 1.35
 hybrid_sichel_faktor = 1.05
 hybrid_discard_faktor = 2.5
 # Für Methode C: Begrenzungen für den Hough-Algorithmus (Faktor bezogen auf caliber_radius)
@@ -232,8 +232,8 @@ darstellung_ohne_weissabgleich = yes
             needs_reload = True
         
         if not config.has_option('Erkennung', 'hybrid_riss_faktor'):
-            print("🔧 Führe Auto-Patch aus: Füge 'hybrid_riss_faktor = 1.5' hinzu...")
-            self.update_ini_value('Erkennung', 'hybrid_riss_faktor', '1.5')
+            print("🔧 Führe Auto-Patch aus: Füge 'hybrid_riss_faktor = 1.35' hinzu...")
+            self.update_ini_value('Erkennung', 'hybrid_riss_faktor', '1.35')
             needs_reload = True
         
         if not config.has_option('Erkennung', 'hybrid_sichel_faktor'):
@@ -282,6 +282,16 @@ darstellung_ohne_weissabgleich = yes
                 if current_value < 1.05:
                     print(f"🔧 Führe Auto-Patch aus: Erhöhe 'hybrid_sichel_faktor' von {current_value} auf 1.05...")
                     self.update_ini_value('Erkennung', 'hybrid_sichel_faktor', '1.05')
+                    needs_reload = True
+            except ValueError:
+                pass 
+                
+        if config.has_option('Erkennung', 'hybrid_riss_faktor'):
+            try:
+                current_value = config.getfloat('Erkennung', 'hybrid_riss_faktor')
+                if current_value > 1.35:
+                    print(f"🔧 Führe Auto-Patch aus: Verringere 'hybrid_riss_faktor' von {current_value} auf 1.35...")
+                    self.update_ini_value('Erkennung', 'hybrid_riss_faktor', '1.35')
                     needs_reload = True
             except ValueError:
                 pass 
