@@ -152,7 +152,8 @@ class StateManager:
         """Speichert den exakten weißen Punkt aus der Kalibrierung."""
         self.nullpunkts[side] = (cx, cy)
 
-    def add_shot(self, side, cx, cy, area):
+    # ---> NEU: cv_score als Parameter akzeptieren <---
+    def add_shot(self, side, cx, cy, area, cv_score=0.0):
         """Speichert einen neuen Schuss und berechnet die Ring-Zehntelwertung!"""
         score = 0.0
         nullpunkt = self.nullpunkts.get(side)
@@ -198,9 +199,10 @@ class StateManager:
             'side': side,
             'pos': (cx, cy),
             'area': area,
-            'score': score, 
+            'score': score,
+            'cv_score': cv_score, # <--- NEU: Der CV-Score wird direkt mit gespeichert!
             'timestamp': time.time(),
-            't_mono': time.monotonic() - getattr(self, 'match_start_mono', time.monotonic()), # <--- FIX: Zeit für die Timeline
+            't_mono': time.monotonic() - getattr(self, 'match_start_mono', time.monotonic()), 
             'is_new': True
         }
         self.shots.append(shot_data)
@@ -310,7 +312,8 @@ class StateManager:
                 "x": int(s['pos'][0]),
                 "y": int(s['pos'][1]),
                 "a": round(float(s['area']), 1),
-                "score": float(s.get('score', 0.0))
+                "score": float(s.get('score', 0.0)),
+                "cv_score": round(float(s.get('cv_score', 0.0)), 1) # <--- NEU: CV-Score im JSON-Export
             })
 
         match_data = {"metadata": metadata, "timeline": timeline}

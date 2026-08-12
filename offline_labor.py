@@ -307,14 +307,20 @@ class OfflineLaborApp:
                     parser = configparser.ConfigParser()
                     parser.read_file(io.StringIO(zf.read(config_name).decode('utf-8')))
                     if parser.has_section('Erkennung'):
+                        # Alte Parameter
                         self.hit_tolerance_var.set(parser.getint('Erkennung', 'hit_tolerance', fallback=22))
                         self.min_hole_area_var.set(parser.getint('Erkennung', 'min_hole_area', fallback=25))
                         self.caliber_radius_var.set(parser.getint('Erkennung', 'caliber_radius', fallback=11))
-                        self.hybrid_riss_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.5))
-                        self.hybrid_sichel_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=0.75))
+                        self.hybrid_riss_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.175))
+                        self.hybrid_sichel_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=1.05))
                         self.hybrid_discard_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5))
                         self.hough_min_faktor_var.set(parser.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85))
                         self.hough_max_faktor_var.set(parser.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15))
+                        # ---> NEU: Jetzt werden auch alle neuen Parameter geladen! <---
+                        self.hough_param1_var.set(parser.getint('Erkennung', 'hough_param1', fallback=25))
+                        self.hough_param2_var.set(parser.getint('Erkennung', 'hough_param2', fallback=4))
+                        self.morph_kernel_var.set(parser.getint('Erkennung', 'morph_kernel_size', fallback=6))
+                        self.max_aspect_ratio_var.set(parser.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5))
                 
                 # ---> NEU: Match.json laden <---
                 match_json_name = next((f for f in self.all_files if "match.json" in f), None)
@@ -638,10 +644,10 @@ class OfflineLaborApp:
             txt.insert(tk.END, f"\n--- KAMERA {side_name.upper()} ---\n")
             txt.insert(tk.END, f"Original Treffer: {len(orig_shots)} | Neu berechnet: {len(curr_shots)}\n")
             
-            # Exakte Breiten: dX(4), dY(4), Distanz(8), CV-Score(8), % Kaliber(13)
-            header = f"{'Nr':>3} | {'Orig (Idx X,Y)':<16} | {'Neu (Idx X,Y)':<16} | {'dX':>4} | {'dY':>4} | {'Distanz':>8} | {'CV-Score':>8} | {'% Kaliber':<13}\n"
+            # Exakte Breiten: dX(4), dY(4), Distanz(8), Orig-CV(7), Neu-CV(7), % Kaliber(13)
+            header = f"{'Nr':>3} | {'Orig (Idx X,Y)':<16} | {'Neu (Idx X,Y)':<16} | {'dX':>4} | {'dY':>4} | {'Distanz':>8} | {'Orig-CV':>7} | {'Neu-CV':>7} | {'% Kaliber':<13}\n"
             txt.insert(tk.END, header)
-            txt.insert(tk.END, "-"*99 + "\n")
+            txt.insert(tk.END, "-"*109 + "\n")
             
             # ---> NEUER ALGORITHMUS: Sequenz-Alignment mit Lookahead <---
             i = 0 # Index für orig
@@ -726,25 +732,28 @@ class OfflineLaborApp:
                     
                     orig_str = f"O:{orig_idx+1:02d}  {ox:>3},{oy:>3}"
                     curr_str = f"N:{curr_idx+1:02d}  {cx:>3},{cy:>3}"
-                    cv_score = curr.get('cv_score', 0.0)
+                    
+                    # ---> NEU: Wir laden beide Scores! <---
+                    orig_cv = orig.get('cv_score', 0.0)
+                    curr_cv = curr.get('cv_score', 0.0)
                     
                     # Der Trick: Wir packen pct und warn in EINEN String und richten diesen linksbündig auf 13 Zeichen aus
                     pct_str = f"{pct:.1f}% {warn}"
                     
-                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {curr_str:<16} | {dx:+4d} | {dy:+4d} | {dist:7.1f}p | {cv_score:8.1f} | {pct_str:<13}\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {curr_str:<16} | {dx:+4d} | {dy:+4d} | {dist:7.1f}p | {orig_cv:7.1f} | {curr_cv:7.1f} | {pct_str:<13}\n")
                     
                 elif orig_idx is not None:
                     orig = orig_shots[orig_idx]
                     orig_str = f"O:{orig_idx+1:02d}  {orig['x']:>3},{orig['y']:>3}"
-                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {'--- FEHLT ---':<16} |   -- |   -- |       -- |       -- |         -- ❌\n")
+                    orig_cv = orig.get('cv_score', 0.0)
+                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {'--- FEHLT ---':<16} |   -- |   -- |       -- | {orig_cv:7.1f} |      -- |         -- ❌\n")
                     
                 elif curr_idx is not None:
                     curr = curr_shots[curr_idx]
                     cx, cy = int(curr['pos'][0]), int(curr['pos'][1])
                     curr_str = f"N:{curr_idx+1:02d}  {cx:>3},{cy:>3}"
-                    cv_score = curr.get('cv_score', 0.0)
-                    txt.insert(tk.END, f"{idx+1:3d} | {'--- FEHLT ---':<16} | {curr_str:<16} |   -- |   -- |       -- | {cv_score:8.1f} |         -- 🆕\n")
-                   
+                    curr_cv = curr.get('cv_score', 0.0)
+                    txt.insert(tk.END, f"{idx+1:3d} | {'--- FEHLT ---':<16} | {curr_str:<16} |   -- |   -- |       -- |      -- | {curr_cv:7.1f} |         -- 🆕\n")
 
             if match_count > 0:
                 avg_dist = total_dist / match_count
