@@ -149,14 +149,14 @@ ausloeser_durch_erschuetterung = no
 erkennungs_methode = C
 # Für Methode C: Ab welchem Vergrößerungs-Faktor (im Vergleich zum Normal-Kaliber) ein unsauberes Loch
 # nicht mehr als "Normal" gilt und den Hough-Algorithmus auslöst. (Standard: 1.5)
-hybrid_riss_faktor = 1.35
+hybrid_riss_faktor = 1.175
 hybrid_sichel_faktor = 1.05
 hybrid_discard_faktor = 2.5
 # Für Methode C: Begrenzungen für den Hough-Algorithmus (Faktor bezogen auf caliber_radius)
 hough_min_faktor = 0.85
 hough_max_faktor = 1.15
 hough_param1 = 25
-hough_param2 = 5
+hough_param2 = 4
 # Mindestfläche in Pixeln, die eine Farb/Helligkeitsänderung haben muss, um als Loch zu gelten.
 min_hole_area = 25
 # Sperr-Radius um bestehende Treffer (in Pixeln) gegen Doppelzählungen.
@@ -232,8 +232,8 @@ darstellung_ohne_weissabgleich = yes
             needs_reload = True
         
         if not config.has_option('Erkennung', 'hybrid_riss_faktor'):
-            print("🔧 Führe Auto-Patch aus: Füge 'hybrid_riss_faktor = 1.35' hinzu...")
-            self.update_ini_value('Erkennung', 'hybrid_riss_faktor', '1.35')
+            print("🔧 Führe Auto-Patch aus: Füge 'hybrid_riss_faktor = 1.175' hinzu...")
+            self.update_ini_value('Erkennung', 'hybrid_riss_faktor', '1.175')
             needs_reload = True
         
         if not config.has_option('Erkennung', 'hybrid_sichel_faktor'):
@@ -289,9 +289,9 @@ darstellung_ohne_weissabgleich = yes
         if config.has_option('Erkennung', 'hybrid_riss_faktor'):
             try:
                 current_value = config.getfloat('Erkennung', 'hybrid_riss_faktor')
-                if current_value > 1.35:
-                    print(f"🔧 Führe Auto-Patch aus: Verringere 'hybrid_riss_faktor' von {current_value} auf 1.35...")
-                    self.update_ini_value('Erkennung', 'hybrid_riss_faktor', '1.35')
+                if current_value > 1.175:
+                    print(f"🔧 Führe Auto-Patch aus: Verringere 'hybrid_riss_faktor' von {current_value} auf 1.175...")
+                    self.update_ini_value('Erkennung', 'hybrid_riss_faktor', '1.175')
                     needs_reload = True
             except ValueError:
                 pass 
@@ -326,8 +326,8 @@ darstellung_ohne_weissabgleich = yes
             needs_reload = True
             
         if not config.has_option('Erkennung', 'hough_param2'):
-            self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'hough_param2 = 5' hinzu...")
-            self.update_ini_value('Erkennung', 'hough_param2', '5')
+            self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'hough_param2 = 4' hinzu...")
+            self.update_ini_value('Erkennung', 'hough_param2', '4')
             needs_reload = True
 
         if not config.has_option('Erkennung', 'morph_kernel_size'):
@@ -340,6 +340,15 @@ darstellung_ohne_weissabgleich = yes
             self.update_ini_value('Erkennung', 'max_aspect_ratio', '3.5')
             needs_reload = True
 
+        if config.has_option('Erkennung', 'hough_param2'):
+            try:
+                current_value = config.getint('Erkennung', 'hough_param2')
+                if current_value > 4:
+                    print(f"🔧 Führe Auto-Patch aus: Verringere 'hough_param2' von {current_value} auf 4...")
+                    self.update_ini_value('Erkennung', 'hough_param2', '4')
+                    needs_reload = True
+            except ValueError:
+                pass 
 
         
         if needs_reload:

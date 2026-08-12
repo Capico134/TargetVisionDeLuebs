@@ -21,7 +21,7 @@ class TargetDetector:
         self.caliber_radius = config.getint('Erkennung', 'caliber_radius')
         self.hit_tolerance = config.getint('Erkennung', 'hit_tolerance', fallback=15)
         self.erkennungs_methode = config.get('Erkennung', 'erkennungs_methode', fallback='C').upper()
-        self.hybrid_riss_faktor = config.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.5)
+        self.hybrid_riss_faktor = config.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.175)
         self.hybrid_sichel_faktor = config.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=0.95)
         self.hybrid_discard_faktor = config.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5)
         self.hough_min_f = config.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85)
@@ -33,7 +33,7 @@ class TargetDetector:
         
         # Neue Parameter
         self.hough_param1 = config.getint('Erkennung', 'hough_param1', fallback=25)
-        self.hough_param2 = config.getint('Erkennung', 'hough_param2', fallback=5)
+        self.hough_param2 = config.getint('Erkennung', 'hough_param2', fallback=4)
         self.morph_kernel_size = config.getint('Erkennung', 'morph_kernel_size', fallback=6)
         self.max_aspect_ratio = config.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5)
 
@@ -205,23 +205,21 @@ class TargetDetector:
             if area > self.min_hole_area:
                 
                 # ---> NEU: Der Anti-Verschiebungs-Filter (Aspect Ratio) <---
-                # Wir legen ein umschließendes Rechteck um die Kontur
                 rx, ry, rw, rh = cv2.boundingRect(cnt)
-                # Wir verhindern eine Division durch Null, falls w oder h mal 0 sein sollte
                 if rw == 0 or rh == 0: continue
-                # Seitenverhältnis berechnen (immer den größeren durch den kleineren Wert teilen)
-                aspect_ratio = rh/rw #max(rw/rh, rh/rw) #ERSTMAL NUR SEHR SCHMALE SCHÜSSE FILTERN (nicht sehr flache)
-                # ---> NEU: Dynamisches Aspect-Ratio-Limit <---
+                aspect_ratio = rh/rw 
                 if aspect_ratio > self.max_aspect_ratio:
                     self.log(side, f"🚫 Störung ignoriert (Zu schmal/lang: Ratio {aspect_ratio:.1f} > {self.max_aspect_ratio:.1f}). Maskiert!")
                     update_mask_only = True
-                    continue # Springt sofort zur nächsten Kontur!
-                # -------------------------------------------------------------
+                    continue 
+
+                # Globale Variablen für diesen Treffer initialisieren
+                final_shot_score = 0.0
+                cx, cy = 0, 0
                
                 if self.erkennungs_methode == 'C':
                     (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
                     
-                    # ---> NEU: IDEE 2 (Der Titelverteidiger) <---
                     # Wir berechnen SOFORT, wie gut ein echtes Schussloch an dieser Position passen würde
                     base_score, base_new, base_raw = self.calculate_hole_score(circle_x, circle_y, self.caliber_radius, thresh_new, thresh_raw)
                     
@@ -229,22 +227,29 @@ class TargetDetector:
                     limit_riss = self.caliber_radius * self.hybrid_riss_faktor
                     limit_discard = self.caliber_radius * self.hybrid_discard_faktor
                     
-                    self.log(side, f"🔍 Check Kontur: Radius={radius:.1f}px | Base-Score: {base_score:.1f}")
+                    self.log(side, f"🔍 Check Kontur: Radius={radius:.1f}px | Limits: Sichel<{limit_sichel:.1f}, Normal, Riss>{limit_riss:.1f}, Discard>{limit_discard:.1f}")
+                    self.log(side, f"📊 Base-Score (minEnclosingCircle): {base_score:.1f}")
                     
                     if radius > limit_discard:
                         self.log(side, f"🚫 Störung ignoriert (Radius {radius:.1f}px > Limit {limit_discard:.1f}px). Wird maskiert, nicht gewertet!")
                         update_mask_only = True
                         continue 
-                    
-                    # ---> NEU: IDEE 1 (Der Short-Circuit) <---
-                    # Wenn der minEnclosingCircle schon fast perfekt auf den Pixeln liegt (z.B. Score > 185 = >90% Überlappung in beiden Masken)
-                    # sparen wir uns jegliche weitere Hough-Berechnung. Das Loch ist makellos!
-                    if base_score > 185.0:
-                        self.log(side, f"✅ Loch ist absolut makellos (Score {base_score:.1f} > 185). Überspringe Hough!")
-                        cx, cy = int(circle_x), int(circle_y)
                         
-                    elif (radius > limit_riss) or (radius < limit_sichel):
-                        self.log(side, f"🛠️ Sichel/Riss bestätigt -> Aktiviere HoughCircles...")
+                    # 1. Check: Ist der Radius ohnehin perfekt in der Norm?
+                    elif limit_sichel <= radius <= limit_riss:
+                        self.log(side, f"✅ Loch ist in der Norm (Radius {radius:.1f}px). Überspringe Hough!")
+                        cx, cy = int(circle_x), int(circle_y)
+                        final_shot_score = base_score
+                        
+                    # 2. Check: Form ist makellos?
+                    elif base_score > 185.0:
+                        self.log(side, f"✅ Form ist makellos (Score {base_score:.1f} > 185), trotz Radius {radius:.1f}px. Überspringe Hough!")
+                        cx, cy = int(circle_x), int(circle_y)
+                        final_shot_score = base_score
+                        
+                    # 3. Check: Wir brauchen Hough!
+                    else:
+                        self.log(side, f"🛠️ Sichel/Riss bestätigt (Score {base_score:.1f}) -> Aktiviere HoughCircles...")
                         mask = np.zeros_like(thresh_new)
                         cv2.drawContours(mask, [cnt], -1, 255, -1)
                         
@@ -259,38 +264,29 @@ class TargetDetector:
                         hough_success = False
                         
                         if circles is not None:
-                            # ---> NEU: Der Base-Score tritt als Titelverteidiger an! <---
                             best_score = base_score
                             best_cx, best_cy = int(circle_x), int(circle_y)
                             winner_new = base_new
-                            winner_raw = base_raw
                             hough_beat_base = False
                             
                             found_circles = np.round(circles[0, :]).astype("int")
                             self.log(side, f"🔎 Hough hat {len(found_circles)} Kandidaten. Duell gegen Base-Score ({base_score:.1f})...")
                             
                             for (hx, hy, hr) in found_circles:
-                                # FAIRER KAMPF: Wir testen auch die Hough-Positionen mit dem echten Kaliberradius!
                                 total_score, coverage_new, coverage_raw = self.calculate_hole_score(hx, hy, self.caliber_radius, thresh_new, thresh_raw)
-                                
                                 if total_score > best_score:
                                     best_score = total_score
                                     best_cx, best_cy = hx, hy
                                     winner_new = coverage_new
-                                    winner_raw = coverage_raw
                                     hough_beat_base = True
-
-                            if hough_beat_base:
-                                self.log(side, f"🏆 Hough-Sieger triumphiert: Score {best_score:.1f} (Neu: {winner_new:.1f}% + Gesamt: {winner_raw:.1f}%)")
-                            else:
-                                self.log(side, f"🛡️ minEnclosingCircle verteidigt Titel! (Kein Hough-Kreis war besser als {base_score:.1f})")
 
                             if winner_new >= 5.0:
                                 cx, cy = best_cx, best_cy
+                                final_shot_score = best_score 
                                 if hough_beat_base:
-                                    self.log(side, "✅ Zentrum über HoughCircles optimiert.")
+                                    self.log(side, f"🏆 Hough-Sieger triumphiert (Score {best_score:.1f}) und setzt Zentrum.")
                                 else:
-                                    self.log(side, "✅ minEnclosingCircle gewinnt das Duell.")
+                                    self.log(side, f"🛡️ minEnclosingCircle verteidigt Titel! (Score {best_score:.1f})")
                                 hough_success = True
                             else:
                                 self.log(side, "⚠️ Sieger hat zu wenig Anteil am neuen Riss (< 5%). Verwerfe Sieger!")
@@ -299,21 +295,17 @@ class TargetDetector:
                             self.log(side, "⚠️ Wechsle zu Abrisskante / Fallback...")
                             erfolg_abriss = False
                             
-                            # 1. Check: Gibt es überhaupt alte Löcher für eine Abrisskante?
                             if state.cumulative_mask is not None and cv2.countNonZero(state.cumulative_mask) > 0:
                                 kernel_dilate = np.ones((5, 5), np.uint8)
                                 old_holes = cv2.dilate(state.cumulative_mask, kernel_dilate, iterations=1)
-                                
                                 intersection = cv2.bitwise_and(old_holes, mask)
                                 inter_contours, _ = cv2.findContours(intersection, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                                 
                                 ts_abriss = datetime.now().strftime('%H%M%S_%f')[:-3]
                                 self.save_debug_image(f"abrisskante_schnittmenge_{side}_{ts_abriss}", intersection)
                                 
-                                # 2. Check: Gibt es eine Schnittmenge?
                                 if inter_contours:
                                     largest_inter = max(inter_contours, key=cv2.contourArea)
-                                    # 3. Check: Ist die Schnittmenge groß genug?
                                     if cv2.contourArea(largest_inter) > 3:
                                         M_int = cv2.moments(largest_inter)
                                         if M_int["m00"] != 0:
@@ -333,47 +325,51 @@ class TargetDetector:
                                                     nx = dx / dist
                                                     ny = dy / dist
                                                     
-                                                    # VARIANTE A: SHADOW-MODE
+                                                    # ---> DIE NEUE, INTELLIGENTE ABRISSKANTE <---
                                                     test_cx = int(cx_int + nx * self.caliber_radius)
                                                     test_cy = int(cy_int + ny * self.caliber_radius)
-                                                    self.log(side, f"🧪 TEST-ABRISSKANTE: Theoretisches Zentrum bei X:{test_cx} Y:{test_cy}")
                                                     
-                                                    # VARIANTE B: SCHARF-MODUS
-                                                    # cx = int(cx_int + nx * self.caliber_radius)
-                                                    # cy = int(cy_int + ny * self.caliber_radius)
-                                                    # self.log(side, f"🎯 Abrisskante AKTIV! Zentrum gesetzt auf X:{cx} Y:{cy}")
-                                                    # erfolg_abriss = True 
+                                                    # Der Schiedsrichter testet die Vektor-Kante!
+                                                    abriss_score, abriss_new, _ = self.calculate_hole_score(test_cx, test_cy, self.caliber_radius, thresh_new, thresh_raw)
+                                                    self.log(side, f"🧪 TEST-ABRISSKANTE: Theor. Zentrum X:{test_cx} Y:{test_cy} | Score: {abriss_score:.1f}")
+                                                    
+                                                    if abriss_score > base_score and abriss_new >= 5.0:
+                                                        self.log(side, f"🎯 Abrisskante AKTIV! Schlägt Base-Score ({abriss_score:.1f} > {base_score:.1f}). Zentrum gesetzt.")
+                                                        cx, cy = test_cx, test_cy
+                                                        final_shot_score = abriss_score
+                                                        erfolg_abriss = True 
+                                                    else:
+                                                        self.log(side, f"⚠️ Abrisskante verworfen! (Score {abriss_score:.1f} ist schlechter als Base {base_score:.1f})")
                                                 else:
                                                     self.log(side, "⚠️ Abrisskante gescheitert: Schwerpunkte liegen exakt aufeinander.")
+                                            else:
+                                                self.log(side, "⚠️ Abrisskante gescheitert: Schnittmenge hat keine berechenbare Masse.")
                                         else:
-                                            self.log(side, "⚠️ Abrisskante gescheitert: Schnittmenge hat keine berechenbare Masse.")
+                                            self.log(side, "⚠️ Abrisskante gescheitert: Schnittmenge ist zu winzig (< 3px).")
                                     else:
-                                        self.log(side, "⚠️ Abrisskante gescheitert: Schnittmenge ist zu winzig (< 3px).")
-                                else:
-                                    self.log(side, "⚠️ Abrisskante gescheitert: Keine Überlappung mit alten Löchern gefunden.")
+                                        self.log(side, "⚠️ Abrisskante gescheitert: Keine Überlappung mit alten Löchern gefunden.")
                             else:
                                 self.log(side, "⚠️ Abrisskante übersprungen: Noch keine alten Treffer auf der Scheibe vorhanden.")
 
                             # FALLBACK FÜR BEIDE MODI
                             if not erfolg_abriss:
                                 cx, cy = int(circle_x), int(circle_y)
-                                self.log(side, f"⚠️ Verwende FALLBACK-Zentrum (minEnclosingCircle) für Wertung: X:{cx} Y:{cy}")
+                                final_shot_score = base_score 
+                                self.log(side, f"⚠️ Verwende FALLBACK-Zentrum (minEnclosingCircle) für Wertung: X:{cx} Y:{cy} (Score {base_score:.1f})")
                                 
-                    else:
-                        # HIER IST DIE ÄNDERUNG:
-                        self.log(side, f"✅ Loch ist in der Norm (Radius {radius:.1f}px). Überspringe Hough!")
-                        cx, cy = int(circle_x), int(circle_y)
-                        
                 elif self.erkennungs_methode == 'B':
                     M = cv2.moments(cnt)
                     if M["m00"] != 0:
                         cx = int(M["m10"] / M["m00"])
                         cy = int(M["m01"] / M["m00"])
+                        final_shot_score, _, _ = self.calculate_hole_score(cx, cy, self.caliber_radius, thresh_new, thresh_raw)                                                                                                       
                     else:
                         continue 
                 else:
                     (circle_x, circle_y), _ = cv2.minEnclosingCircle(cnt)
                     cx, cy = int(circle_x), int(circle_y)
+                    # HIER FEHLTE DIE ZUWEISUNG:
+                    final_shot_score, _, _ = self.calculate_hole_score(cx, cy, self.caliber_radius, thresh_new, thresh_raw)
 
                 # Doppelzählungs-Schutz (Getrennt nach Historie und aktueller Frame-Schleife)
                 is_new = True
@@ -386,10 +382,10 @@ class TargetDetector:
                             is_new = False
                             self.log(side, f"⚠️ Treffer ignoriert: Zu nah ({dist:.1f}px) an bekanntem alten Schuss aus vorherigen Frames!")
                             break
+                            
                 # 2. Prüfung gegen Fragmente aus DIESEM Frame -> Großzügig (0.95), um Sichel-Risse abzuwürgen
                 if is_new:
-                    # ---> NEU: Score für den aktuellen Kandidaten berechnen (mit Standard-Kaliberradius)
-                    candidate_score, _, _ = self.calculate_hole_score(cx, cy, self.caliber_radius, thresh_new, thresh_raw)
+                    # ---> DIE FEHLERHAFTE NEUBERECHNUNG WURDE HIER ENTFERNT <---
                     
                     clipping_factor_current = 0.95
                     for i, existing_shot in enumerate(new_shots_found_this_frame):
@@ -397,21 +393,21 @@ class TargetDetector:
                         if dist < self.caliber_radius * clipping_factor_current:
                             
                             # ---> NEU: Das Sichel-Duell! Wer hat den höheren Weißanteil? <---
-                            if candidate_score > existing_shot['score']:
-                                self.log(side, f"🔄Aussortieren von Dublikaten: Sichel-Duell: Ersetze altes Fragment (Score {candidate_score:.1f} > {existing_shot['score']:.1f})")
+                            if final_shot_score > existing_shot['score']:
+                                self.log(side, f"🔄Aussortieren von Dublikaten: Sichel-Duell: Ersetze altes Fragment (Score {final_shot_score:.1f} > {existing_shot['score']:.1f})")
                                 # Überschreibe den Verlierer mit dem neuen, besseren Kandidaten
-                                new_shots_found_this_frame[i] = {'cx': cx, 'cy': cy, 'area': area, 'score': candidate_score}
+                                new_shots_found_this_frame[i] = {'cx': cx, 'cy': cy, 'area': area, 'score': final_shot_score}
                             else:
-                                self.log(side, f"⚠️ Treffer ignoriert: Verliert Sichel-Duell gegen besseres Fragment (Score {existing_shot['score']:.1f} > {candidate_score:.1f})!")
+                                self.log(side, f"⚠️ Treffer ignoriert: Verliert Sichel-Duell gegen besseres Fragment (Score {existing_shot['score']:.1f} > {final_shot_score:.1f})!")
                             
                             is_new = False
                             break
 
                 if is_new:
                     # ---> NEU: Den Score mit abspeichern, damit spätere Fragmente dagegen antreten können!
-                    new_shots_found_this_frame.append({'cx': cx, 'cy': cy, 'area': area, 'score': candidate_score})
-                    self.log(side, f"-> NEUES LOCH GEFUNDEN: Pos ({cx}, {cy}) | Fläche {area:.1f}px | Score {candidate_score:.1f}")
-                
+                    new_shots_found_this_frame.append({'cx': cx, 'cy': cy, 'area': area, 'score': final_shot_score})
+                    self.log(side, f"-> NEUES LOCH GEFUNDEN: Pos ({cx}, {cy}) | Fläche {area:.1f}px | Score {final_shot_score:.1f}")
+                    
         # ---> BLOCK FÜR TREFFER UND DISCARD-MASKEN <---
         if new_shots_found_this_frame or update_mask_only:
             
@@ -422,7 +418,6 @@ class TargetDetector:
                         s['is_new'] = False
 
                 for sd in new_shots_found_this_frame:
-                    # Wir übergeben den berechneten Score explizit als Keyword-Argument
                     shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'], cv_score=sd.get('score', 0.0))
                     self.log(side, f"💥 Treffer gewertet: {shot['score']} Ringe!")
                 self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!", True)

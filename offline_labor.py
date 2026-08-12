@@ -60,7 +60,8 @@ class DummyStateManager:
         self.shots = []
         
     def add_shot(self, side, cx, cy, area, cv_score=0.0, **kwargs):
-        shot = {'side': side, 'pos': (cx, cy), 'area': area, 'score': 10.9, 'is_new': True, 'cv_score': cv_score}
+        # ---> HIER DIE 10.9 durch -1.0 ersetzen <---
+        shot = {'side': side, 'pos': (cx, cy), 'area': area, 'score': -1.0, 'is_new': True, 'cv_score': cv_score}
         self.shots.append(shot)
         return shot
         
@@ -110,14 +111,14 @@ class OfflineLaborApp:
         self.hit_tolerance_var = tk.IntVar(value=22)
         self.min_hole_area_var = tk.IntVar(value=25)
         self.caliber_radius_var = tk.IntVar(value=11)
-        self.hybrid_riss_faktor_var = tk.DoubleVar(value=1.35)
+        self.hybrid_riss_faktor_var = tk.DoubleVar(value=1.175)
         self.hybrid_sichel_faktor_var = tk.DoubleVar(value=1.05)
         self.hybrid_discard_faktor_var = tk.DoubleVar(value=2.5)
         self.hough_min_faktor_var = tk.DoubleVar(value=0.85)
         self.hough_max_faktor_var = tk.DoubleVar(value=1.15)
         
         self.hough_param1_var = tk.IntVar(value=25)
-        self.hough_param2_var = tk.IntVar(value=5)
+        self.hough_param2_var = tk.IntVar(value=4)
         # ---> NEU <---
         self.morph_kernel_var = tk.IntVar(value=6)
         self.max_aspect_ratio_var = tk.DoubleVar(value=3.5)
@@ -637,8 +638,8 @@ class OfflineLaborApp:
             txt.insert(tk.END, f"\n--- KAMERA {side_name.upper()} ---\n")
             txt.insert(tk.END, f"Original Treffer: {len(orig_shots)} | Neu berechnet: {len(curr_shots)}\n")
             
-            # Exakte Breiten: dX(4), dY(4), Distanz(8), % Kaliber(13), CV-Score(8)
-            header = f"{'Nr':>3} | {'Orig (Idx X,Y)':<16} | {'Neu (Idx X,Y)':<16} | {'dX':>4} | {'dY':>4} | {'Distanz':>8} | {'% Kaliber':<13} | {'CV-Score':>8}\n"
+            # Exakte Breiten: dX(4), dY(4), Distanz(8), CV-Score(8), % Kaliber(13)
+            header = f"{'Nr':>3} | {'Orig (Idx X,Y)':<16} | {'Neu (Idx X,Y)':<16} | {'dX':>4} | {'dY':>4} | {'Distanz':>8} | {'CV-Score':>8} | {'% Kaliber':<13}\n"
             txt.insert(tk.END, header)
             txt.insert(tk.END, "-"*99 + "\n")
             
@@ -730,19 +731,20 @@ class OfflineLaborApp:
                     # Der Trick: Wir packen pct und warn in EINEN String und richten diesen linksbündig auf 13 Zeichen aus
                     pct_str = f"{pct:.1f}% {warn}"
                     
-                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {curr_str:<16} | {dx:+4d} | {dy:+4d} | {dist:7.1f}p | {pct_str:<13} | {cv_score:8.1f}\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {curr_str:<16} | {dx:+4d} | {dy:+4d} | {dist:7.1f}p | {cv_score:8.1f} | {pct_str:<13}\n")
                     
                 elif orig_idx is not None:
                     orig = orig_shots[orig_idx]
                     orig_str = f"O:{orig_idx+1:02d}  {orig['x']:>3},{orig['y']:>3}"
-                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {'--- FEHLT ---':<16} |   -- |   -- |       -- |         -- ❌ |       --\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {'--- FEHLT ---':<16} |   -- |   -- |       -- |       -- |         -- ❌\n")
                     
                 elif curr_idx is not None:
                     curr = curr_shots[curr_idx]
                     cx, cy = int(curr['pos'][0]), int(curr['pos'][1])
                     curr_str = f"N:{curr_idx+1:02d}  {cx:>3},{cy:>3}"
                     cv_score = curr.get('cv_score', 0.0)
-                    txt.insert(tk.END, f"{idx+1:3d} | {'--- FEHLT ---':<16} | {curr_str:<16} |   -- |   -- |       -- |         -- 🆕 | {cv_score:8.1f}\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | {'--- FEHLT ---':<16} | {curr_str:<16} |   -- |   -- |       -- | {cv_score:8.1f} |         -- 🆕\n")
+                   
 
             if match_count > 0:
                 avg_dist = total_dist / match_count
