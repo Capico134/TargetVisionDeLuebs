@@ -77,6 +77,7 @@ class TargetTracker:
         self.trigger_edit_left = False    # <--- NEU
         self.trigger_edit_right = False   # <--- NEU
         self.trigger_exit = False
+        self.active_picker = None  # <--- NEU: Speichert, welche Zeile gerade auf einen Klick wartet
         
     # ---> NEU: Der Parameter show_gui=False <---
     def log(self, side, text, show_gui=False):
@@ -482,6 +483,35 @@ class TargetTracker:
 
     def on_mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
+            
+            # ---> NEU: Befinden wir uns im "Pick-Koordinaten"-Modus? <---
+            if getattr(self, 'active_picker', None) is not None:
+                s = self.active_picker['side']
+                
+                # Klick-Koordinaten auf Original-Bildgröße umrechnen
+                raw_x = x / self.scale_x
+                raw_y = y / self.scale_y
+                
+                # Wenn wir rechts sind, müssen wir die Breite des linken Bildes abziehen
+                if s == 'right' and self.use_left:
+                    raw_x -= self.w_left_displayed
+                    
+                # Sicherheits-Check: Wurde auch auf die richtige Seite geklickt?
+                if (s == 'left' and raw_x > self.w_left_displayed and self.use_right) or \
+                   (s == 'right' and raw_x < 0):
+                    self.log("SYSTEM", "⚠️ Klick war auf der falschen Seite! Bitte nochmal.", True)
+                    return
+                
+                raw_x = max(0.0, raw_x) # Verhindert negative Werte
+                
+                # ---> NEU: Briefkasten füllen, statt Tkinter direkt zu berühren! <---
+                self.picked_coords = (int(raw_x), int(raw_y)) # Wir nutzen saubere ganze Zahlen
+                self.picked_coords_ready = True
+                
+                self.log("SYSTEM", f"✅ Koordinaten für Treffer übernommen!", True)
+                return
+                
+        if event == cv2.EVENT_LBUTTONDOWN:
             # Beenden Button
             if self.btn_exit_coords:
                 ex1, ey1, ex2, ey2 = self.btn_exit_coords
@@ -710,6 +740,7 @@ class TargetTracker:
         tk.Label(header_frame, text="X (px)", width=10).grid(row=0, column=2)
         tk.Label(header_frame, text="Y (px)", width=10).grid(row=0, column=3)
         tk.Label(header_frame, text="Ringe", width=10).grid(row=0, column=4)
+        tk.Label(header_frame, text="Pick", width=5).grid(row=0, column=5) # <--- NE
 
         # Tabellen-Zeilen (Mit Entry für Editieren/Copy-Paste)
         for i, shot in enumerate(side_shots):
@@ -734,7 +765,16 @@ class TargetTracker:
             score_var = tk.StringVar(value=str(shot.get('score', 0.0)))
             tk.Entry(row_frame, textvariable=score_var, width=10).grid(row=0, column=4, padx=5)
 
+            # ---> NEU: score_var (sv) wird mit in den Briefkasten gelegt <---
+            def make_pick_cmd(xv, yv, sv, s_name):
+                def cmd():
+                    self.active_picker = {'x_var': xv, 'y_var': yv, 'score_var': sv, 'side': s_name}
+                    self.log("SYSTEM", f"🎯 Klicke nun in das {s_name.upper()} Kamerabild!", True)
+                return cmd
+
+            tk.Button(row_frame, text="🎯", bg="#5bc0de", fg="black", command=make_pick_cmd(x_var, y_var, score_var, side)).grid(row=0, column=5, padx=2)
             entries.append((shot, x_var, y_var, score_var, c_var))
+            #entries.append((shot, x_var, y_var, score_var, c_var))
 
         # Buttons Unten
         btn_frame = tk.Frame(dialog)
@@ -759,13 +799,49 @@ class TargetTracker:
             if to_delete:
                 self.sm.remove_shots(to_delete)
 
+            # ---> NEU: Polling stoppen bevor zerstört wird! <---
+            if hasattr(dialog, 'poll_job'):
+                dialog.after_cancel(dialog.poll_job)
             dialog.destroy()
 
         def cancel():
+            # ---> NEU: Polling stoppen bevor zerstört wird! <---
+            if hasattr(dialog, 'poll_job'):
+                dialog.after_cancel(dialog.poll_job)
             dialog.destroy()
+            
+        # ---> NEU: Fängt den Klick auf das rote 'X' des Fensters ab! <---
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
 
         tk.Button(btn_frame, text="Übernehmen & Löschen", command=apply_changes, bg="#4CAF50", fg="white", font=('Arial', 10, 'bold')).pack(side="left", padx=20)
         tk.Button(btn_frame, text="Abbrechen", command=cancel, font=('Arial', 10)).pack(side="right", padx=20)
+
+        # ---> NEU: Der sichere Tkinter-Briefkasten-Prüfer <---
+        def poll_picker():
+            try:
+                # 1. Sicherheits-Check: Gibt es das Fenster überhaupt noch?
+                if not dialog.winfo_exists(): 
+                    return
+                    
+                if getattr(self, 'picked_coords_ready', False) and getattr(self, 'active_picker', None):
+                    px, py = self.picked_coords
+                    side_name = self.active_picker['side']
+                    
+                    self.active_picker['x_var'].set(str(px))
+                    self.active_picker['y_var'].set(str(py))
+                    
+                    new_score = self.sm.calculate_score(side_name, px, py)
+                    self.active_picker['score_var'].set(str(new_score))
+                    
+                    self.picked_coords_ready = False
+                    self.active_picker = None 
+                    
+                # 2. Den "Wecker" stellen UND den Ausweis (poll_job) speichern, damit wir ihn abbrechen können
+                dialog.poll_job = dialog.after(100, poll_picker)
+            except Exception:
+                pass # Falls das Fenster genau in dieser Millisekunde zerstört wird, sanft ignorieren
+                
+        poll_picker() # Polling-Schleife starten
 
         # Dialog blockierend ausführen
         root_dialog.wait_window(dialog)

@@ -152,55 +152,52 @@ class StateManager:
         """Speichert den exakten weißen Punkt aus der Kalibrierung."""
         self.nullpunkts[side] = (cx, cy)
 
-    # ---> NEU: cv_score als Parameter akzeptieren <---
-    def add_shot(self, side, cx, cy, area, cv_score=0.0):
-        """Speichert einen neuen Schuss und berechnet die Ring-Zehntelwertung!"""
+    # ---> NEU: Ausgelagerte Funktion für die Ringwert-Berechnung <---
+    def calculate_score(self, side, cx, cy):
+        """Berechnet den Ringwert für gegebene Koordinaten."""
         score = 0.0
         nullpunkt = self.nullpunkts.get(side)
         
-        # --- GEÄNDERT: Nur berechnen, wenn aktiv UND ein Nullpunkt existiert ---
         if self.ringwertung_aktiv and nullpunkt:
-            # 1. Config laden (X und Y getrennt!)
             seite_str = "links" if side == 'left' else "rechts"
             px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
             px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
             
-            # 2. Pixel-Distanz zur echten Mitte berechnen
             dx_px = abs(cx - nullpunkt[0])
             dy_px = abs(cy - nullpunkt[1])
             
-            # 3. Pythagoras in Millimetern anwenden (Entzerrt die Ellipse!)
             dx_mm = dx_px / px_x
             dy_mm = dy_px / px_y
             dist_mm = math.sqrt(dx_mm**2 + dy_mm**2)
             
-            # 4. Ring-Breite aus der zielscheiben.json laden
             aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
             targets = self.dm.load_targets()
             
             if aktive_scheibe_id in targets:
                 target_data = targets[aktive_scheibe_id]
-                # Die Ringbreite ist die Hälfte der Durchmesserdifferenz zwischen 10 und 9
                 d_10 = target_data['ringe_durchmesser_mm']['10']
                 d_9 = target_data['ringe_durchmesser_mm']['9']
                 ring_abstand_radius_mm = (d_9 - d_10) / 2.0
                 
-                # 5. Die magische ISSF-Formel
                 raw_score = 11.0 - (dist_mm / ring_abstand_radius_mm)
-                
-                # Wie im echten Sport: Wir runden sauber auf eine Nachkommastelle ab!
                 score = math.floor(raw_score * 10) / 10.0
                 
-                # Limits setzen
                 if score > 10.9: score = 10.9
                 if score < 0.0: score = 0.0
+                
+        return score
+
+    def add_shot(self, side, cx, cy, area, cv_score=0.0):
+        """Speichert einen neuen Schuss und berechnet die Ring-Zehntelwertung!"""
+        # ---> NEU: Ruft einfach unsere saubere Hilfsfunktion auf <---
+        score = self.calculate_score(side, cx, cy)
         
         shot_data = {
             'side': side,
             'pos': (cx, cy),
             'area': area,
             'score': score,
-            'cv_score': cv_score, # <--- NEU: Der CV-Score wird direkt mit gespeichert!
+            'cv_score': cv_score,
             'timestamp': time.time(),
             't_mono': time.monotonic() - getattr(self, 'match_start_mono', time.monotonic()), 
             'is_new': True
@@ -313,7 +310,8 @@ class StateManager:
                 "y": int(s['pos'][1]),
                 "a": round(float(s['area']), 1),
                 "score": float(s.get('score', 0.0)),
-                "cv_score": round(float(s.get('cv_score', 0.0)), 1) # <--- NEU: CV-Score im JSON-Export
+                "cv_score": round(float(s.get('cv_score', 0.0)), 1),
+                "edited": bool(s.get('is_edited', False)) # <--- NEU: Speichert True, falls der Schuss editiert wurde
             })
 
         match_data = {"metadata": metadata, "timeline": timeline}
@@ -335,9 +333,18 @@ class StateManager:
     def update_shot(self, shot_ref, new_x, new_y, new_score):
         """Aktualisiert die Koordinaten und den Score eines existierenden Schusses."""
         if shot_ref in self.shots:
-            shot_ref['pos'] = (new_x, new_y)
-            shot_ref['score'] = new_score
-            # self.dm.write_log(f"SYSTEM: Treffer editiert -> X:{new_x}, Y:{new_y}, Ringe:{new_score}")
+            old_x, old_y = shot_ref['pos']
+            old_score = shot_ref.get('score', 0.0)
+            
+            # Wir runden beide Seiten auf 1 Nachkommastelle. 
+            # So ignorieren wir mikroskopische Float-Abweichungen durch die GUI!
+            if (round(float(old_x), 1) != round(new_x, 1) or 
+                round(float(old_y), 1) != round(new_y, 1) or 
+                round(float(old_score), 1) != round(new_score, 1)):
+                
+                shot_ref['pos'] = (new_x, new_y)
+                shot_ref['score'] = new_score
+                shot_ref['is_edited'] = True
 
     def remove_shots(self, shots_to_remove):
         """Löscht eine Liste von Schüssen sicher aus dem State."""

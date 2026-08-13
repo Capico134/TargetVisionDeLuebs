@@ -196,9 +196,19 @@ class OfflineLaborApp:
         self.btn_first.pack(side=tk.LEFT, padx=(0, 2))
         self.btn_prev = tk.Button(nav_frame, text="◀ Zurück", state=tk.DISABLED, command=self.prev_shot, width=8)
         self.btn_prev.pack(side=tk.LEFT)
-        # Das Label in der Mitte dehnt sich aus (expand=True), um den Platz zu füllen
-        self.lbl_shot_info = tk.Label(nav_frame, text="Schuss - / -", font=("Arial", 10, "bold"))
-        self.lbl_shot_info.pack(side=tk.LEFT, expand=True, fill=tk.X)
+        # ---> NEU: Interaktiver Bereich in der Mitte <---
+        self.shot_nav_frame = tk.Frame(nav_frame)
+        self.shot_nav_frame.pack(side=tk.LEFT, expand=True)
+        tk.Label(self.shot_nav_frame, text="Schuss ", font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        self.shot_jump_var = tk.StringVar(value="-")
+        self.entry_shot_jump = tk.Entry(self.shot_nav_frame, textvariable=self.shot_jump_var, width=4, font=("Arial", 10, "bold"), justify="center")
+        self.entry_shot_jump.pack(side=tk.LEFT)
+        # Binde die Enter-Taste an unsere neue Funktion
+        self.entry_shot_jump.bind('<Return>', self.jump_to_shot)
+        self.lbl_shot_total = tk.Label(self.shot_nav_frame, text=" / -", font=("Arial", 10, "bold"))
+        self.lbl_shot_total.pack(side=tk.LEFT)
+        
+        
         self.btn_last = tk.Button(nav_frame, text=">>", state=tk.DISABLED, command=self.last_shot, width=3)
         self.btn_last.pack(side=tk.RIGHT, padx=(2, 0))
         self.btn_next = tk.Button(nav_frame, text="Weiter ▶", state=tk.DISABLED, command=self.next_shot, width=8)
@@ -249,11 +259,13 @@ class OfflineLaborApp:
         
         tk.Label(param_frame, text="--- Hybrid & Hough Faktoren ---", fg="gray").pack(pady=(10, 5))
         
-        self.make_slider(param_frame, "hybrid_sichel_faktor:", self.hybrid_sichel_faktor_var, 0.1, 1.5, 0.05)
-        self.make_slider(param_frame, "hybrid_riss_faktor:", self.hybrid_riss_faktor_var, 1.0, 3.0, 0.05)
+        # ---> NEU: Feineres Raster (0.01 oder 0.025) für die Slider! <---
+        self.make_slider(param_frame, "hybrid_sichel_faktor:", self.hybrid_sichel_faktor_var, 0.1, 1.5, 0.01)
+        # resolution=0.001 zwingt Tkinter dazu, immer 3 Nachkommastellen (z.B. 1.175) anzuzeigen!
+        self.make_slider(param_frame, "hybrid_riss_faktor:", self.hybrid_riss_faktor_var, 1.0, 3.0, 0.001)
         self.make_slider(param_frame, "hybrid_discard_faktor:", self.hybrid_discard_faktor_var, 1.5, 5.0, 0.1)
-        self.make_slider(param_frame, "hough_min_faktor:", self.hough_min_faktor_var, 0.5, 1.0, 0.05)
-        self.make_slider(param_frame, "hough_max_faktor:", self.hough_max_faktor_var, 1.0, 2.0, 0.05)
+        self.make_slider(param_frame, "hough_min_faktor:", self.hough_min_faktor_var, 0.5, 1.0, 0.01)
+        self.make_slider(param_frame, "hough_max_faktor:", self.hough_max_faktor_var, 1.0, 2.0, 0.01)
         
         self.make_slider(param_frame, "hough_param1 (Kanten):", self.hough_param1_var, 10, 100)
         self.make_slider(param_frame, "hough_param2 (Strenge):", self.hough_param2_var, 1, 20)
@@ -285,6 +297,10 @@ class OfflineLaborApp:
         # Die Funktion auf das Canvas und das Frame loslassen
         _bind_scroll_recursive(canvas)
         _bind_scroll_recursive(param_frame)
+        
+        # ---> NEU: Pfeiltasten global an das Fenster binden <---
+        self.root.bind('<Left>', self.safe_prev_shot)
+        self.root.bind('<Right>', self.safe_next_shot)
 
     # ---> NEU: Parameter 'show_gui' hinzugefügt, damit das Programm nicht crasht <---
     def print_log(self, side, msg, show_gui=False):
@@ -355,6 +371,17 @@ class OfflineLaborApp:
             self.current_index += 1
             self.process_and_display()
 
+    # ---> NEU: Intelligente Pfeiltasten-Steuerung <---
+    def safe_prev_shot(self, event=None):
+        """Geht einen Schuss zurück, außer der Cursor ist gerade im Textfeld."""
+        if self.root.focus_get() != self.entry_shot_jump:
+            self.prev_shot()
+
+    def safe_next_shot(self, event=None):
+        """Geht einen Schuss weiter, außer der Cursor ist gerade im Textfeld."""
+        if self.root.focus_get() != self.entry_shot_jump:
+            self.next_shot()
+
     def first_shot(self):
         if self.orig_files and self.current_index > 0:
             self.current_index = 0
@@ -364,6 +391,30 @@ class OfflineLaborApp:
         if self.orig_files and self.current_index < len(self.orig_files) - 1:
             self.current_index = len(self.orig_files) - 1
             self.process_and_display() 
+
+    def jump_to_shot(self, event=None):
+        if not self.orig_files:
+            return
+        try:
+            # Benutzereingabe auslesen (Benutzer tippen 1-basiert)
+            target_shot = int(self.shot_jump_var.get().strip())
+            
+            # Sicherheits-Check: Zahl in den gültigen Bereich zwingen
+            target_shot = max(1, min(target_shot, len(self.orig_files)))
+            
+            # Auf den internen (0-basierten) Index umrechnen
+            self.current_index = target_shot - 1
+            
+            # Simulation starten
+            self.process_and_display()
+            
+            # Fokus vom Textfeld nehmen, damit man danach wieder scrollen/zoomen kann
+            self.root.focus()
+            
+        except ValueError:
+            # Wenn jemand aus Versehen Buchstaben ("abc") eintippt, 
+            # setzen wir einfach den aktuellen Stand wieder ein
+            self.shot_jump_var.set(str(self.current_index + 1))
 
  
     def on_param_change(self, event=None):
@@ -486,8 +537,13 @@ class OfflineLaborApp:
         self.on_mouse_move(event)   
 
     def process_and_display(self):
+        # ---> NEU: Klaut dem Textfeld sofort den Fokus, egal ob Slider oder Button benutzt wurde! <---
+        self.root.focus()
+        
         if not self.orig_files or not self.current_zip_path: return
-        self.lbl_shot_info.config(text=f"Schuss {self.current_index + 1} / {len(self.orig_files)}")
+        # ---> NEU: Das Textfeld und das Total-Label updaten <---
+        self.shot_jump_var.set(str(self.current_index + 1))
+        self.lbl_shot_total.config(text=f" / {len(self.orig_files)}")
         self.log_text.delete(1.0, tk.END) # Log leeren
         
         orig_name = self.orig_files[self.current_index]
@@ -643,11 +699,12 @@ class OfflineLaborApp:
             
             txt.insert(tk.END, f"\n--- KAMERA {side_name.upper()} ---\n")
             txt.insert(tk.END, f"Original Treffer: {len(orig_shots)} | Neu berechnet: {len(curr_shots)}\n")
+            txt.insert(tk.END, "Legende: 'E' markiert manuell editierte Original-Treffer\n") # <--- NEU
             
             # Exakte Breiten: dX(4), dY(4), Distanz(8), Orig-CV(7), Neu-CV(7), % Kaliber(13)
             header = f"{'Nr':>3} | {'Orig (Idx X,Y)':<16} | {'Neu (Idx X,Y)':<16} | {'dX':>4} | {'dY':>4} | {'Distanz':>8} | {'Orig-CV':>7} | {'Neu-CV':>7} | {'% Kaliber':<13}\n"
             txt.insert(tk.END, header)
-            txt.insert(tk.END, "-"*109 + "\n")
+            txt.insert(tk.END, "-"*99 + "\n")
             
             # ---> NEUER ALGORITHMUS: Sequenz-Alignment mit Lookahead <---
             i = 0 # Index für orig
@@ -730,7 +787,12 @@ class OfflineLaborApp:
                     
                     warn = "⚠️" if pct > 25.0 else ""
                     
-                    orig_str = f"O:{orig_idx+1:02d}  {ox:>3},{oy:>3}"
+                    # ---> NEU: Wir checken, ob der Treffer editiert wurde <---
+                    is_edited = orig.get('edited', False)
+                    edit_marker = "E" if is_edited else " "
+                    
+                    # Das 'E' oder Leerzeichen wird direkt an die Nummer gehängt
+                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>3},{oy:>3}"
                     curr_str = f"N:{curr_idx+1:02d}  {cx:>3},{cy:>3}"
                     
                     # ---> NEU: Wir laden beide Scores! <---
@@ -744,7 +806,12 @@ class OfflineLaborApp:
                     
                 elif orig_idx is not None:
                     orig = orig_shots[orig_idx]
-                    orig_str = f"O:{orig_idx+1:02d}  {orig['x']:>3},{orig['y']:>3}"
+                    
+                    # ---> NEU: Auch hier den Marker prüfen <---
+                    is_edited = orig.get('edited', False)
+                    edit_marker = "E" if is_edited else " "
+                    
+                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {orig['x']:>3},{orig['y']:>3}"
                     orig_cv = orig.get('cv_score', 0.0)
                     txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {'--- FEHLT ---':<16} |   -- |   -- |       -- | {orig_cv:7.1f} |      -- |         -- ❌\n")
                     
