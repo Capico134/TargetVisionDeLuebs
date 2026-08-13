@@ -330,3 +330,21 @@ class StateManager:
         
         self.reset_match('all')
         return True
+        
+
+    def update_shot(self, shot_ref, new_x, new_y, new_score):
+        """Aktualisiert die Koordinaten und den Score eines existierenden Schusses."""
+        if shot_ref in self.shots:
+            shot_ref['pos'] = (new_x, new_y)
+            shot_ref['score'] = new_score
+            # self.dm.write_log(f"SYSTEM: Treffer editiert -> X:{new_x}, Y:{new_y}, Ringe:{new_score}")
+
+    def remove_shots(self, shots_to_remove):
+        """Löscht eine Liste von Schüssen sicher aus dem State."""
+        count = 0
+        for s in shots_to_remove:
+            if s in self.shots:
+                self.shots.remove(s)
+                count += 1
+        if count > 0:
+            self.dm.write_log(f"SYSTEM: {count} Treffer manuell gelöscht.")    

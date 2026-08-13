@@ -176,7 +176,7 @@ debug_alle_bilder_speichern = yes
 # Bildwiederholrate/Haupttakt in Millisekunden (33 ms entspricht ca. 30 FPS).
 poll_ms = 33
 # Wie viele Frames am Stück absolute Ruhe herrschen muss, damit das Bild als "stabil" gilt.
-stillness_frames = 10
+stillness_frames = 20
 
 [Hintergrund_Links]
 rgb_r = 234
@@ -349,7 +349,16 @@ darstellung_ohne_weissabgleich = yes
                     needs_reload = True
             except ValueError:
                 pass 
-
+        
+        if config.has_option('Timing', 'stillness_frames'):
+            try:
+                current_value = config.getint('Timing', 'stillness_frames')
+                if current_value < 20:
+                    print(f"🔧 Führe Auto-Patch aus: Erhöhe 'stillness_frames' von {current_value} auf 20...")
+                    self.update_ini_value('Timing', 'stillness_frames', '20')
+                    needs_reload = True
+            except ValueError:
+                pass 
         
         if needs_reload:
             config.read(self.CONFIG_FILE, encoding='utf-8')

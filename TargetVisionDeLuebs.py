@@ -65,6 +65,8 @@ class TargetTracker:
         
         self.btn_left_coords = None
         self.btn_right_coords = None
+        self.btn_edit_left_coords = None  # <--- NEU
+        self.btn_edit_right_coords = None # <--- NEU
         self.btn_exit_coords = None
         self.btn_zip_coords = None
         self.btn_highscore_coords = None
@@ -72,6 +74,8 @@ class TargetTracker:
         
         self.trigger_reset_left = False
         self.trigger_reset_right = False
+        self.trigger_edit_left = False    # <--- NEU
+        self.trigger_edit_right = False   # <--- NEU
         self.trigger_exit = False
         
     # ---> NEU: Der Parameter show_gui=False <---
@@ -204,10 +208,19 @@ class TargetTracker:
         cv2.rectangle(view, (bx1, by1), (bx2, by2), (255, 255, 255), 1)
         cv2.putText(view, "Reset", (bx1 + 25, by1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
         
+        # ---> NEU: Edit-Button links daneben <---
+        ex1, ey1 = start_x + frame_w - 220, total_h - 35
+        ex2, ey2 = start_x + frame_w - 120, total_h - 5
+        cv2.rectangle(view, (ex1, ey1), (ex2, ey2), (70, 150, 70), -1)
+        cv2.rectangle(view, (ex1, ey1), (ex2, ey2), (255, 255, 255), 1)
+        cv2.putText(view, "Edit", (ex1 + 35, ey1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        
         if side == 'left':
             self.btn_left_coords = (bx1, by1, bx2, by2)
+            self.btn_edit_left_coords = (ex1, ey1, ex2, ey2)  # <--- HIER FEHLTE DIE ZUWEISUNG
         else:
             self.btn_right_coords = (bx1, by1, bx2, by2)
+            self.btn_edit_right_coords = (ex1, ey1, ex2, ey2) # <--- UND HIER
 
     def update_gui(self, frame_l, frame_r, blink_state):
         frames_to_stack = []
@@ -499,6 +512,20 @@ class TargetTracker:
                     self.trigger_reset_right = True
                     return
             
+            # Edit Button (Links)
+            if self.use_left and getattr(self, 'btn_edit_left_coords', None):
+                ex1, ey1, ex2, ey2 = self.btn_edit_left_coords
+                if ex1 <= x <= ex2 and ey1 <= y <= ey2:
+                    self.trigger_edit_left = True
+                    return
+            
+            # Edit Button (Rechts)
+            if self.use_right and getattr(self, 'btn_edit_right_coords', None):
+                ex1, ey1, ex2, ey2 = self.btn_edit_right_coords
+                if ex1 <= x <= ex2 and ey1 <= y <= ey2:
+                    self.trigger_edit_right = True
+                    return
+            
             # Highscore Button
             if getattr(self, 'btn_highscore_coords', None):
                 hx1, hy1, hx2, hy2 = self.btn_highscore_coords
@@ -623,6 +650,132 @@ class TargetTracker:
                     # Subprozess starten, damit das Hauptfenster weiterlaufen kann
                     subprocess.Popen(["python", "offline_labor.py"])
                     return
+    def process_edits(self):
+        if self.trigger_edit_left:
+            self.open_edit_dialog('left')
+            self.trigger_edit_left = False
+        if self.trigger_edit_right:
+            self.open_edit_dialog('right')
+            self.trigger_edit_right = False
+
+    def open_edit_dialog(self, side):
+        side_shots = self.sm.get_shots_for_side(side)
+        if not side_shots:
+            self.log("SYSTEM", f"Keine Treffer auf {'links' if side=='left' else 'rechts'} zum Editieren.", True)
+            return
+
+        # Basis-Dialog erstellen
+        root_dialog = tk.Tk()
+        root_dialog.withdraw()
+        dialog = tk.Toplevel(root_dialog)
+        dialog.title(f"Treffer bearbeiten - {'Links' if side=='left' else 'Rechts'}")
+        dialog.geometry("550x450")
+        dialog.attributes('-topmost', True)
+
+        # "Alle markieren" Kopfzeile
+        top_frame = tk.Frame(dialog)
+        top_frame.pack(fill="x", padx=10, pady=5)
+        
+        select_all_var = tk.BooleanVar(value=False)
+        check_vars = []
+        entries = []  # Speichert: (shot_ref, x_var, y_var, score_var, check_var)
+
+        def toggle_all():
+            state = select_all_var.get()
+            for var in check_vars:
+                var.set(state)
+
+        tk.Checkbutton(top_frame, text="Alle markieren", variable=select_all_var, command=toggle_all).pack(side="left")
+
+        # Scrollbarer Bereich
+        canvas_frame = tk.Frame(dialog)
+        canvas_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        canvas = tk.Canvas(canvas_frame)
+        scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas)
+
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Tabellen-Header
+        header_frame = tk.Frame(scrollable_frame)
+        header_frame.pack(fill="x", pady=(0, 5))
+        tk.Label(header_frame, text="Löschen", width=7).grid(row=0, column=0)
+        tk.Label(header_frame, text="Nr.", width=4).grid(row=0, column=1)
+        tk.Label(header_frame, text="X (px)", width=10).grid(row=0, column=2)
+        tk.Label(header_frame, text="Y (px)", width=10).grid(row=0, column=3)
+        tk.Label(header_frame, text="Ringe", width=10).grid(row=0, column=4)
+
+        # Tabellen-Zeilen (Mit Entry für Editieren/Copy-Paste)
+        for i, shot in enumerate(side_shots):
+            row_frame = tk.Frame(scrollable_frame)
+            row_frame.pack(fill="x", pady=2)
+
+            c_var = tk.BooleanVar(value=False)
+            check_vars.append(c_var)
+            tk.Checkbutton(row_frame, variable=c_var, width=5).grid(row=0, column=0)
+
+            tk.Label(row_frame, text=str(i+1), width=4).grid(row=0, column=1)
+
+            # X Koordinate
+            x_var = tk.StringVar(value=str(round(float(shot['pos'][0]), 1)))
+            tk.Entry(row_frame, textvariable=x_var, width=10).grid(row=0, column=2, padx=5)
+
+            # Y Koordinate
+            y_var = tk.StringVar(value=str(round(float(shot['pos'][1]), 1)))
+            tk.Entry(row_frame, textvariable=y_var, width=10).grid(row=0, column=3, padx=5)
+
+            # Ringwert
+            score_var = tk.StringVar(value=str(shot.get('score', 0.0)))
+            tk.Entry(row_frame, textvariable=score_var, width=10).grid(row=0, column=4, padx=5)
+
+            entries.append((shot, x_var, y_var, score_var, c_var))
+
+        # Buttons Unten
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(fill="x", pady=10)
+
+        def apply_changes():
+            to_delete = []
+            for item in entries:
+                shot_ref, x_var, y_var, score_var, c_var = item
+                if c_var.get():
+                    to_delete.append(shot_ref)
+                else:
+                    # Werte auslesen und speichern
+                    try:
+                        new_x = float(x_var.get())
+                        new_y = float(y_var.get())
+                        new_score = float(score_var.get())
+                        self.sm.update_shot(shot_ref, new_x, new_y, new_score)
+                    except ValueError:
+                        self.log("SYSTEM", "Fehlerhafte Eingabe ignoriert.")
+
+            if to_delete:
+                self.sm.remove_shots(to_delete)
+
+            dialog.destroy()
+
+        def cancel():
+            dialog.destroy()
+
+        tk.Button(btn_frame, text="Übernehmen & Löschen", command=apply_changes, bg="#4CAF50", fg="white", font=('Arial', 10, 'bold')).pack(side="left", padx=20)
+        tk.Button(btn_frame, text="Abbrechen", command=cancel, font=('Arial', 10)).pack(side="right", padx=20)
+
+        # Dialog blockierend ausführen
+        root_dialog.wait_window(dialog)
+        root_dialog.destroy()
+        
+        # Kamera-Puffer nach dem Blockieren kurz leeren (verhindert Framestau)
+        for _ in range(5): 
+            if self.use_left: self.cap_left.read()
+            if self.use_right: self.cap_right.read()
+
 
     def run(self):
         blink_timer = time.time()
@@ -641,7 +794,10 @@ class TargetTracker:
         while True:
             frame_l, frame_r = self.read_frames()
             self.process_resets(frame_l, frame_r)
-
+            
+            # ---> NEU: Aufruf für die Editier-Menüs <---
+            self.process_edits()
+            
             if self.use_left: self.process_camera(frame_l, self.sm.state_left)
             if self.use_right: self.process_camera(frame_r, self.sm.state_right)
 
