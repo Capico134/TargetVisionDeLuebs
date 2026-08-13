@@ -165,9 +165,17 @@ class TargetDetector:
         current_bgr_blur = cv2.GaussianBlur(frame, (7, 7), 0) 
         current_normalized = self.normalize_brightness(reference_bgr, current_bgr_blur)
         
+        #ALTE FARBERKENNUNG
+        #diff_bgr = cv2.absdiff(reference_bgr, current_normalized) 
+        #diff_gray = cv2.cvtColor(diff_bgr, cv2.COLOR_BGR2GRAY)
+        #_, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY) 
+        
+        #NEUE FARBERKENNUNG
         diff_bgr = cv2.absdiff(reference_bgr, current_normalized) 
-        diff_gray = cv2.cvtColor(diff_bgr, cv2.COLOR_BGR2GRAY)
-        _, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY) 
+        # ---> DER COLOR-HACK: Wir nehmen einfach den maximalen Ausschlag aus B, G oder R <---
+        # Verhindert, dass massive Rot-Änderungen von der Graustufen-Formel verschluckt werden!
+        diff_gray = np.max(diff_bgr, axis=2) 
+        _, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY)
 
         # ---> NEU: Dynamischer Morph-Kernel <---
         k_size = self.morph_kernel_size
@@ -209,7 +217,7 @@ class TargetDetector:
                 if rw == 0 or rh == 0: continue
                 aspect_ratio = rh/rw 
                 if aspect_ratio > self.max_aspect_ratio:
-                    self.log(side, f"🚫 Störung ignoriert (Zu schmal/lang: Ratio {aspect_ratio:.1f} > {self.max_aspect_ratio:.1f}). Maskiert!")
+                    self.log(side, f"🚫 Störung ignoriert (Zu schmal: Ratio {aspect_ratio:.1f} > {self.max_aspect_ratio:.1f}). Maskiert! (Info: zu flache Treffer sind okay)")
                     update_mask_only = True
                     continue 
 
