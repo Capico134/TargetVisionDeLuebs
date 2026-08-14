@@ -7,4 +7,5 @@ __pycache__/
 *.pyc
 config.ini
 treffer_log.txt
+test_report.txt
 Thumbs.db

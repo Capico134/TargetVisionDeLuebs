@@ -1,6 +1,9 @@
+
+import os
+
 import json
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog, ttk, messagebox
 import zipfile
 import cv2
 import numpy as np
@@ -151,6 +154,10 @@ class OfflineLaborApp:
         # ---> HIER WANDERT DER BUTTON HIN <---
         self.btn_compare = tk.Button(top_frame, text="📊 Match-Abweichung messen", command=self.show_comparison, font=("Arial", 10, "bold"))
         self.btn_compare.pack(side=tk.LEFT, padx=20)        
+        
+        #Button Test-Case-Export
+        btn_export = tk.Button(top_frame, text="💾 Als Test-Case exportieren", command=self.export_test_case)
+        btn_export.pack(side=tk.LEFT, pady=5)
         
         # ---> NEU: Das Koordinaten-Label oben rechts <---
         self.lbl_coords = tk.Label(top_frame, text="Maus nicht im Bild", font=("Consolas", 12, "bold"), fg="#3498db")
@@ -832,6 +839,180 @@ class OfflineLaborApp:
         build_side_comparison('right', 'r')
         
         txt.config(state=tk.DISABLED)
+
+
+
+    def export_test_case(self):
+        """
+        Exportiert das aktuell geladene Match inklusive der manuell 
+        bearbeiteten/perfektionierten match.json und der AKTUELLEN GUI-Parameter (config.ini).
+        """
+        # 1. Sicherheitscheck: Ist überhaupt etwas geladen?
+        if not getattr(self, 'current_zip_path', None) or not getattr(self, 'original_match_data', None) or not self.orig_files:
+            messagebox.showwarning("Fehler", "Es ist kein Match geladen, das exportiert werden könnte!")
+            return
+    
+        # 2. Ordnerstruktur vorbereiten
+        export_dir = os.path.join(os.getcwd(), "testcases")
+        os.makedirs(export_dir, exist_ok=True)
+        
+        base_name = os.path.basename(self.current_zip_path)
+        default_name = base_name.replace(".zip", "_verbessert.zip")
+        
+        # 3. Speicher-Dialog öffnen
+        save_path = filedialog.asksaveasfilename(
+            initialdir=export_dir,
+            initialfile=default_name,
+            title="Golden Master Test-Case speichern",
+            defaultextension=".zip",
+            filetypes=[("ZIP Archive", "*.zip")]
+        )
+        
+        if not save_path:
+            return 
+            
+        try:
+            # =========================================================================
+            # NEU: 4. SILENT MATCH RECALCULATION (Die perfekten Schüsse generieren!)
+            # =========================================================================
+            # Wir machen hier genau das Gleiche wie in show_comparison(), aber STUMM.
+            d_config = DummyConfig(self)
+            d_dm = DummyDateiManager(self)
+            d_sm = DummyStateManager()
+            detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
+
+            with zipfile.ZipFile(self.current_zip_path, 'r') as zf:
+                # Setze Referenzen und Startmasken
+                for s in ['left', 'right']:
+                    ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
+                    if ref_name:
+                        ref_img = self.get_img(zf, ref_name)
+                        detector.set_reference_image(ref_img, s)
+                    
+                    startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
+                    if startmask_name:
+                        startmask_bgr = self.get_img(zf, startmask_name)
+                        startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
+                        state = d_sm.state_left if s == 'left' else d_sm.state_right
+                        state.cumulative_mask = startmask_gray
+
+                # Alle orig-Bilder durch die NEUEN Parameter jagen
+                for orig_name in self.orig_files:
+                    img = self.get_img(zf, orig_name)
+                    s = 'left' if 'left' in orig_name else 'right'
+                    detector.detect_new_shot(img, s)
+
+            # =========================================================================
+            # NEU: 5. EINE BRANDNEUE MATCH.JSON BAUEN
+            # =========================================================================
+            new_match_data = {
+                "metadata": self.original_match_data.get("metadata", {}).copy(),
+                "timeline": []
+            }
+            
+            # Die Gesamt-Trefferzahlen in den Metadaten aktualisieren (falls sich was geändert hat)
+            shots_l = [s for s in d_sm.shots if s['side'] == 'left']
+            shots_r = [s for s in d_sm.shots if s['side'] == 'right']
+            
+            new_match_data["metadata"]["treffer_links"] = len(shots_l)
+            new_match_data["metadata"]["treffer_rechts"] = len(shots_r)
+            new_match_data["metadata"]["gesamtpunkte"] = len(d_sm.shots)
+            
+            # Wir bauen die neue Timeline aus den Schüssen der frisch durchgelaufenen Engine!
+            for s in d_sm.shots:
+                # Den Zeitstempel t_mono müssen wir faken oder aus dem Original übernehmen. 
+                # Da wir offline keine perfekten Zeitstempel haben, ordnen wir sie chronologisch (1.0, 2.0, ...) an.
+                # Oder besser: Wir versuchen, den Zeitstempel des alten, zugehörigen Schusses zu retten!
+                
+                # Wir suchen blind nach dem nächsten passenden Original-Schuss, um dessen 't' und 'edited'-Flag zu klauen
+                side_char = "l" if s['side'] == 'left' else "r"
+                orig_candidates = [o for o in self.original_match_data.get("timeline", []) if o.get('s') == side_char]
+                
+                closest_t = 0.0
+                is_edited = False
+                
+                # Wenn wir im Offline-Labor per Slider arbeiten, sind das CV-generierte Schüsse, also "edited=False" 
+                # (es sei denn, wir bauen später noch manuelles Schuss-Verschieben per Maus ins Labor ein).
+                
+                # Für den Moment: Einfach als neuen, perfekten Schuss in die Timeline schreiben.
+                new_match_data["timeline"].append({
+                    "t": float(len(new_match_data["timeline"]) + 1.0), # Chronologischer Dummy-Zeitstempel
+                    "s": side_char,
+                    "x": int(s['pos'][0]),
+                    "y": int(s['pos'][1]),
+                    "a": round(float(s['area']), 1),
+                    "score": float(s.get('score', 0.0)),
+                    "cv_score": round(float(s.get('cv_score', 0.0)), 1),
+                    "edited": False # Ein neu vom CV-Skript berechneter Schuss ist niemals "edited"
+                })
+
+
+            # Hilfsfunktion zum Aktualisieren der INI-Werte im Speicher
+            def update_ini_string(ini_text):
+                import configparser
+                import io
+                parser = configparser.ConfigParser()
+                parser.optionxform = str 
+                parser.read_file(io.StringIO(ini_text))
+                
+                if not parser.has_section('Erkennung'):
+                    parser.add_section('Erkennung')
+                
+                parser.set('Erkennung', 'hit_tolerance', str(self.hit_tolerance_var.get()))
+                parser.set('Erkennung', 'min_hole_area', str(self.min_hole_area_var.get()))
+                parser.set('Erkennung', 'caliber_radius', str(self.caliber_radius_var.get()))
+                parser.set('Erkennung', 'hybrid_riss_faktor', str(self.hybrid_riss_faktor_var.get()))
+                parser.set('Erkennung', 'hybrid_sichel_faktor', str(self.hybrid_sichel_faktor_var.get()))
+                parser.set('Erkennung', 'hybrid_discard_faktor', str(self.hybrid_discard_faktor_var.get()))
+                parser.set('Erkennung', 'hough_min_faktor', str(self.hough_min_faktor_var.get()))
+                parser.set('Erkennung', 'hough_max_faktor', str(self.hough_max_faktor_var.get()))
+                parser.set('Erkennung', 'hough_param1', str(self.hough_param1_var.get()))
+                parser.set('Erkennung', 'hough_param2', str(self.hough_param2_var.get()))
+                parser.set('Erkennung', 'morph_kernel_size', str(self.morph_kernel_var.get()))
+                parser.set('Erkennung', 'max_aspect_ratio', str(self.max_aspect_ratio_var.get()))
+                
+                string_io = io.StringIO()
+                parser.write(string_io)
+                return string_io.getvalue()
+                
+            # 6. Dateien umschaufeln und Daten ersetzen (MIT DIÄT-FILTER)
+            with zipfile.ZipFile(self.current_zip_path, 'r') as zf_in:
+                with zipfile.ZipFile(save_path, 'w', zipfile.ZIP_DEFLATED) as zf_out:
+                    
+                    for item in zf_in.infolist():
+                        filename = item.filename
+                        
+                        # 1. Log-Datei ignorieren
+                        if filename == "treffer_log.txt":
+                            continue 
+                            
+                        # 2. NEU: Diät-Filter für unnötige Debug-Bilder
+                        if ("_diff" in filename or 
+                            "letzte_aufnahme" in filename or 
+                            "verworfene" in filename):
+                            continue # Weglassen! Spart ~80% Speicherplatz.
+                            
+                        # 3. Match.json durch unsere neue ersetzen
+                        elif filename == "match.json":
+                            updated_json_str = json.dumps(new_match_data, indent=4)
+                            zf_out.writestr("match.json", updated_json_str)
+                            
+                        # 4. Config.ini mit aktuellen Parametern überschreiben
+                        elif filename == "config.ini":
+                            old_ini_str = zf_in.read(filename).decode('utf-8')
+                            new_ini_str = update_ini_string(old_ini_str)
+                            zf_out.writestr("config.ini", new_ini_str)
+                            
+                        # 5. Restliche Dateien (orig, referenz, startmask) 1:1 kopieren
+                        else:
+                            data = zf_in.read(filename)
+                            zf_out.writestr(item, data)
+            
+            messagebox.showinfo("Erfolg", f"Test-Case erfolgreich erstellt:\n{os.path.basename(save_path)}\n\n(Match.json und config.ini wurden basierend auf der aktuellen CV-Auswertung frisch generiert!)")
+            
+        except Exception as e:
+            messagebox.showerror("Fehler", f"Beim Exportieren ist ein Fehler aufgetreten:\n{str(e)}")
+
         
     def update_image_display(self):
         """Zeichnet die zwischengespeicherten Bilder mit dem aktuellen Zoom-Faktor neu"""
