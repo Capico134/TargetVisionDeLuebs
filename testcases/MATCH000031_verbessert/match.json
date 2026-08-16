@@ -1,0 +1,230 @@
+{
+    "metadata": {
+        "spieler": "G\u00fcnther / Andreas",
+        "programm_name": "TargetVision",
+        "kameras": "Links & Rechts",
+        "treffer_links": 10,
+        "treffer_rechts": 10,
+        "gesamtpunkte": 20,
+        "gesamtpunkte_anzeige": "10 / 9",
+        "gesamt_ringe_anzeige": "55.4 / 30.1",
+        "gesamt_ringe": 85.5,
+        "erkennungs_methode": "C",
+        "match_id": 31,
+        "version": "1.2.2-11-g1fb165c",
+        "start_zeit": "14.08.26 20:09:09",
+        "timestamp": "14.08.26 20:13:43",
+        "center_l": [
+            153,
+            251
+        ],
+        "center_r": [
+            224,
+            250
+        ],
+        "fortsetzung_links": true,
+        "fortsetzung_rechts": true
+    },
+    "timeline": [
+        {
+            "t": 1.0,
+            "s": "l",
+            "x": 38,
+            "y": 139,
+            "a": 336.5,
+            "score": -1.0,
+            "cv_score": 186.2,
+            "edited": false
+        },
+        {
+            "t": 2.0,
+            "s": "r",
+            "x": 163,
+            "y": 294,
+            "a": 301.5,
+            "score": -1.0,
+            "cv_score": 177.7,
+            "edited": false
+        },
+        {
+            "t": 3.0,
+            "s": "l",
+            "x": 232,
+            "y": 295,
+            "a": 293.0,
+            "score": -1.0,
+            "cv_score": 169.8,
+            "edited": false
+        },
+        {
+            "t": 4.0,
+            "s": "l",
+            "x": 118,
+            "y": 300,
+            "a": 186.5,
+            "score": -1.0,
+            "cv_score": 144.0,
+            "edited": false
+        },
+        {
+            "t": 5.0,
+            "s": "r",
+            "x": 260,
+            "y": 381,
+            "a": 509.5,
+            "score": -1.0,
+            "cv_score": 187.3,
+            "edited": false
+        },
+        {
+            "t": 6.0,
+            "s": "r",
+            "x": 400,
+            "y": 228,
+            "a": 27.5,
+            "score": -1.0,
+            "cv_score": 109.0,
+            "edited": false
+        },
+        {
+            "t": 7.0,
+            "s": "l",
+            "x": 214,
+            "y": 331,
+            "a": 274.5,
+            "score": -1.0,
+            "cv_score": 161.8,
+            "edited": false
+        },
+        {
+            "t": 8.0,
+            "s": "r",
+            "x": 310,
+            "y": 341,
+            "a": 324.5,
+            "score": -1.0,
+            "cv_score": 176.1,
+            "edited": false
+        },
+        {
+            "t": 9.0,
+            "s": "l",
+            "x": 170,
+            "y": 230,
+            "a": 417.5,
+            "score": -1.0,
+            "cv_score": 189.1,
+            "edited": false
+        },
+        {
+            "t": 10.0,
+            "s": "r",
+            "x": 199,
+            "y": 169,
+            "a": 499.0,
+            "score": -1.0,
+            "cv_score": 192.6,
+            "edited": false
+        },
+        {
+            "t": 11.0,
+            "s": "l",
+            "x": 160,
+            "y": 206,
+            "a": 264.5,
+            "score": -1.0,
+            "cv_score": 152.5,
+            "edited": false
+        },
+        {
+            "t": 12.0,
+            "s": "r",
+            "x": 170,
+            "y": 436,
+            "a": 275.5,
+            "score": -1.0,
+            "cv_score": 137.9,
+            "edited": false
+        },
+        {
+            "t": 13.0,
+            "s": "l",
+            "x": 128,
+            "y": 288,
+            "a": 96.0,
+            "score": -1.0,
+            "cv_score": 126.5,
+            "edited": false
+        },
+        {
+            "t": 14.0,
+            "s": "r",
+            "x": 246,
+            "y": 382,
+            "a": 25.5,
+            "score": -1.0,
+            "cv_score": 61.3,
+            "edited": false
+        },
+        {
+            "t": 15.0,
+            "s": "l",
+            "x": 124,
+            "y": 231,
+            "a": 438.0,
+            "score": -1.0,
+            "cv_score": 191.5,
+            "edited": false
+        },
+        {
+            "t": 16.0,
+            "s": "r",
+            "x": 212,
+            "y": 287,
+            "a": 642.0,
+            "score": -1.0,
+            "cv_score": 200.0,
+            "edited": false
+        },
+        {
+            "t": 17.0,
+            "s": "l",
+            "x": 205,
+            "y": 261,
+            "a": 475.0,
+            "score": -1.0,
+            "cv_score": 200.0,
+            "edited": false
+        },
+        {
+            "t": 18.0,
+            "s": "r",
+            "x": 294,
+            "y": 328,
+            "a": 43.5,
+            "score": -1.0,
+            "cv_score": 79.3,
+            "edited": false
+        },
+        {
+            "t": 19.0,
+            "s": "r",
+            "x": 279,
+            "y": 250,
+            "a": 907.0,
+            "score": -1.0,
+            "cv_score": 200.0,
+            "edited": false
+        },
+        {
+            "t": 20.0,
+            "s": "l",
+            "x": 54,
+            "y": 316,
+            "a": 346.5,
+            "score": -1.0,
+            "cv_score": 188.9,
+            "edited": false
+        }
+    ]
+}

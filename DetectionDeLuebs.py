@@ -177,18 +177,20 @@ class TargetDetector:
         diff_gray = np.max(diff_bgr, axis=2) 
         _, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY)
 
-        # ---> NEU: Dynamischer Morph-Kernel <---
-        k_size = self.morph_kernel_size
-        kernel = np.ones((k_size, k_size), np.uint8)
-        thresh_raw = cv2.morphologyEx(thresh_raw, cv2.MORPH_CLOSE, kernel)
-
+        # 1. ERST die alten Treffer abziehen (Stanzt den Riss aus)
         if state.cumulative_mask is not None:
             thresh_new = cv2.subtract(thresh_raw, state.cumulative_mask)
-            # ---> NEU: Zerstört alle grauen Reste aus eventuell unsauberen Masken <---
+            # Zerstört alle grauen Reste aus eventuell unsauberen Masken
             _, thresh_new = cv2.threshold(thresh_new, 127, 255, cv2.THRESH_BINARY)
         else:
             thresh_new = thresh_raw.copy()
             state.cumulative_mask = np.zeros_like(thresh_raw)
+
+        # 2. DANN den Morph-Filter auf die rohen NEUEN Fragmente anwenden!
+        k_size = self.morph_kernel_size
+        if k_size > 0:
+            kernel = np.ones((k_size, k_size), np.uint8)
+            thresh_new = cv2.morphologyEx(thresh_new, cv2.MORPH_CLOSE, kernel)
 
         changed_pixels = cv2.countNonZero(thresh_new)
         total_pixels = thresh_new.shape[0] * thresh_new.shape[1]
@@ -198,6 +200,12 @@ class TargetDetector:
             self.log(side, f"⚠️ SANITY CHECK FEHLGESCHLAGEN: Neuer Zuwachs zu {change_percent:.2f}%")
             self.log(side, "-> Ignoriere Frame.")
             return False 
+
+        ##DEBUG-Ausgabe
+        #import os
+        #export_dir = "labor_export"
+        #os.makedirs(export_dir, exist_ok=True)
+        #cv2.imwrite(os.path.join(export_dir, "DETECTION_00_thresh_new.png"), thresh_new)
 
         contours, _ = cv2.findContours(thresh_new, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         new_shots_found_this_frame = []

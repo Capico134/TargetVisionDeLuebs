@@ -232,6 +232,8 @@ class OfflineLaborApp:
         tk.Radiobutton(view_frame, text="1) Diff-Bild (Letzter Schuss)", variable=self.view_mode_var, value=1, command=self.update_image_display).pack(anchor=tk.W)
         tk.Radiobutton(view_frame, text="2) Diff-Gesamt-Bild (Historie)", variable=self.view_mode_var, value=2, command=self.update_image_display).pack(anchor=tk.W)
         tk.Radiobutton(view_frame, text="3) Überlagerung (Ref + Diff + Gesamt)", variable=self.view_mode_var, value=3, command=self.update_image_display).pack(anchor=tk.W)
+        # ---> NEU: Die 4. Ansicht! <---
+        tk.Radiobutton(view_frame, text="4) Raw-Diff (Grau + Rot > Limit)", variable=self.view_mode_var, value=4, command=self.update_image_display).pack(anchor=tk.W)
         
         # ---> NEU: Scrollbarer Bereich für die Parameter <---
         param_outer_frame = tk.LabelFrame(control_frame, text=" Erkennungs-Parameter (Live) ", pady=5, padx=5)
@@ -278,7 +280,7 @@ class OfflineLaborApp:
         self.make_slider(param_frame, "hough_param2 (Strenge):", self.hough_param2_var, 1, 20)
         
         tk.Label(param_frame, text="--- Bild-Filterung ---", fg="gray").pack(pady=(10, 5))
-        self.make_slider(param_frame, "morph_kernel_size:", self.morph_kernel_var, 3, 15)
+        self.make_slider(param_frame, "morph_kernel_size:", self.morph_kernel_var, 0, 15)
         self.make_slider(param_frame, "max_aspect_ratio (Sichel):", self.max_aspect_ratio_var, 1.5, 6.0, 0.1)
         
         tk.Checkbutton(param_frame, text="💾 Simulations-Bilder exportieren", 
@@ -455,22 +457,28 @@ class OfflineLaborApp:
         if x < self.current_img_w:
             real_x = int(x / self.current_scale)
             real_y = int(y / self.current_scale)
-            self.lbl_coords.config(text=f"Live-Bild -> X: {real_x:04d} | Y: {real_y:04d}")
+            
+            # ---> NEU: Diff-Wert auslesen <---
+            diff_val = self.last_raw_diff[real_y, real_x] if hasattr(self, 'last_raw_diff') else 0
+            self.lbl_coords.config(text=f"Live-Bild -> X:{real_x:04d} | Y:{real_y:04d} | DIFF:{diff_val:03d}")
             
             # ---> NEU: Fadenkreuz im RECHTEN Bild einzeichnen <---
             mirror_x = x + self.current_img_w
             cv2.circle(temp_img, (mirror_x, y), r, neon_blue, 2)
-            cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) # Kleiner Punkt in der Mitte
+            cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) 
             
         else:
             real_x = int((x - self.current_img_w) / self.current_scale)
             real_y = int(y / self.current_scale)
-            self.lbl_coords.config(text=f"Diff-Bild -> X: {real_x:04d} | Y: {real_y:04d}")
+            
+            # ---> NEU: Diff-Wert auslesen <---
+            diff_val = self.last_raw_diff[real_y, real_x] if hasattr(self, 'last_raw_diff') else 0
+            self.lbl_coords.config(text=f"Rechtes Bild -> X:{real_x:04d} | Y:{real_y:04d} | DIFF:{diff_val:03d}")
             
             # ---> NEU: Fadenkreuz im LINKEN Bild einzeichnen <---
             mirror_x = x - self.current_img_w
             cv2.circle(temp_img, (mirror_x, y), r, neon_blue, 2)
-            cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) # Kleiner Punkt in der Mitte
+            cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) 
 
         # Das temporäre Bild mit dem Overlay blitzschnell ins Tkinter-Label werfen
         img_pil = Image.fromarray(cv2.cvtColor(temp_img, cv2.COLOR_BGR2RGB))
@@ -603,6 +611,14 @@ class OfflineLaborApp:
                     self.log_text.insert(tk.END, "▼"*70 + "\n\n")
                     
                     live_img = img.copy()
+                    clean_live_img = img.copy()
+                    
+                    # ---> NEU: Snapshot der Maske BEVOR die Engine den neuen Schuss reinmalt! <---
+                    temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
+                    if temp_state.cumulative_mask is not None:
+                        history_mask = temp_state.cumulative_mask.copy()
+                    else:
+                        history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
                     
                 detector.detect_new_shot(img, side)
 
@@ -645,6 +661,41 @@ class OfflineLaborApp:
         self.last_diff_img = diff_img
         self.last_diff_gesamt_img = diff_gesamt_img
         self.last_ref_img = ref_img
+
+        
+        # Bilder für butterweiches Zoomen im RAM zwischenspeichern
+        self.last_live_img = live_img
+        self.last_diff_img = diff_img
+        self.last_diff_gesamt_img = diff_gesamt_img
+        self.last_ref_img = ref_img
+        
+        # ==========================================================
+        # ---> NEU: Den echten RAW-Diff-Wert berechnen (Modus 4) <---
+        # ==========================================================
+        if len(ref_img.shape) == 3 and 'clean_live_img' in locals():
+            # 1. Wir nutzen zwingend das saubere Bild OHNE gezeichnete Kreise!
+            live_blur = cv2.GaussianBlur(clean_live_img, (7, 7), 0)
+            
+            # ---> DER FEHLER WAR HIER: ref_img war noch UNBLURRED! <---
+            # Die Engine nutzt intern self.ref_left, und das ist geblurrt gespeichert.
+            ref_blur = cv2.GaussianBlur(ref_img, (7, 7), 0)
+            
+            norm_live = detector.normalize_brightness(ref_blur, live_blur)
+            diff_bgr = cv2.absdiff(ref_blur, norm_live)
+            raw_diff = np.max(diff_bgr, axis=2) # Unser Farb-Hack!
+            
+            # ---> NEU: Wir führen den Threshold VORHER aus, genau wie die Engine! <---
+            hit_tol = self.hit_tolerance_var.get()
+            _, thresh_raw = cv2.threshold(raw_diff, hit_tol, 255, cv2.THRESH_BINARY)
+            self.last_thresh_raw = thresh_raw.copy()
+
+            self.last_raw_diff = raw_diff.copy() # Für die farbige Anzeige
+            
+            if 'history_mask' in locals():
+                self.last_history_mask = history_mask.copy()
+            else:
+                self.last_history_mask = np.zeros((h, w), dtype=np.uint8)        
+
         
         self.update_image_display()
 
@@ -1034,6 +1085,73 @@ class OfflineLaborApp:
             right_img = diff_bgr
         elif mode == 2:
             right_img = to_bgr(self.last_diff_gesamt_img)
+        elif mode == 4: 
+            # ---> DIE MAGISCHE HEATMAP (Neue Logik: Erst stanzen, dann flicken!) <---
+            raw = getattr(self, 'last_raw_diff', np.zeros((h, w), dtype=np.uint8))
+            thresh_raw = getattr(self, 'last_thresh_raw', np.zeros((h, w), dtype=np.uint8))
+            hist_mask = getattr(self, 'last_history_mask', np.zeros((h, w), dtype=np.uint8))
+            
+            # Hintergrund bereinigen
+            raw_display = raw.copy()
+            if hist_mask is not None and cv2.countNonZero(hist_mask) > 0:
+                raw_display[hist_mask > 0] = 0
+            base_gray = cv2.cvtColor(raw_display, cv2.COLOR_GRAY2BGR)
+            
+            # 1. ERST die Historie abziehen! (Wir erhalten isolierte, nackte Risse)
+            if hist_mask is not None and cv2.countNonZero(hist_mask) > 0:
+                new_fragments_raw = cv2.subtract(thresh_raw, hist_mask)
+            else:
+                new_fragments_raw = thresh_raw.copy()
+                
+            # Reste köpfen
+            _, new_fragments_raw = cv2.threshold(new_fragments_raw, 127, 255, cv2.THRESH_BINARY)
+            
+            # 2. DANN den Morph-Filter anwenden (Schließt jetzt echte Lücken!)
+            k_size = self.morph_kernel_var.get()
+            if k_size > 0:
+                kernel = np.ones((k_size, k_size), np.uint8)
+                new_fragments_morphed = cv2.morphologyEx(new_fragments_raw, cv2.MORPH_CLOSE, kernel)
+            else:
+                new_fragments_morphed = new_fragments_raw.copy()
+                
+            ## ====================================================================
+            ## ---> DEIN DEBUG-EXPORT-BLOCK <---
+            ## ====================================================================
+            #import os
+            #export_dir = "labor_export"
+            #os.makedirs(export_dir, exist_ok=True)
+            #
+            #cv2.imwrite(os.path.join(export_dir, "debug_00_final_morphed_gesamt.png"), new_fragments_morphed)
+            #contours, _ = cv2.findContours(new_fragments_morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            #
+            #for i, cnt in enumerate(contours):
+            #    area = cv2.contourArea(cnt)
+            #    single_contour_mask = np.zeros_like(new_fragments_morphed)
+            #    cv2.drawContours(single_contour_mask, [cnt], -1, 255, -1)
+            #    
+            #    x, y, cw, ch = cv2.boundingRect(cnt)
+            #    if cw > 0 and ch > 0:
+            #        cropped_contour = single_contour_mask[y:y+ch, x:x+cw]
+            #        filename = f"debug_contour_{i:03d}_area_{area:.1f}.png"
+            #        cv2.imwrite(os.path.join(export_dir, filename), cropped_contour)
+            ## ====================================================================
+
+            # 3. Differenz bilden: Was genau hat der Morph-Filter hinzugefügt?
+            added_by_morph = cv2.subtract(new_fragments_morphed, new_fragments_raw)
+            
+            # 4. Einfärben: Rot = Nackter Riss | Blau = Neue Morph-Brücke
+            bool_base = new_fragments_raw > 0
+            bool_morph = added_by_morph > 0
+            
+            red_overlay = np.zeros_like(base_gray)
+            red_overlay[:,:,2] = np.maximum(raw_display, 100) 
+            
+            blue_overlay = np.zeros_like(base_gray)
+            blue_overlay[:,:,0] = 255 
+            
+            right_img = base_gray.copy()
+            right_img[bool_base] = red_overlay[bool_base]
+            right_img[bool_morph] = blue_overlay[bool_morph]
         else: # Modus 3: Die Überlagerung
             ref = to_bgr(self.last_ref_img)
             

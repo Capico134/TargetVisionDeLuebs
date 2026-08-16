@@ -158,7 +158,7 @@ hough_max_faktor = 1.15
 hough_param1 = 25
 hough_param2 = 4
 # Mindestfläche in Pixeln, die eine Farb/Helligkeitsänderung haben muss, um als Loch zu gelten.
-min_hole_area = 25
+min_hole_area = 28
 # Sperr-Radius um bestehende Treffer (in Pixeln) gegen Doppelzählungen.
 caliber_radius = 14
 # Anzahl veränderter Pixel im Bild, ab der eine Bewegung (Vibration/Fahrt) erkannt wird.
@@ -259,9 +259,9 @@ darstellung_ohne_weissabgleich = yes
         if config.has_option('Erkennung', 'min_hole_area'):
             try:
                 current_area = config.getint('Erkennung', 'min_hole_area')
-                if current_area < 25:
-                    print(f"🔧 Führe Auto-Patch aus: Erhöhe 'min_hole_area' von {current_area} auf 25...")
-                    self.update_ini_value('Erkennung', 'min_hole_area', '25')
+                if current_area < 28:
+                    print(f"🔧 Führe Auto-Patch aus: Erhöhe 'min_hole_area' von {current_area} auf 28...")
+                    self.update_ini_value('Erkennung', 'min_hole_area', '28')
                     needs_reload = True
             except ValueError:
                 pass 
@@ -356,6 +356,17 @@ darstellung_ohne_weissabgleich = yes
                 if current_value < 20:
                     print(f"🔧 Führe Auto-Patch aus: Erhöhe 'stillness_frames' von {current_value} auf 20...")
                     self.update_ini_value('Timing', 'stillness_frames', '20')
+                    needs_reload = True
+            except ValueError:
+                pass 
+        
+        if config.has_option('Anzeige', 'darstellung_ohne_weissabgleich'):
+            try:
+                current_value = config.get('Anzeige', 'darstellung_ohne_weissabgleich')
+                # Wir prüfen auf 'yes', 'true' etc., falls es jemand manuell eingetragen hat
+                if current_value.strip().lower() in ['yes', 'true', '1']:
+                    print(f"🔧 Führe Auto-Patch aus: Ändere 'darstellung_ohne_weissabgleich' von '{current_value}' auf 'no'...")
+                    self.update_ini_value('Anzeige', 'darstellung_ohne_weissabgleich', 'no')
                     needs_reload = True
             except ValueError:
                 pass 

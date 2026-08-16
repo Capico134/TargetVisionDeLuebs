@@ -94,6 +94,26 @@ def run_all_tests():
                 config = configparser.ConfigParser()
                 config.read_string(zf.read(config_name).decode('utf-8'))
                 
+                # =======================================================
+                # NEU: WAS-WÄRE-WENN OVERRIDES
+                # =======================================================
+                # Hier kannst du Parameter eintragen, die für ALLE Test-Cases 
+                # erzwungen werden sollen. (Zum Testen einfach einkommentieren)
+                
+                GLOBAL_OVERRIDES = {
+                    'Erkennung': {
+                        # 'hit_tolerance': '35',
+                        # 'morph_kernel_size': '8',
+                    }
+                }
+                
+                for section, keys in GLOBAL_OVERRIDES.items():
+                    if not config.has_section(section):
+                        config.add_section(section)
+                    for key, val in keys.items():
+                        config.set(section, key, val)
+                # =======================================================
+
                 # 2. Golden Master match.json laden
                 match_json_name = next((f for f in all_files if "match.json" in f), None)
                 if not match_json_name:

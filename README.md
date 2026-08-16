@@ -1,4 +1,5 @@
 # 🎯 TargetVision DeLübs
+[![TargetVision Regression Tests](https://github.com/Capico134/TargetVisionDeLuebs/actions/workflows/regression_tests.yml/badge.svg)](https://github.com/Capico134/TargetVisionDeLuebs/actions/workflows/regression_tests.yml)
 Das intelligente Computer-Vision-System zur Treffererkennung für laufende und stehende Schießscheiben.
 
 *TargetVision DeLübs* reiht sich in die DeLübs-Softwarefamilie ein und entstand als Vater-Sohn-Projekt, um normale Webcams in ein hochpräzises Trefferanalyse-System zu verwandeln. Es überwindet die typischen Probleme von Kamerasystemen auf dem Schießstand (Schattenwurf, mechanisches Wackeln der Anlage) durch eine clevere Bildverarbeitungs-Logik.
