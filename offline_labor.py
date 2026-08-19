@@ -232,8 +232,9 @@ class OfflineLaborApp:
         tk.Radiobutton(view_frame, text="1) Diff-Bild (Letzter Schuss)", variable=self.view_mode_var, value=1, command=self.update_image_display).pack(anchor=tk.W)
         tk.Radiobutton(view_frame, text="2) Diff-Gesamt-Bild (Historie)", variable=self.view_mode_var, value=2, command=self.update_image_display).pack(anchor=tk.W)
         tk.Radiobutton(view_frame, text="3) Überlagerung (Ref + Diff + Gesamt)", variable=self.view_mode_var, value=3, command=self.update_image_display).pack(anchor=tk.W)
-        # ---> NEU: Die 4. Ansicht! <---
         tk.Radiobutton(view_frame, text="4) Raw-Diff (Grau + Rot > Limit)", variable=self.view_mode_var, value=4, command=self.update_image_display).pack(anchor=tk.W)
+        # ---> NEU: Die 5. Ansicht! <---
+        tk.Radiobutton(view_frame, text="5) Rohes Bild (Ohne Filter/Kreise)", variable=self.view_mode_var, value=5, command=self.update_image_display).pack(anchor=tk.W)
         
         # ---> NEU: Scrollbarer Bereich für die Parameter <---
         param_outer_frame = tk.LabelFrame(control_frame, text=" Erkennungs-Parameter (Live) ", pady=5, padx=5)
@@ -564,6 +565,9 @@ class OfflineLaborApp:
         orig_name = self.orig_files[self.current_index]
         side = 'left' if 'left' in orig_name else 'right'
         
+        # ---> NEU: Dateiname live in den Fenster-Rahmen schreiben <---
+        self.image_frame.config(text=f" Live-Labor (Mausrad = Zoom | Klick = Bewegen | Rechtsklick = Reset)  |  📄 {orig_name} ")
+        
         # Alle Schüsse DIESER Seite bis zum aktuellen ermitteln (für Time-Travel)
         side_origs = sorted([f for f in self.orig_files if side in f])
         try:
@@ -658,6 +662,7 @@ class OfflineLaborApp:
 
         # Bilder für butterweiches Zoomen im RAM zwischenspeichern
         self.last_live_img = live_img
+        self.last_clean_live_img = clean_live_img.copy() # <--- NEU: Das nackte Bild retten!
         self.last_diff_img = diff_img
         self.last_diff_gesamt_img = diff_gesamt_img
         self.last_ref_img = ref_img
@@ -1152,6 +1157,16 @@ class OfflineLaborApp:
             right_img = base_gray.copy()
             right_img[bool_base] = red_overlay[bool_base]
             right_img[bool_morph] = blue_overlay[bool_morph]
+        elif mode == 5:
+            # ---> NEU: Das völlig rohe, nackte Bild <---
+            if hasattr(self, 'last_clean_live_img'):
+                right_img = self.last_clean_live_img.copy()
+            else:
+                right_img = np.zeros((h, w, 3), dtype=np.uint8)
+                
+        
+        
+        
         else: # Modus 3: Die Überlagerung
             ref = to_bgr(self.last_ref_img)
             

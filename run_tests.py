@@ -1,4 +1,5 @@
 import os
+import sys
 import zipfile
 import json
 import cv2
@@ -48,12 +49,12 @@ def run_all_tests():
     
     if not os.path.exists(test_dir):
         print(f"❌ Ordner '{test_dir}' nicht gefunden. Keine Tests ausgeführt.")
-        return
+        sys.exit(1)
 
     zip_files = [f for f in os.listdir(test_dir) if f.endswith('.zip')]
     if not zip_files:
         print(f"⚠️ Keine ZIP-Dateien im Ordner '{test_dir}' gefunden.")
-        return
+        sys.exit(1)
 
     # ANSI Color Codes für die Konsole
     C_GREEN = '\033[92m'
@@ -95,11 +96,8 @@ def run_all_tests():
                 config.read_string(zf.read(config_name).decode('utf-8'))
                 
                 # =======================================================
-                # NEU: WAS-WÄRE-WENN OVERRIDES
+                # WAS-WÄRE-WENN OVERRIDES
                 # =======================================================
-                # Hier kannst du Parameter eintragen, die für ALLE Test-Cases 
-                # erzwungen werden sollen. (Zum Testen einfach einkommentieren)
-                
                 GLOBAL_OVERRIDES = {
                     'Erkennung': {
                         # 'hit_tolerance': '35',
@@ -202,6 +200,14 @@ def run_all_tests():
         print(f"\n💾 Ein detaillierter Bericht wurde in '{report_file}' gespeichert.")
     except Exception as e:
         print(f"\n⚠️ Konnte Report nicht speichern: {e}")
+
+    # =======================================================
+    # EXIT-CODE AN DAS BETRIEBSSYSTEM / GITHUB ACTIONS MELDEN
+    # =======================================================
+    if failed_count > 0:
+        sys.exit(1)  # GitHub Actions wird ROT ❌ und Badge wechselt auf "failing"
+    else:
+        sys.exit(0)  # GitHub Actions wird GRÜN ✅ und Badge bleibt "passing"
 
 if __name__ == "__main__":
     run_all_tests()
