@@ -68,7 +68,7 @@ class CameraState:
         
         self.motion_threshold = config.getint('Erkennung', 'motion_threshold')
         self.motion_tolerance = config.getint('Erkennung', 'motion_tolerance', fallback=25)
-        self.stillness_limit = config.getint('Timing', 'stillness_frames')
+        self.stillness_frames = config.getint('Timing', 'stillness_frames')
         
         bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
         r = config.getint(bg_sec, 'rgb_r')

@@ -24,10 +24,10 @@ class TargetDetector:
         self.hybrid_riss_faktor = config.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.175)
         self.hybrid_sichel_faktor = config.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=0.95)
         self.hybrid_discard_faktor = config.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5)
-        self.hough_min_f = config.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85)
-        self.hough_max_f = config.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15)
-        self.ausloeser_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
-        self.max_img_change = config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
+        self.hough_min_faktor = config.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85)
+        self.hough_max_faktor = config.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15)
+        self.ausloeser_durch_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
+        self.max_image_change_percent = config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
         self.debug_alle_bilder_speichern = config.getboolean('Erkennung', 'debug_alle_bilder_speichern', fallback=False)
         self.ringwertung_aktiv = config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         
@@ -200,7 +200,7 @@ class TargetDetector:
         total_pixels = thresh_new.shape[0] * thresh_new.shape[1]
         change_percent = (changed_pixels / total_pixels) * 100
         
-        if change_percent > self.max_img_change:
+        if change_percent > self.max_image_change_percent:
             self.log(side, f"⚠️ SANITY CHECK FEHLGESCHLAGEN: Neuer Zuwachs zu {change_percent:.2f}%")
             self.log(side, "-> Ignoriere Frame.")
             return False 
@@ -217,7 +217,7 @@ class TargetDetector:
         # NEU: Flag, um zu merken, ob wir Riesen-Risse maskieren müssen
         update_mask_only = False 
         
-        if self.ausloeser_erschuetterung or len(contours) > 0:
+        if self.ausloeser_durch_erschuetterung or len(contours) > 0:
             self.log(side, f"Analysiere Konturen... (Neuer Zuwachs: {change_percent:.2f}% | Konturen: {len(contours)})")
 
         for cnt in contours:
@@ -299,8 +299,8 @@ class TargetDetector:
                         cv2.drawContours(mask, [cnt], -1, 255, -1)
                         
                         mask_blurred = cv2.GaussianBlur(mask, (9, 9), 0)
-                        min_r = max(2, int(self.caliber_radius * self.hough_min_f))
-                        max_r = int(self.caliber_radius * self.hough_max_f)
+                        min_r = max(2, int(self.caliber_radius * self.hough_min_faktor))
+                        max_r = int(self.caliber_radius * self.hough_max_faktor)
                         
                         circles = cv2.HoughCircles(mask_blurred, cv2.HOUGH_GRADIENT, dp=1, minDist=2,
                                                    param1=self.hough_param1, param2=self.hough_param2, 
@@ -485,7 +485,7 @@ class TargetDetector:
 
             return True if new_shots_found_this_frame else False
         else:
-            if self.ausloeser_erschuetterung:
+            if self.ausloeser_durch_erschuetterung:
                 self.log(side, "Keine validen neuen Treffer im Bild gefunden.")
             self.save_debug_image(f"diff_letzte_verworfene_auswertung_{side}", thresh_new)
             self.save_debug_image(f"letzte_verworfene_aufnahme_{side}", frame)

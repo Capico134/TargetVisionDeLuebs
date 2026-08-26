@@ -25,27 +25,27 @@ class TargetTracker:
         
         # Erkennt automatisch das Betriebssystem ('Windows', 'Linux', 'Darwin' für Mac)
         is_windows = platform.system() == 'Windows'
-        self.use_left = config.getboolean('Kameras', 'nutze_kamera_links')
-        self.use_right = config.getboolean('Kameras', 'nutze_kamera_rechts')
+        self.nutze_kamera_links = config.getboolean('Kameras', 'nutze_kamera_links')
+        self.nutze_kamera_rechts = config.getboolean('Kameras', 'nutze_kamera_rechts')
         # ---> NEU: Kameraindizes aus der Config laden <---
         cam_left_idx = config.getint('Kameras', 'cam_left_index')
         cam_right_idx = config.getint('Kameras', 'cam_right_index')
         # Erkennt automatisch das Betriebssystem ('Windows', 'Linux', 'Darwin' für Mac)
         if is_windows:
             # Unter Windows DirectShow für schnellen Start nutzen
-            self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_DSHOW) if self.use_left else None
-            self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_DSHOW) if self.use_right else None
+            self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_DSHOW) if self.nutze_kamera_links else None
+            self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_DSHOW) if self.nutze_kamera_rechts else None
         else:
             # Unter Linux/Mac den nativen Standard-Treiber (V4L2) verwenden
-            self.cap_left = cv2.VideoCapture(cam_left_idx) if self.use_left else None
-            self.cap_right = cv2.VideoCapture(cam_right_idx) if self.use_right else None
+            self.cap_left = cv2.VideoCapture(cam_left_idx) if self.nutze_kamera_links else None
+            self.cap_right = cv2.VideoCapture(cam_right_idx) if self.nutze_kamera_rechts else None
         
         # --- Nur noch Variablen, die wir explizit für die GUI/Steuerung brauchen ---
         self.caliber_radius = config.getint('Erkennung', 'caliber_radius')
         self.ausloeser_durch_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.poll_ms = config.getint('Timing', 'poll_ms', fallback=33)
-        self.fullscreen = config.getboolean('Anzeige', 'vollbild', fallback=False)
-        self.enhance_display = config.getboolean('Anzeige', 'darstellung_ohne_weissabgleich', fallback=True)
+        self.vollbild = config.getboolean('Anzeige', 'vollbild', fallback=False)
+        self.darstellung_ohne_weissabgleich = config.getboolean('Anzeige', 'darstellung_ohne_weissabgleich', fallback=True)
         self.ringwertung_aktiv = config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         
         # ---> NEU: Wir instanziieren den Detector und übergeben unsere log-Funktion als Callback! <---
@@ -164,10 +164,10 @@ class TargetTracker:
 
     def read_frames(self):
         frame_l, frame_r = None, None
-        if self.use_left: 
+        if self.nutze_kamera_links: 
             ret_l, raw_l = self.cap_left.read()
             frame_l = self.apply_crop(raw_l, 'left') if ret_l else None
-        if self.use_right: 
+        if self.nutze_kamera_rechts: 
             ret_r, raw_r = self.cap_right.read()
             frame_r = self.apply_crop(raw_r, 'right') if ret_r else None
         return frame_l, frame_r
@@ -226,8 +226,8 @@ class TargetTracker:
     def update_gui(self, frame_l, frame_r, blink_state):
         frames_to_stack = []
         
-        disp_l = self.enhance_color_for_display(frame_l) if (self.use_left and frame_l is not None and self.enhance_display) else frame_l
-        disp_r = self.enhance_color_for_display(frame_r) if (self.use_right and frame_r is not None and self.enhance_display) else frame_r
+        disp_l = self.enhance_color_for_display(frame_l) if (self.nutze_kamera_links and frame_l is not None and self.darstellung_ohne_weissabgleich) else frame_l
+        disp_r = self.enhance_color_for_display(frame_r) if (self.nutze_kamera_rechts and frame_r is not None and self.darstellung_ohne_weissabgleich) else frame_r
         
         ref_h, ref_w = 480, 640
         if disp_l is not None: ref_h, ref_w = disp_l.shape[:2]
@@ -239,10 +239,10 @@ class TargetTracker:
             cv2.putText(dummy, text, (30, ref_h // 2), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2, cv2.LINE_AA)
             return dummy
 
-        if self.use_left:
+        if self.nutze_kamera_links:
             frames_to_stack.append(disp_l if disp_l is not None else create_dummy_frame("LINKS"))
         
-        if self.use_right:
+        if self.nutze_kamera_rechts:
             frames_to_stack.append(disp_r if disp_r is not None else create_dummy_frame("RECHTS"))
 
         if not frames_to_stack: return
@@ -261,7 +261,7 @@ class TargetTracker:
         combined_view = np.hstack(padded_frames)
         orig_h, orig_w = combined_view.shape[:2]
         
-        self.w_left_displayed = frames_to_stack[0].shape[1] if self.use_left else 0
+        self.w_left_displayed = frames_to_stack[0].shape[1] if self.nutze_kamera_links else 0
         
         self.scale_x, self.scale_y = 1.0, 1.0
         try:
@@ -285,7 +285,7 @@ class TargetTracker:
             for idx, shot in enumerate(side_shots):
                 x, y = shot['pos']
                 
-                if shot['side'] == 'right' and self.use_left:
+                if shot['side'] == 'right' and self.nutze_kamera_links:
                     x += self.w_left_displayed
                     
                 final_x = int(x * self.scale_x)
@@ -318,9 +318,9 @@ class TargetTracker:
 
         scaled_w_left = int(self.w_left_displayed * self.scale_x)
         
-        if self.use_left:
+        if self.nutze_kamera_links:
             self.draw_camera_overlay(combined_view, 'left', 0, scaled_w_left, win_h)
-        if self.use_right:
+        if self.nutze_kamera_rechts:
             self.draw_camera_overlay(combined_view, 'right', scaled_w_left, win_w - scaled_w_left, win_h)
         
         # --- VISUELLES FEEDBACK ---
@@ -328,7 +328,7 @@ class TargetTracker:
         for s, feedback in [('left', getattr(self.detector, 'calib_feedback_left', None)), 
                             ('right', getattr(self.detector, 'calib_feedback_right', None))]:
             if feedback and (current_time - feedback['time'] < 8.0):
-                use_cam = self.use_left if s == 'left' else self.use_right
+                use_cam = self.nutze_kamera_links if s == 'left' else self.nutze_kamera_rechts
                 if use_cam:
                     offset_x = 0 if s == 'left' else scaled_w_left
                     
@@ -414,8 +414,8 @@ class TargetTracker:
                     continue # Wenn diese Scheibe noch leer ist, kein HUD zeichnen!
                     
                 # Geister-HUDs verhindern, falls eine Kamera physisch aus ist
-                if side == 'left' and not self.use_left: continue
-                if side == 'right' and not self.use_right: continue
+                if side == 'left' and not self.nutze_kamera_links: continue
+                if side == 'right' and not self.nutze_kamera_rechts: continue
 
                 display_shots = side_shots[-max_items:] if len(side_shots) > max_items else side_shots
                 start_idx = len(side_shots) - len(display_shots)
@@ -471,14 +471,14 @@ class TargetTracker:
 
         if key == ord('q'): return True
         elif key == ord('r'):
-            if self.use_left: self.trigger_reset_left = True
-            if self.use_right: self.trigger_reset_right = True
+            if self.nutze_kamera_links: self.trigger_reset_left = True
+            if self.nutze_kamera_rechts: self.trigger_reset_right = True
             
         return False
 
     def cleanup(self):
-        if self.use_left: self.cap_left.release()
-        if self.use_right: self.cap_right.release()
+        if self.nutze_kamera_links: self.cap_left.release()
+        if self.nutze_kamera_rechts: self.cap_right.release()
         cv2.destroyAllWindows()
 
     def on_mouse_click(self, event, x, y, flags, param):
@@ -493,11 +493,11 @@ class TargetTracker:
                 raw_y = y / self.scale_y
                 
                 # Wenn wir rechts sind, müssen wir die Breite des linken Bildes abziehen
-                if s == 'right' and self.use_left:
+                if s == 'right' and self.nutze_kamera_links:
                     raw_x -= self.w_left_displayed
                     
                 # Sicherheits-Check: Wurde auch auf die richtige Seite geklickt?
-                if (s == 'left' and raw_x > self.w_left_displayed and self.use_right) or \
+                if (s == 'left' and raw_x > self.w_left_displayed and self.nutze_kamera_rechts) or \
                    (s == 'right' and raw_x < 0):
                     self.log("SYSTEM", "⚠️ Klick war auf der falschen Seite! Bitte nochmal.", True)
                     return
@@ -529,28 +529,28 @@ class TargetTracker:
                     return
             
             # Reset Button (Links)
-            if self.use_left and getattr(self, 'btn_left_coords', None):
+            if self.nutze_kamera_links and getattr(self, 'btn_left_coords', None):
                 bx1, by1, bx2, by2 = self.btn_left_coords
                 if bx1 <= x <= bx2 and by1 <= y <= by2:
                     self.trigger_reset_left = True
                     return
             
             # Reset Button (Rechts)
-            if self.use_right and getattr(self, 'btn_right_coords', None):
+            if self.nutze_kamera_rechts and getattr(self, 'btn_right_coords', None):
                 bx1, by1, bx2, by2 = self.btn_right_coords
                 if bx1 <= x <= bx2 and by1 <= y <= by2:
                     self.trigger_reset_right = True
                     return
             
             # Edit Button (Links)
-            if self.use_left and getattr(self, 'btn_edit_left_coords', None):
+            if self.nutze_kamera_links and getattr(self, 'btn_edit_left_coords', None):
                 ex1, ey1, ex2, ey2 = self.btn_edit_left_coords
                 if ex1 <= x <= ex2 and ey1 <= y <= ey2:
                     self.trigger_edit_left = True
                     return
             
             # Edit Button (Rechts)
-            if self.use_right and getattr(self, 'btn_edit_right_coords', None):
+            if self.nutze_kamera_rechts and getattr(self, 'btn_edit_right_coords', None):
                 ex1, ey1, ex2, ey2 = self.btn_edit_right_coords
                 if ex1 <= x <= ex2 and ey1 <= y <= ey2:
                     self.trigger_edit_right = True
@@ -641,24 +641,24 @@ class TargetTracker:
                         log_msg = f"Speichere Match für {player_name_l} / {player_name_r}..." if player_name_l != player_name_r else f"Speichere Match für {player_name_l}..."
                         self.log("SYSTEM", log_msg, True)
                         
-                        backup_mask_l = self.sm.state_left.cumulative_mask.copy() if (self.use_left and self.sm.state_left and self.sm.state_left.cumulative_mask is not None) else None
-                        backup_mask_r = self.sm.state_right.cumulative_mask.copy() if (self.use_right and self.sm.state_right and self.sm.state_right.cumulative_mask is not None) else None
+                        backup_mask_l = self.sm.state_left.cumulative_mask.copy() if (self.nutze_kamera_links and self.sm.state_left and self.sm.state_left.cumulative_mask is not None) else None
+                        backup_mask_r = self.sm.state_right.cumulative_mask.copy() if (self.nutze_kamera_rechts and self.sm.state_right and self.sm.state_right.cumulative_mask is not None) else None
                         
                         if self.sm.save_current_match(player_name_l, player_name_r):
                             self.log("SYSTEM", "Match erfolgreich gespeichert!", True)
                             
                             # 1. Den Ordner fegen (löscht alle Schüsse/Diffs des alten Matches)
-                            if self.use_left: self.dm.clear_debug_images('left', keep_startmask=True)
-                            if self.use_right: self.dm.clear_debug_images('right', keep_startmask=True)
+                            if self.nutze_kamera_links: self.dm.clear_debug_images('left', keep_startmask=True)
+                            if self.nutze_kamera_rechts: self.dm.clear_debug_images('right', keep_startmask=True)
                             
                             # 2. Die Masken wiederherstellen UND speichern
-                            if self.use_left and self.sm.state_left:
+                            if self.nutze_kamera_links and self.sm.state_left:
                                 self.sm.state_left.cumulative_mask = backup_mask_l
                                 if backup_mask_l is not None:
                                     self.dm.save_debug_image("cumulative_startmask_left", backup_mask_l)
                                     self.sm.state_left.is_fortsetzung = True  # Flag für JSON setzen
                                     
-                            if self.use_right and self.sm.state_right:
+                            if self.nutze_kamera_rechts and self.sm.state_right:
                                 self.sm.state_right.cumulative_mask = backup_mask_r
                                 if backup_mask_r is not None:
                                     self.dm.save_debug_image("cumulative_startmask_right", backup_mask_r)
@@ -666,8 +666,8 @@ class TargetTracker:
                             
                             self.log("SYSTEM", "Leere Kamera-Puffer nach Pause...")
                             for _ in range(10): 
-                                if self.use_left: self.cap_left.read()
-                                if self.use_right: self.cap_right.read()
+                                if self.nutze_kamera_links: self.cap_left.read()
+                                if self.nutze_kamera_rechts: self.cap_right.read()
                         else:
                             self.log("SYSTEM", "Speichern abgebrochen (Keine Treffer).", True)
                     return
@@ -849,8 +849,8 @@ class TargetTracker:
         
         # Kamera-Puffer nach dem Blockieren kurz leeren (verhindert Framestau)
         for _ in range(5): 
-            if self.use_left: self.cap_left.read()
-            if self.use_right: self.cap_right.read()
+            if self.nutze_kamera_links: self.cap_left.read()
+            if self.nutze_kamera_rechts: self.cap_right.read()
 
 
     def run(self):
@@ -859,7 +859,7 @@ class TargetTracker:
         
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         
-        if self.fullscreen:
+        if self.vollbild:
             cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         else:
             cv2.resizeWindow(self.window_name, 1280, 720) 
@@ -874,8 +874,8 @@ class TargetTracker:
             # ---> NEU: Aufruf für die Editier-Menüs <---
             self.process_edits()
             
-            if self.use_left: self.process_camera(frame_l, self.sm.state_left)
-            if self.use_right: self.process_camera(frame_r, self.sm.state_right)
+            if self.nutze_kamera_links: self.process_camera(frame_l, self.sm.state_left)
+            if self.nutze_kamera_rechts: self.process_camera(frame_r, self.sm.state_right)
 
             if time.time() - blink_timer > 0.3:
                 blink_state = not blink_state
