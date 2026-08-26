@@ -36,6 +36,8 @@ class TargetDetector:
         self.hough_param2 = config.getint('Erkennung', 'hough_param2', fallback=4)
         self.morph_kernel_size = config.getint('Erkennung', 'morph_kernel_size', fallback=6)
         self.max_aspect_ratio = config.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5)
+        # ---> NEU: Die Gewichtung für den 200-Punkte-Score <---
+        self.gesamt_anteil_am_200score = config.getfloat('Erkennung', 'gesamt_anteil_am_200score', fallback=0.667)
 
         # Internes Gedächtnis des Detectors
         self.ref_left = None
@@ -58,7 +60,6 @@ class TargetDetector:
     def calculate_hole_score(self, cx, cy, radius, thresh_new, thresh_raw):
         """
         Berechnet die Qualität eines potenziellen Schusslochs (Score 0 bis 200).
-        Prüft, wie viel Weißanteil im perfekten Kreisumfang vorhanden ist.
         """
         circle_mask = np.zeros_like(thresh_new)
         cv2.circle(circle_mask, (int(cx), int(cy)), int(radius), 255, -1)
@@ -77,7 +78,10 @@ class TargetDetector:
         pixels_in_raw = cv2.countNonZero(intersection_raw)
         coverage_raw = (pixels_in_raw / pixels_in_circle) * 100 
         
-        total_score = coverage_new + coverage_raw
+        # ---> NEU: Die gewichtete Berechnung! <---
+        weight_new = 1.0 - self.gesamt_anteil_am_200score
+        total_score = 2.0 * ((coverage_new * weight_new) + (coverage_raw * self.gesamt_anteil_am_200score))
+        
         return total_score, coverage_new, coverage_raw
 
     def ninja_kalibrierungs_check(self, ref_bgr, side):
@@ -234,17 +238,42 @@ class TargetDetector:
                 cx, cy = 0, 0
                
                 if self.erkennungs_methode == 'C':
+                    # 1. Kandidat A: Minimum Enclosing Circle (MEC)
                     (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
+                    score_mec, mec_new, mec_raw = self.calculate_hole_score(circle_x, circle_y, self.caliber_radius, thresh_new, thresh_raw)
                     
-                    # Wir berechnen SOFORT, wie gut ein echtes Schussloch an dieser Position passen würde
-                    base_score, base_new, base_raw = self.calculate_hole_score(circle_x, circle_y, self.caliber_radius, thresh_new, thresh_raw)
+                    # 2. Kandidat B: Center of Gravity / Schwerpunkt (CoG)
+                    M = cv2.moments(cnt)
+                    if M["m00"] != 0:
+                        cog_x = M["m10"] / M["m00"]
+                        cog_y = M["m01"] / M["m00"]
+                        score_cog, cog_new, cog_raw = self.calculate_hole_score(cog_x, cog_y, self.caliber_radius, thresh_new, thresh_raw)
+                    else:
+                        score_cog, cog_new, cog_raw = -1.0, 0.0, 0.0
+                        cog_x, cog_y = circle_x, circle_y
+
+                    # 3. Das Baseline-Duell: Wer hat den besseren Fit?
+                    if score_cog > score_mec:
+                        base_score, base_new, base_raw = score_cog, cog_new, cog_raw
+                        base_x, base_y = cog_x, cog_y
+                        base_name = "Schwerpunkt (CoG)" # <--- NEU: Namensschild
+                        self.log(side, f"⚖️ Baseline-Duell: Schwerpunkt gewinnt! (CoG: {score_cog:.1f} > MEC: {score_mec:.1f})")
+                    else:
+                        base_score, base_new, base_raw = score_mec, mec_new, mec_raw
+                        base_x, base_y = circle_x, circle_y
+                        base_name = "MinCircle (MEC)" # <--- NEU: Namensschild
+                        # Nur loggen, wenn der Unterschied relevant ist, um die Konsole sauber zu halten
+                        if score_mec - score_cog > 5.0:
+                            self.log(side, f"⚖️ Baseline-Duell: MinCircle gewinnt! (MEC: {score_mec:.1f} > CoG: {score_cog:.1f})")
+                            
+                    # ---> AB HIER ARBEITEN WIR MIT base_x, base_y und base_score <---
                     
                     limit_sichel = self.caliber_radius * self.hybrid_sichel_faktor
                     limit_riss = self.caliber_radius * self.hybrid_riss_faktor
                     limit_discard = self.caliber_radius * self.hybrid_discard_faktor
                     
                     self.log(side, f"🔍 Check Kontur: Radius={radius:.1f}px | Limits: Sichel<{limit_sichel:.1f}, Normal, Riss>{limit_riss:.1f}, Discard>{limit_discard:.1f}")
-                    self.log(side, f"📊 Base-Score (minEnclosingCircle): {base_score:.1f}")
+                    self.log(side, f"📊 Base-Score (Sieger): {base_score:.1f}")
                     
                     if radius > limit_discard:
                         self.log(side, f"🚫 Störung ignoriert (Radius {radius:.1f}px > Limit {limit_discard:.1f}px). Wird maskiert, nicht gewertet!")
@@ -254,13 +283,13 @@ class TargetDetector:
                     # 1. Check: Ist der Radius ohnehin perfekt in der Norm UND gut gefüllt?
                     elif limit_sichel <= radius <= limit_riss and base_score > 130.0:
                         self.log(side, f"✅ Loch ist in der Norm und gut gefüllt (Radius {radius:.1f}px | Score {base_score:.1f}). Überspringe Hough!")
-                        cx, cy = int(circle_x), int(circle_y)
+                        cx, cy = int(base_x), int(base_y) # <--- HIER base_x/y nutzen!
                         final_shot_score = base_score
                         
                     # 2. Check: Form ist makellos?
                     elif base_score > 185.0:
                         self.log(side, f"✅ Form ist makellos (Score {base_score:.1f} > 185), trotz Radius {radius:.1f}px. Überspringe Hough!")
-                        cx, cy = int(circle_x), int(circle_y)
+                        cx, cy = int(base_x), int(base_y) # <--- HIER base_x/y nutzen!
                         final_shot_score = base_score
                         
                     # 3. Check: Wir brauchen Hough!
@@ -281,7 +310,7 @@ class TargetDetector:
                         
                         if circles is not None:
                             best_score = base_score
-                            best_cx, best_cy = int(circle_x), int(circle_y)
+                            best_cx, best_cy = int(base_x), int(base_y) # <--- HIER base_x/y nutzen!
                             winner_new = base_new
                             hough_beat_base = False
                             
@@ -302,7 +331,8 @@ class TargetDetector:
                                 if hough_beat_base:
                                     self.log(side, f"🏆 Hough-Sieger triumphiert (Score {best_score:.1f}) und setzt Zentrum.")
                                 else:
-                                    self.log(side, f"🛡️ minEnclosingCircle verteidigt Titel! (Score {best_score:.1f})")
+                                    # ---> NEU: Dynamischer Name <---
+                                    self.log(side, f"🛡️ {base_name} verteidigt Titel! (Score {best_score:.1f})")
                                 hough_success = True
                             else:
                                 self.log(side, "⚠️ Sieger hat zu wenig Anteil am neuen Riss (< 5%). Verwerfe Sieger!")
@@ -369,9 +399,10 @@ class TargetDetector:
 
                             # FALLBACK FÜR BEIDE MODI
                             if not erfolg_abriss:
-                                cx, cy = int(circle_x), int(circle_y)
+                                cx, cy = int(base_x), int(base_y) 
                                 final_shot_score = base_score 
-                                self.log(side, f"⚠️ Verwende FALLBACK-Zentrum (minEnclosingCircle) für Wertung: X:{cx} Y:{cy} (Score {base_score:.1f})")
+                                # ---> NEU: Dynamischer Name <---
+                                self.log(side, f"⚠️ Verwende FALLBACK-Zentrum ({base_name}) für Wertung: X:{cx} Y:{cy} (Score {base_score:.1f})")
                                 
                 elif self.erkennungs_methode == 'B':
                     M = cv2.moments(cnt)

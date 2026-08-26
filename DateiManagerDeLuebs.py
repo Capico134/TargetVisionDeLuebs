@@ -169,6 +169,8 @@ motion_tolerance = 40
 hit_tolerance = 20
 # Notbremse gegen Standbild/Ruckler in Prozent.
 max_image_change_percent = 5.0
+# 200-Punkte-Score-Ratio
+gesamt_anteil_am_200score = 0.667
 # Speichert bei JEDEM erkannten Treffer die Bilder separat ab (für Entwicklungszwecke)
 debug_alle_bilder_speichern = yes
 
@@ -370,6 +372,11 @@ darstellung_ohne_weissabgleich = yes
                     needs_reload = True
             except ValueError:
                 pass 
+                
+        if not config.has_option('Erkennung', 'gesamt_anteil_am_200score'):
+            self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'gesamt_anteil_am_200score = 0.667' hinzu...")
+            self.update_ini_value('Erkennung', 'gesamt_anteil_am_200score', '0.667')
+            needs_reload = True
         
         if needs_reload:
             config.read(self.CONFIG_FILE, encoding='utf-8')

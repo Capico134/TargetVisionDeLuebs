@@ -38,8 +38,9 @@ class DummyConfig:
         if key == 'hough_min_faktor': return self.app.hough_min_faktor_var.get()
         if key == 'hough_max_faktor': return self.app.hough_max_faktor_var.get()
         if key == 'max_image_change_percent': return 90.0
-        # ---> NEU <---
         if key == 'max_aspect_ratio': return self.app.max_aspect_ratio_var.get()
+        # ---> NEU <---
+        if key == 'gesamt_anteil_am_200score': return self.app.score_weight_var.get()
         return fallback
         
     def get(self, section, key, fallback=''):
@@ -125,6 +126,8 @@ class OfflineLaborApp:
         # ---> NEU <---
         self.morph_kernel_var = tk.IntVar(value=6)
         self.max_aspect_ratio_var = tk.DoubleVar(value=3.5)
+        # ---> NEU <---
+        self.gesamt_anteil_am_200score_var = tk.DoubleVar(value=0.667)
         
         self.zoom_factor = 1.0
         self.pan_x = 0
@@ -134,13 +137,39 @@ class OfflineLaborApp:
         self.setup_ui()
         
     def make_slider(self, parent, label_text, tk_var, from_, to_, res=1):
-        """Hilfsfunktion für einheitliche Slider"""
+        """Hilfsfunktion für einheitliche Slider mit direkter Eingabe und Reset"""
         frame = tk.Frame(parent)
         frame.pack(fill=tk.X, pady=2)
-        tk.Label(frame, text=label_text, width=25, anchor="w").pack(side=tk.LEFT)
+        
+        lbl = tk.Label(frame, text=label_text, width=25, anchor="w")
+        lbl.pack(side=tk.LEFT)
+        
+        entry = tk.Entry(frame, textvariable=tk_var, width=6, justify="right")
+        entry.pack(side=tk.RIGHT, padx=(5, 0))
+        
         scale = tk.Scale(frame, from_=from_, to_=to_, resolution=res, orient=tk.HORIZONTAL, 
                          variable=tk_var, command=self.on_param_change)
         scale.pack(side=tk.RIGHT, fill=tk.X, expand=True)
+        
+        entry.bind('<Return>', lambda e: self.on_param_change(force=True))
+        
+        # =========================================================
+        # ---> NEU: Mittelklick-Reset (Mausrad-Klick) <---
+        # =========================================================
+        def reset_to_original(event):
+            var_key = str(tk_var)
+            # Prüfen, ob wir überhaupt schon ein ZIP geladen und Originalwerte haben
+            if hasattr(self, 'original_values') and var_key in self.original_values:
+                tk_var.set(self.original_values[var_key])
+                self.on_param_change(force=True)
+                
+            # ---> NEU: Stoppt die interne Tkinter-Event-Kette! <---
+            return "break" 
+                
+        # Wir binden den Mittelklick an alle Elemente der Zeile!
+        scale.bind('<Button-2>', reset_to_original)
+        lbl.bind('<Button-2>', reset_to_original)
+        entry.bind('<Button-2>', reset_to_original)
 
     def setup_ui(self):
         # TOP FRAME
@@ -283,6 +312,9 @@ class OfflineLaborApp:
         tk.Label(param_frame, text="--- Bild-Filterung ---", fg="gray").pack(pady=(10, 5))
         self.make_slider(param_frame, "morph_kernel_size:", self.morph_kernel_var, 0, 15)
         self.make_slider(param_frame, "max_aspect_ratio (Sichel):", self.max_aspect_ratio_var, 1.5, 6.0, 0.1)
+        # ---> NEU <---
+        tk.Label(param_frame, text="--- Score-Gewichtung ---", fg="gray").pack(pady=(10, 5))
+        self.make_slider(param_frame, "gesamt_anteil (Raw):", self.gesamt_anteil_am_200score_var, 0.1, 0.9, 0.001)
         
         tk.Checkbutton(param_frame, text="💾 Simulations-Bilder exportieren", 
                        variable=self.export_images_var, fg="#00aaff").pack(anchor=tk.W, pady=(15, 0))
@@ -311,6 +343,12 @@ class OfflineLaborApp:
         # ---> NEU: Pfeiltasten global an das Fenster binden <---
         self.root.bind('<Left>', self.safe_prev_shot)
         self.root.bind('<Right>', self.safe_next_shot)
+    
+        # ---> NEU: Original-Treffer Checkbox <---
+        self.show_orig_hits_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(param_frame, text="🟡 Original-Treffer (match.json) einblenden", 
+                       variable=self.show_orig_hits_var, fg="#f1c40f", 
+                       command=lambda: self.on_param_change(force=True)).pack(anchor=tk.W, pady=(5, 0))
 
     # ---> NEU: Parameter 'show_gui' hinzugefügt, damit das Programm nicht crasht <---
     def print_log(self, side, msg, show_gui=False):
@@ -342,11 +380,32 @@ class OfflineLaborApp:
                         self.hybrid_discard_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5))
                         self.hough_min_faktor_var.set(parser.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85))
                         self.hough_max_faktor_var.set(parser.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15))
-                        # ---> NEU: Jetzt werden auch alle neuen Parameter geladen! <---
                         self.hough_param1_var.set(parser.getint('Erkennung', 'hough_param1', fallback=25))
                         self.hough_param2_var.set(parser.getint('Erkennung', 'hough_param2', fallback=4))
                         self.morph_kernel_var.set(parser.getint('Erkennung', 'morph_kernel_size', fallback=6))
                         self.max_aspect_ratio_var.set(parser.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5))
+                        
+                        # ---> NEU: Den Score-Weight ebenfalls laden <---
+                        self.gesamt_anteil_am_200score_var.set(parser.getfloat('Erkennung', 'gesamt_anteil_am_200score', fallback=0.667))
+                        
+                        # =========================================================
+                        # ---> NEU: Originalwerte für den Mittelklick merken! <---
+                        # =========================================================
+                        self.original_values = {
+                            str(self.hit_tolerance_var): self.hit_tolerance_var.get(),
+                            str(self.min_hole_area_var): self.min_hole_area_var.get(),
+                            str(self.caliber_radius_var): self.caliber_radius_var.get(),
+                            str(self.hybrid_riss_faktor_var): self.hybrid_riss_faktor_var.get(),
+                            str(self.hybrid_sichel_faktor_var): self.hybrid_sichel_faktor_var.get(),
+                            str(self.hybrid_discard_faktor_var): self.hybrid_discard_faktor_var.get(),
+                            str(self.hough_min_faktor_var): self.hough_min_faktor_var.get(),
+                            str(self.hough_max_faktor_var): self.hough_max_faktor_var.get(),
+                            str(self.hough_param1_var): self.hough_param1_var.get(),
+                            str(self.hough_param2_var): self.hough_param2_var.get(),
+                            str(self.morph_kernel_var): self.morph_kernel_var.get(),
+                            str(self.max_aspect_ratio_var): self.max_aspect_ratio_var.get(),
+                            str(self.gesamt_anteil_am_200score_var): self.gesamt_anteil_am_200score_var.get()
+                        }
                 
                 # ---> NEU: Match.json laden <---
                 match_json_name = next((f for f in self.all_files if "match.json" in f), None)
@@ -427,10 +486,28 @@ class OfflineLaborApp:
             self.shot_jump_var.set(str(self.current_index + 1))
 
  
-    def on_param_change(self, event=None):
-        if self.current_zip_path:
-            # Tkinter feuert Events oft mehrfach bei Scrollen, process_and_display regelt das
+    def on_param_change(self, event=None, force=False):
+        if not self.current_zip_path:
+            return
+            
+        # Wenn 'Enter' im Textfeld gedrückt wurde, sofort aktualisieren
+        if force:
             self.process_and_display()
+            return
+            
+        # ---> NEU: Die Debounce-Logik (Idee B) <---
+        # 1. Existiert schon ein laufender Timer? Dann brich ihn ab!
+        if hasattr(self, '_param_timer') and self._param_timer is not None:
+            self.root.after_cancel(self._param_timer)
+            
+        # 2. Starte einen neuen Timer (z.B. 300 Millisekunden)
+        # Erst wenn 300 ms lang kein neues Event kam, wird process_and_display aufgerufen
+        self._param_timer = self.root.after(300, self._apply_param_change)
+
+    def _apply_param_change(self):
+        """Die eigentliche Ausführung nach dem Zeitpuffer"""
+        self._param_timer = None
+        self.process_and_display()
 
     def on_mouse_move(self, event):
         # Wenn noch kein Bild geladen ist, tu nichts
@@ -614,6 +691,12 @@ class OfflineLaborApp:
                     self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR DEN AKTUELLEN SCHUSS ({i+1})  ███\n")
                     self.log_text.insert(tk.END, "▼"*70 + "\n\n")
                     
+                    # ==========================================================
+                    # ---> DER FIX: Geisterbilder aus der Vergangenheit löschen! <---
+                    # ==========================================================
+                    d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
+                    d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
+                    
                     live_img = img.copy()
                     clean_live_img = img.copy()
                     
@@ -643,6 +726,26 @@ class OfflineLaborApp:
                 # Grün für alte, Rot für diesen Frame
                 color = (0, 0, 255) if shot.get('is_new', False) else (0, 255, 0)
                 cv2.circle(live_img, shot['pos'], r, color, 2)
+                
+                
+        # ====================================================================
+        # ---> NEU: Original-Treffer (Gelbe Linien) einblenden <---
+        # ====================================================================
+        if getattr(self, 'show_orig_hits_var', None) and self.show_orig_hits_var.get() and getattr(self, 'original_match_data', None):
+            side_char = 'l' if side == 'left' else 'r'
+            
+            # Alle Original-Schüsse für diese Kamera filtern
+            orig_shots_side = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
+            
+            # Wir zeigen so viele Original-Schüsse, wie wir Bilder auf dieser Seite abgespielt haben
+            shots_to_draw = orig_shots_side[:target_idx + 1]
+            
+            for s in shots_to_draw:
+                ox, oy = s['x'], s['y']
+                # Gelb in BGR = (0, 255, 255), Dicke = 1
+                cv2.circle(live_img, (ox, oy), r, (0, 255, 255), 1)
+                #cv2.circle(clean_live_img, (ox, oy), r, (0, 255, 255), 1)
+        # ====================================================================
 
         # ---> NEU: Daten für den späteren Vergleich merken <---
         self.current_engine_shots = d_sm.shots 
@@ -651,8 +754,11 @@ class OfflineLaborApp:
         # ---> NEU: Alle nötigen Bilder aus der Engine fischen <---
         h, w = live_img.shape[:2]
         
-        diff_gesamt_img = d_dm.debug_images.get(f"diff_gesamt_{side}")
-        if diff_gesamt_img is None:
+        # ---> DER FIX: Diff-Gesamt 100% sicher aus dem StateManager holen! <---
+        temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
+        if temp_state.cumulative_mask is not None:
+            diff_gesamt_img = temp_state.cumulative_mask.copy()
+        else:
             diff_gesamt_img = np.zeros((h, w), dtype=np.uint8)
             
             
@@ -668,11 +774,6 @@ class OfflineLaborApp:
         self.last_ref_img = ref_img
 
         
-        # Bilder für butterweiches Zoomen im RAM zwischenspeichern
-        self.last_live_img = live_img
-        self.last_diff_img = diff_img
-        self.last_diff_gesamt_img = diff_gesamt_img
-        self.last_ref_img = ref_img
         
         # ==========================================================
         # ---> NEU: Den echten RAW-Diff-Wert berechnen (Modus 4) <---
@@ -1026,6 +1127,8 @@ class OfflineLaborApp:
                 parser.set('Erkennung', 'hough_param2', str(self.hough_param2_var.get()))
                 parser.set('Erkennung', 'morph_kernel_size', str(self.morph_kernel_var.get()))
                 parser.set('Erkennung', 'max_aspect_ratio', str(self.max_aspect_ratio_var.get()))
+                # ---> NEU <---
+                parser.set('Erkennung', 'gesamt_anteil_am_200score', str(self.gesamt_anteil_am_200score_var.get()))
                 
                 string_io = io.StringIO()
                 parser.write(string_io)

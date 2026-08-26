@@ -42,7 +42,7 @@ class TargetTracker:
         
         # --- Nur noch Variablen, die wir explizit für die GUI/Steuerung brauchen ---
         self.caliber_radius = config.getint('Erkennung', 'caliber_radius')
-        self.ausloeser_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
+        self.ausloeser_durch_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.poll_ms = config.getint('Timing', 'poll_ms', fallback=33)
         self.fullscreen = config.getboolean('Anzeige', 'vollbild', fallback=False)
         self.enhance_display = config.getboolean('Anzeige', 'darstellung_ohne_weissabgleich', fallback=True)
@@ -135,7 +135,7 @@ class TargetTracker:
             state.is_initialized = True
             return
 
-        if self.ausloeser_erschuetterung:
+        if self.ausloeser_durch_erschuetterung:
             has_motion = state.check_motion(frame)
             if has_motion:
                 if not state.is_moving:
