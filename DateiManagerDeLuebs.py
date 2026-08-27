@@ -8,6 +8,7 @@ import json
 from datetime import datetime
 from AuditedConfig import AuditedConfigParser
 import numpy as np
+import io
 
 class DateiManager:
     def __init__(self):
@@ -426,11 +427,11 @@ darstellung_ohne_weissabgleich = yes
     def import_match_package(self, filepath):
         """
         Liest ein ZIP-Paket und entpackt alle relevanten Daten direkt in den RAM.
-        Gibt ein Dictionary zurück: {'match_data': dict, 'config_string': str, 'images': dict}
+        Gibt ein Dictionary zurück: {'match_data': dict, 'config': ConfigParser, 'images': dict}
         """
         result = {
             'match_data': None,
-            'config_string': "",
+            'config': None, # <--- ELA: Hier wohnt jetzt ein fertiges Objekt!
             'images': {}
         }
         
@@ -442,9 +443,13 @@ darstellung_ohne_weissabgleich = yes
                     if filename == "match.json":
                         result['match_data'] = json.loads(zf.read(filename).decode('utf-8'))
                     elif filename == "config.ini":
-                        result['config_string'] = zf.read(filename).decode('utf-8')
+                        # Den String sofort in einen fertigen Parser umwandeln
+                        config_str = zf.read(filename).decode('utf-8')
+                        parser = configparser.ConfigParser()
+                        parser.optionxform = str # WICHTIG: Verhindert, dass alles kleingeschrieben wird!
+                        parser.read_file(io.StringIO(config_str))
+                        result['config'] = parser
                     elif filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                        # Bild direkt in den RAM laden (OpenCV Format BGR)
                         file_bytes = np.frombuffer(zf.read(filename), np.uint8)
                         result['images'][filename] = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
                         

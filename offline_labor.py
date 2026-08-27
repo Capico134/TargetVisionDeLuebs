@@ -372,11 +372,8 @@ class OfflineLaborApp:
                 messagebox.showerror("Fehler", "Konnte ZIP-Paket nicht laden!")
                 return
                 
-            config_str = self.package_data.get('config_string', '')
-            if config_str:
-                parser = configparser.ConfigParser()
-                parser.read_file(io.StringIO(config_str))
-                if parser.has_section('Erkennung'):
+            parser = self.package_data.get('config')
+            if parser and parser.has_section('Erkennung'):
                     # Alte Parameter
                     self.hit_tolerance_var.set(parser.getint('Erkennung', 'hit_tolerance', fallback=22))
                     self.min_hole_area_var.set(parser.getint('Erkennung', 'min_hole_area', fallback=25))
@@ -1109,14 +1106,11 @@ class OfflineLaborApp:
                 })
 
 
-            # Hilfsfunktion zum Aktualisieren der INI-Werte im Speicher
-            def update_ini_string(ini_text):
-                import configparser
-                import io
-                parser = configparser.ConfigParser()
-                parser.optionxform = str 
-                parser.read_file(io.StringIO(ini_text))
-                
+            # =========================================================================
+            # NEU: 6. ELA Export (Wir updaten einfach das Config-Objekt im RAM!)
+            # =========================================================================
+            parser = self.package_data.get('config')
+            if parser:
                 if not parser.has_section('Erkennung'):
                     parser.add_section('Erkennung')
                 
@@ -1132,17 +1126,15 @@ class OfflineLaborApp:
                 parser.set('Erkennung', 'hough_param2', str(self.hough_param2_var.get()))
                 parser.set('Erkennung', 'morph_kernel_size', str(self.morph_kernel_var.get()))
                 parser.set('Erkennung', 'max_aspect_ratio', str(self.max_aspect_ratio_var.get()))
-                # ---> NEU <---
                 parser.set('Erkennung', 'gesamt_anteil_am_200score', str(self.gesamt_anteil_am_200score_var.get()))
                 
+                # Wir machen wieder einen sauberen String daraus, um ihn ins ZIP zu packen
                 string_io = io.StringIO()
                 parser.write(string_io)
-                return string_io.getvalue()
+                new_ini_str = string_io.getvalue()
+            else:
+                new_ini_str = None
                 
-            # 6. ELA Export-Funktion aufrufen (Ersetzt die komplette alte ZIP-Logik!)
-            # Wir holen uns den originalen Config-String aus dem RAM und updaten ihn!
-            new_ini_str = update_ini_string(self.package_data.get('config_string', ''))
-            
             success = self.dm.export_match_package(
                 filepath=save_path,
                 match_data=new_match_data,
