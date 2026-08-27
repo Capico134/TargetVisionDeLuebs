@@ -587,8 +587,18 @@ class TargetTracker:
                 zx1, zy1, zx2, zy2 = self.btn_zip_coords
                 if zx1 <= x <= zx2 and zy1 <= y <= zy2:
                     self.log("SYSTEM", "Generiere Debug-Paket... Bitte warten.", True)
-                    self.dm.create_debug_zip()
-                    self.log("SYSTEM", "Debug-ZIP wurde erfolgreich gespeichert!", True)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    zip_filepath = os.path.join(self.dm.ZIP_FOLDER, f"Debug_Paket_{timestamp}.zip")
+                    # ---> ELA: Auch der Bug-Zip nutzt jetzt die einheitliche Funktion <---
+                    success = self.dm.export_match_package(
+                        filepath=zip_filepath,
+                        source_folder=self.dm.DEBUG_FOLDER,
+                        apply_diet_filter=False
+                    )
+                    if success:
+                        self.log("SYSTEM", "Debug-ZIP wurde erfolgreich gespeichert!", True)
+                    else:
+                        self.log("SYSTEM", "Fehler beim Erstellen der Debug-ZIP!", True)
                     return
             
             # Reset Button (Links)

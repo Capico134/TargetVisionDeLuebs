@@ -320,7 +320,13 @@ class StateManager:
         os.makedirs(os.path.join("savegames", "logs"), exist_ok=True)
         zip_filepath = os.path.join("savegames", "logs", f"MATCH{self.get_formatted_match_id()}.zip")
         
-        self.dm.create_zip_package(zip_filepath, match_data=match_data)
+        # ---> ELA: Wir nutzen den Live-Ordner als Bild-Quelle für das finale Match-ZIP <---
+        self.dm.export_match_package(
+            filepath=zip_filepath, 
+            match_data=match_data,
+            source_folder=self.dm.DEBUG_FOLDER,
+            apply_diet_filter=False # Beim echten Match wollen wir alles behalten!
+        )
 
         # 4. Highscore speichern und Match auf null setzen
         self.hm.save_highscore(metadata)

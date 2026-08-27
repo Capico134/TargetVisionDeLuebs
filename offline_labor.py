@@ -4,15 +4,16 @@ import os
 import json
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
-import zipfile
+#import zipfile
 import cv2
 import numpy as np
 import configparser
 import io
 from PIL import Image, ImageTk
 
-# ---> HIER IMPORTIEREN WIR DEINE ECHTE ENGINE! <---
+# ---> HIER IMPORTIEREN WIR DEINE ECHTE ENGINE UND DEN MANAGER! <---
 from DetectionDeLuebs import TargetDetector
+from DateiManagerDeLuebs import DateiManager
 
 # ==========================================
 # DUMMY-KLASSEN FÜR DIE TARGET-DETECTION
@@ -103,6 +104,9 @@ class OfflineLaborApp:
         self.root = root
         self.root.title("TargetVision Replay-Labor (Live Engine)")
         self.root.geometry("1400x850")
+        
+        self.dm = DateiManager() # <--- NEU: Unser zentraler ELA-Werkzeugkasten
+        self.package_data = None # <--- NEU: Speichert das entpackte ZIP im RAM
         
         self.current_zip_path = None
         self.all_files = []
@@ -362,59 +366,52 @@ class OfflineLaborApp:
             self.current_zip_path = filepath
             self.lbl_file.config(text=f"📂 {filepath.split('/')[-1]}", fg="black")
             
-            with zipfile.ZipFile(filepath, 'r') as zf:
-                self.all_files = zf.namelist()
+            # ---> ELA: DateiManager entpackt alles direkt mundgerecht in den RAM! <---
+            self.package_data = self.dm.import_match_package(filepath)
+            if not self.package_data:
+                messagebox.showerror("Fehler", "Konnte ZIP-Paket nicht laden!")
+                return
                 
-                # Config.ini parsen
-                config_name = next((f for f in self.all_files if "config.ini" in f), None)
-                if config_name:
-                    parser = configparser.ConfigParser()
-                    parser.read_file(io.StringIO(zf.read(config_name).decode('utf-8')))
-                    if parser.has_section('Erkennung'):
-                        # Alte Parameter
-                        self.hit_tolerance_var.set(parser.getint('Erkennung', 'hit_tolerance', fallback=22))
-                        self.min_hole_area_var.set(parser.getint('Erkennung', 'min_hole_area', fallback=25))
-                        self.caliber_radius_var.set(parser.getint('Erkennung', 'caliber_radius', fallback=11))
-                        self.hybrid_riss_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.175))
-                        self.hybrid_sichel_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=1.05))
-                        self.hybrid_discard_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5))
-                        self.hough_min_faktor_var.set(parser.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85))
-                        self.hough_max_faktor_var.set(parser.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15))
-                        self.hough_param1_var.set(parser.getint('Erkennung', 'hough_param1', fallback=25))
-                        self.hough_param2_var.set(parser.getint('Erkennung', 'hough_param2', fallback=4))
-                        self.morph_kernel_var.set(parser.getint('Erkennung', 'morph_kernel_size', fallback=6))
-                        self.max_aspect_ratio_var.set(parser.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5))
-                        
-                        # ---> NEU: Den Score-Weight ebenfalls laden <---
-                        self.gesamt_anteil_am_200score_var.set(parser.getfloat('Erkennung', 'gesamt_anteil_am_200score', fallback=0.667))
-                        
-                        # =========================================================
-                        # ---> NEU: Originalwerte für den Mittelklick merken! <---
-                        # =========================================================
-                        self.original_values = {
-                            str(self.hit_tolerance_var): self.hit_tolerance_var.get(),
-                            str(self.min_hole_area_var): self.min_hole_area_var.get(),
-                            str(self.caliber_radius_var): self.caliber_radius_var.get(),
-                            str(self.hybrid_riss_faktor_var): self.hybrid_riss_faktor_var.get(),
-                            str(self.hybrid_sichel_faktor_var): self.hybrid_sichel_faktor_var.get(),
-                            str(self.hybrid_discard_faktor_var): self.hybrid_discard_faktor_var.get(),
-                            str(self.hough_min_faktor_var): self.hough_min_faktor_var.get(),
-                            str(self.hough_max_faktor_var): self.hough_max_faktor_var.get(),
-                            str(self.hough_param1_var): self.hough_param1_var.get(),
-                            str(self.hough_param2_var): self.hough_param2_var.get(),
-                            str(self.morph_kernel_var): self.morph_kernel_var.get(),
-                            str(self.max_aspect_ratio_var): self.max_aspect_ratio_var.get(),
-                            str(self.gesamt_anteil_am_200score_var): self.gesamt_anteil_am_200score_var.get()
-                        }
-                
-                # ---> NEU: Match.json laden <---
-                match_json_name = next((f for f in self.all_files if "match.json" in f), None)
-                if match_json_name:
-                    self.original_match_data = json.loads(zf.read(match_json_name).decode('utf-8'))
-                else:
-                    self.original_match_data = None
-                
-            # Finde alle "_orig" Bilder und sortiere sie streng alphabetisch
+            config_str = self.package_data.get('config_string', '')
+            if config_str:
+                parser = configparser.ConfigParser()
+                parser.read_file(io.StringIO(config_str))
+                if parser.has_section('Erkennung'):
+                    # Alte Parameter
+                    self.hit_tolerance_var.set(parser.getint('Erkennung', 'hit_tolerance', fallback=22))
+                    self.min_hole_area_var.set(parser.getint('Erkennung', 'min_hole_area', fallback=25))
+                    self.caliber_radius_var.set(parser.getint('Erkennung', 'caliber_radius', fallback=11))
+                    self.hybrid_riss_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.175))
+                    self.hybrid_sichel_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=1.05))
+                    self.hybrid_discard_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5))
+                    self.hough_min_faktor_var.set(parser.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85))
+                    self.hough_max_faktor_var.set(parser.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15))
+                    self.hough_param1_var.set(parser.getint('Erkennung', 'hough_param1', fallback=25))
+                    self.hough_param2_var.set(parser.getint('Erkennung', 'hough_param2', fallback=4))
+                    self.morph_kernel_var.set(parser.getint('Erkennung', 'morph_kernel_size', fallback=6))
+                    self.max_aspect_ratio_var.set(parser.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5))
+                    self.gesamt_anteil_am_200score_var.set(parser.getfloat('Erkennung', 'gesamt_anteil_am_200score', fallback=0.667))
+                    
+                    self.original_values = {
+                        str(self.hit_tolerance_var): self.hit_tolerance_var.get(),
+                        str(self.min_hole_area_var): self.min_hole_area_var.get(),
+                        str(self.caliber_radius_var): self.caliber_radius_var.get(),
+                        str(self.hybrid_riss_faktor_var): self.hybrid_riss_faktor_var.get(),
+                        str(self.hybrid_sichel_faktor_var): self.hybrid_sichel_faktor_var.get(),
+                        str(self.hybrid_discard_faktor_var): self.hybrid_discard_faktor_var.get(),
+                        str(self.hough_min_faktor_var): self.hough_min_faktor_var.get(),
+                        str(self.hough_max_faktor_var): self.hough_max_faktor_var.get(),
+                        str(self.hough_param1_var): self.hough_param1_var.get(),
+                        str(self.hough_param2_var): self.hough_param2_var.get(),
+                        str(self.morph_kernel_var): self.morph_kernel_var.get(),
+                        str(self.max_aspect_ratio_var): self.max_aspect_ratio_var.get(),
+                        str(self.gesamt_anteil_am_200score_var): self.gesamt_anteil_am_200score_var.get()
+                    }
+            
+            self.original_match_data = self.package_data.get('match_data')
+            
+            # Finde alle "_orig" Bilder in den RAM-Bildern
+            self.all_files = list(self.package_data['images'].keys())
             self.orig_files = sorted([f for f in self.all_files if "_orig" in f])
             if not self.orig_files:
                 self.lbl_image.config(text="⚠️ Keine Schuss-Bilder (_orig) gefunden!", fg="red")
@@ -423,12 +420,13 @@ class OfflineLaborApp:
             self.current_index = 0
             self.btn_prev.config(state=tk.NORMAL)
             self.btn_next.config(state=tk.NORMAL)
-            self.btn_first.config(state=tk.NORMAL)  # <--- NEU
-            self.btn_last.config(state=tk.NORMAL)   # <--- NEU
+            self.btn_first.config(state=tk.NORMAL)
+            self.btn_last.config(state=tk.NORMAL)
             self.process_and_display()
 
-    def get_img(self, zf, name):
-        return cv2.imdecode(np.frombuffer(zf.read(name), np.uint8), cv2.IMREAD_COLOR)
+    def get_img(self, name):
+        """Holt ein Bild blitzschnell aus dem vorbereiteten RAM-Speicher"""
+        return self.package_data['images'].get(name)
 
     def prev_shot(self):
         if self.current_index > 0:
@@ -660,54 +658,56 @@ class OfflineLaborApp:
         # 2. ECHTE ENGINE STARTEN
         detector = TargetDetector(d_config, d_dm, d_sm, self.print_log)
         
-        with zipfile.ZipFile(self.current_zip_path, 'r') as zf:
-            ref_name = next((f for f in self.all_files if f"referenz_{side}" in f), None)
-            if not ref_name: return
+        ##### WEG START   with zipfile.ZipFile(self.current_zip_path, 'r') as zf:
+        ref_name = next((f for f in self.all_files if f"referenz_{side}" in f), None)
+        if not ref_name: return
+        
+        ref_img = self.get_img( ref_name)
+        detector.set_reference_image(ref_img, side)
+        
+        # ---> NEU: Start-Maske (Fortsetzung) suchen und injizieren <---
+        startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{side}" in f), None)
+        if startmask_name:
+            # Bild laden und in Graustufen (1 Kanal) wandeln, wie es die cumulative_mask erwartet
+            startmask_bgr = self.get_img( startmask_name)
+            startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
             
-            ref_img = self.get_img(zf, ref_name)
-            detector.set_reference_image(ref_img, side)
+            # In den Dummy-State schmuggeln
+            state = d_sm.state_left if side == 'left' else d_sm.state_right
+            state.cumulative_mask = startmask_gray
+            self.print_log("SYSTEM", f"Fortsetzung erkannt! Start-Maske für {side} geladen.")
+        # -------------------------------------------------------------
+        
+        # 3. TIME-TRAVEL SIMULATION
+        # Wir spielen alle Bilder der Seite ab, um die Maske perfekt aufzubauen
+        for i in range(target_idx + 1):
+            img = self.get_img( side_origs[i])
             
-            # ---> NEU: Start-Maske (Fortsetzung) suchen und injizieren <---
-            startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{side}" in f), None)
-            if startmask_name:
-                # Bild laden und in Graustufen (1 Kanal) wandeln, wie es die cumulative_mask erwartet
-                startmask_bgr = self.get_img(zf, startmask_name)
-                startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
+            # ---> NEU: Die unübersehbare Trennlinie vor dem aktuellen Schuss <---
+            if i == target_idx:
+                self.log_text.insert(tk.END, "\n" + "▼"*70 + "\n")
+                self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR DEN AKTUELLEN SCHUSS ({i+1})  ███\n")
+                self.log_text.insert(tk.END, "▼"*70 + "\n\n")
                 
-                # In den Dummy-State schmuggeln
-                state = d_sm.state_left if side == 'left' else d_sm.state_right
-                state.cumulative_mask = startmask_gray
-                self.print_log("SYSTEM", f"Fortsetzung erkannt! Start-Maske für {side} geladen.")
-            # -------------------------------------------------------------
-            
-            # 3. TIME-TRAVEL SIMULATION
-            # Wir spielen alle Bilder der Seite ab, um die Maske perfekt aufzubauen
-            for i in range(target_idx + 1):
-                img = self.get_img(zf, side_origs[i])
+                # ==========================================================
+                # ---> DER FIX: Geisterbilder aus der Vergangenheit löschen! <---
+                # ==========================================================
+                d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
+                d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
                 
-                # ---> NEU: Die unübersehbare Trennlinie vor dem aktuellen Schuss <---
-                if i == target_idx:
-                    self.log_text.insert(tk.END, "\n" + "▼"*70 + "\n")
-                    self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR DEN AKTUELLEN SCHUSS ({i+1})  ███\n")
-                    self.log_text.insert(tk.END, "▼"*70 + "\n\n")
-                    
-                    # ==========================================================
-                    # ---> DER FIX: Geisterbilder aus der Vergangenheit löschen! <---
-                    # ==========================================================
-                    d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
-                    d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
-                    
-                    live_img = img.copy()
-                    clean_live_img = img.copy()
-                    
-                    # ---> NEU: Snapshot der Maske BEVOR die Engine den neuen Schuss reinmalt! <---
-                    temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
-                    if temp_state.cumulative_mask is not None:
-                        history_mask = temp_state.cumulative_mask.copy()
-                    else:
-                        history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
-                    
-                detector.detect_new_shot(img, side)
+                live_img = img.copy()
+                clean_live_img = img.copy()
+                
+                # ---> NEU: Snapshot der Maske BEVOR die Engine den neuen Schuss reinmalt! <---
+                temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
+                if temp_state.cumulative_mask is not None:
+                    history_mask = temp_state.cumulative_mask.copy()
+                else:
+                    history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+                
+            detector.detect_new_shot(img, side)
+
+        ##### WEG ENDE
 
         # 4. VISUALISIERUNG DER ENGINE-ERGEBNISSE
         # Hole das Diff-Bild direkt aus dem Dummy-DateiManager der Engine!
@@ -826,26 +826,28 @@ class OfflineLaborApp:
         # Stumme Log-Funktion, damit die Konsole nicht überflutet wird
         detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
 
-        with zipfile.ZipFile(self.current_zip_path, 'r') as zf:
-            # Setze Referenzen und Startmasken für BEIDE Seiten
-            for s in ['left', 'right']:
-                ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
-                if ref_name:
-                    ref_img = self.get_img(zf, ref_name)
-                    detector.set_reference_image(ref_img, s)
-                
-                startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
-                if startmask_name:
-                    startmask_bgr = self.get_img(zf, startmask_name)
-                    startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
-                    state = d_sm.state_left if s == 'left' else d_sm.state_right
-                    state.cumulative_mask = startmask_gray
+        ### START WEG with zipfile.ZipFile(self.current_zip_path, 'r') as zf:
+        # Setze Referenzen und Startmasken für BEIDE Seiten
+        for s in ['left', 'right']:
+            ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
+            if ref_name:
+                ref_img = self.get_img( ref_name)
+                detector.set_reference_image(ref_img, s)
+            
+            startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
+            if startmask_name:
+                startmask_bgr = self.get_img( startmask_name)
+                startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
+                state = d_sm.state_left if s == 'left' else d_sm.state_right
+                state.cumulative_mask = startmask_gray
 
-            # Alle orig-Bilder durchjagen
-            for orig_name in self.orig_files:
-                img = self.get_img(zf, orig_name)
-                s = 'left' if 'left' in orig_name else 'right'
-                detector.detect_new_shot(img, s)
+        # Alle orig-Bilder durchjagen
+        for orig_name in self.orig_files:
+            img = self.get_img( orig_name)
+            s = 'left' if 'left' in orig_name else 'right'
+            detector.detect_new_shot(img, s)
+
+        ### ENDE WEG 
 
         # 3. Ausgabe aufbereiten
         txt.delete(1.0, tk.END)
@@ -1038,27 +1040,30 @@ class OfflineLaborApp:
             d_sm = DummyStateManager()
             detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
 
-            with zipfile.ZipFile(self.current_zip_path, 'r') as zf:
-                # Setze Referenzen und Startmasken
-                for s in ['left', 'right']:
-                    ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
-                    if ref_name:
-                        ref_img = self.get_img(zf, ref_name)
-                        detector.set_reference_image(ref_img, s)
-                    
-                    startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
-                    if startmask_name:
-                        startmask_bgr = self.get_img(zf, startmask_name)
-                        startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
-                        state = d_sm.state_left if s == 'left' else d_sm.state_right
-                        state.cumulative_mask = startmask_gray
+            #with zipfile.ZipFile(self.current_zip_path, 'r') as zf:
+            ### Start WEG
+            # Setze Referenzen und Startmasken
+            for s in ['left', 'right']:
+                ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
+                if ref_name:
+                    ref_img = self.get_img( ref_name)
+                    detector.set_reference_image(ref_img, s)
+                
+                startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
+                if startmask_name:
+                    startmask_bgr = self.get_img( startmask_name)
+                    startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
+                    state = d_sm.state_left if s == 'left' else d_sm.state_right
+                    state.cumulative_mask = startmask_gray
 
-                # Alle orig-Bilder durch die NEUEN Parameter jagen
-                for orig_name in self.orig_files:
-                    img = self.get_img(zf, orig_name)
-                    s = 'left' if 'left' in orig_name else 'right'
-                    detector.detect_new_shot(img, s)
-
+            # Alle orig-Bilder durch die NEUEN Parameter jagen
+            for orig_name in self.orig_files:
+                img = self.get_img( orig_name)
+                s = 'left' if 'left' in orig_name else 'right'
+                detector.detect_new_shot(img, s)
+            
+            ### END WEG
+            
             # =========================================================================
             # NEU: 5. EINE BRANDNEUE MATCH.JSON BAUEN
             # =========================================================================
@@ -1134,40 +1139,22 @@ class OfflineLaborApp:
                 parser.write(string_io)
                 return string_io.getvalue()
                 
-            # 6. Dateien umschaufeln und Daten ersetzen (MIT DIÄT-FILTER)
-            with zipfile.ZipFile(self.current_zip_path, 'r') as zf_in:
-                with zipfile.ZipFile(save_path, 'w', zipfile.ZIP_DEFLATED) as zf_out:
-                    
-                    for item in zf_in.infolist():
-                        filename = item.filename
-                        
-                        # 1. Log-Datei ignorieren
-                        if filename == "treffer_log.txt":
-                            continue 
-                            
-                        # 2. NEU: Diät-Filter für unnötige Debug-Bilder
-                        if ("_diff" in filename or 
-                            "letzte_aufnahme" in filename or 
-                            "verworfene" in filename):
-                            continue # Weglassen! Spart ~80% Speicherplatz.
-                            
-                        # 3. Match.json durch unsere neue ersetzen
-                        elif filename == "match.json":
-                            updated_json_str = json.dumps(new_match_data, indent=4)
-                            zf_out.writestr("match.json", updated_json_str)
-                            
-                        # 4. Config.ini mit aktuellen Parametern überschreiben
-                        elif filename == "config.ini":
-                            old_ini_str = zf_in.read(filename).decode('utf-8')
-                            new_ini_str = update_ini_string(old_ini_str)
-                            zf_out.writestr("config.ini", new_ini_str)
-                            
-                        # 5. Restliche Dateien (orig, referenz, startmask) 1:1 kopieren
-                        else:
-                            data = zf_in.read(filename)
-                            zf_out.writestr(item, data)
+            # 6. ELA Export-Funktion aufrufen (Ersetzt die komplette alte ZIP-Logik!)
+            # Wir holen uns den originalen Config-String aus dem RAM und updaten ihn!
+            new_ini_str = update_ini_string(self.package_data.get('config_string', ''))
             
-            messagebox.showinfo("Erfolg", f"Test-Case erfolgreich erstellt:\n{os.path.basename(save_path)}\n\n(Match.json und config.ini wurden basierend auf der aktuellen CV-Auswertung frisch generiert!)")
+            success = self.dm.export_match_package(
+                filepath=save_path,
+                match_data=new_match_data,
+                config_string=new_ini_str,
+                source_zip=self.current_zip_path,
+                apply_diet_filter=True
+            )
+            
+            if success:
+                messagebox.showinfo("Erfolg", f"Test-Case erfolgreich erstellt:\n{os.path.basename(save_path)}\n\n(Match.json und config.ini wurden basierend auf der aktuellen Auswertung generiert!)")
+            else:
+                messagebox.showerror("Fehler", "Beim Exportieren ist ein Fehler aufgetreten.")
             
         except Exception as e:
             messagebox.showerror("Fehler", f"Beim Exportieren ist ein Fehler aufgetreten:\n{str(e)}")

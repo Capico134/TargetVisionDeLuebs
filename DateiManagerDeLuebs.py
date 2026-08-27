@@ -7,6 +7,7 @@ import zipfile
 import json  
 from datetime import datetime
 from AuditedConfig import AuditedConfigParser
+import numpy as np
 
 class DateiManager:
     def __init__(self):
@@ -421,43 +422,135 @@ darstellung_ohne_weissabgleich = yes
         except Exception as e:
             print(f"Fehler beim Aufräumen des Debug-Ordners: {e}")
 
-        
-    def create_debug_zip(self):
-        """Generiert den Pfad für das Debug-Paket und ruft die allgemeine ZIP-Funktion auf."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        zip_filepath = os.path.join(self.ZIP_FOLDER, f"Debug_Paket_{timestamp}.zip")
-        
-        return self.create_zip_package(zip_filepath)
 
-    def create_zip_package(self, zip_filepath, match_data=None):
+    def import_match_package(self, filepath):
         """
-        Erstellt ein ZIP-Archiv mit Config, Log und allen aktuellen Bildern.
-        Wenn match_data übergeben wird, wird zusätzlich eine match.json erzeugt.
+        Liest ein ZIP-Paket und entpackt alle relevanten Daten direkt in den RAM.
+        Gibt ein Dictionary zurück: {'match_data': dict, 'config_string': str, 'images': dict}
+        """
+        result = {
+            'match_data': None,
+            'config_string': "",
+            'images': {}
+        }
+        
+        try:
+            with zipfile.ZipFile(filepath, 'r') as zf:
+                for item in zf.infolist():
+                    filename = item.filename
+                    
+                    if filename == "match.json":
+                        result['match_data'] = json.loads(zf.read(filename).decode('utf-8'))
+                    elif filename == "config.ini":
+                        result['config_string'] = zf.read(filename).decode('utf-8')
+                    elif filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                        # Bild direkt in den RAM laden (OpenCV Format BGR)
+                        file_bytes = np.frombuffer(zf.read(filename), np.uint8)
+                        result['images'][filename] = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                        
+            self.write_log(f"SYSTEM: 📦 Paket erfolgreich in den RAM geladen: {os.path.basename(filepath)}")
+            return result
+        except Exception as e:
+            self.write_log(f"SYSTEM: ❌ Fehler beim Importieren von {filepath}: {e}")
+            return None
+
+    def export_match_package(self, filepath, match_data=None, config_string=None, source_folder=None, source_zip=None, apply_diet_filter=False):
+        """
+        Erstellt ein ZIP-Paket. Zieht die Bilder entweder aus einem Ordner (TargetVision Live-Betrieb) 
+        oder kopiert sie aus einem bestehenden ZIP (Offline-Labor Zeitmaschine).
         """
         try:
-            with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                if os.path.exists(self.CONFIG_FILE):
-                    zipf.write(self.CONFIG_FILE, os.path.basename(self.CONFIG_FILE))
-                if os.path.exists(self.LOG_FILE):
-                    zipf.write(self.LOG_FILE, os.path.basename(self.LOG_FILE))
+            with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_DEFLATED) as zf_out:
                 
-                if os.path.exists(self.DEBUG_FOLDER):
-                    for file in os.listdir(self.DEBUG_FOLDER):
-                        file_path = os.path.join(self.DEBUG_FOLDER, file)
-                        if os.path.isfile(file_path):
-                            zipf.write(file_path, os.path.join(self.DEBUG_FOLDER, file))
-                            
+                # 1. Frische JSON (überschreibt alte Versionen)
                 if match_data is not None:
-                    json_str = json.dumps(match_data, indent=4)
-                    zipf.writestr("match.json", json_str)
+                    zf_out.writestr("match.json", json.dumps(match_data, indent=4))
+                    
+                # 2. Config.ini (Entweder aus übergebenem String ODER von der Festplatte)
+                if config_string is not None:
+                    zf_out.writestr("config.ini", config_string)
+                elif os.path.exists(self.CONFIG_FILE):
+                    zf_out.write(self.CONFIG_FILE, os.path.basename(self.CONFIG_FILE))
+
+                # 3. Log-Datei (Von der Festplatte, falls sie nicht herausgefiltert werden soll)
+                if os.path.exists(self.LOG_FILE) and not apply_diet_filter:
+                    zf_out.write(self.LOG_FILE, os.path.basename(self.LOG_FILE))
+
+                # Hilfsfunktion für den Diät-Filter
+                def should_skip(fname):
+                    if not apply_diet_filter: return False
+                    name_lower = fname.lower()
+                    if "treffer_log.txt" in name_lower: return True
+                    if "_diff" in name_lower: return True
+                    if "letzte_aufnahme" in name_lower: return True
+                    if "verworfene" in name_lower: return True
+                    return False
+
+                # 4A. Bilder aus einem existierenden ZIP kopieren (Für das Offline-Labor)
+                if source_zip and os.path.exists(source_zip):
+                    with zipfile.ZipFile(source_zip, 'r') as zf_in:
+                        for item in zf_in.infolist():
+                            fname = item.filename
+                            # Wir überspringen config und json, weil die oben schon frisch geschrieben wurden!
+                            if fname in ["match.json", "config.ini"] or should_skip(fname): 
+                                continue
+                            zf_out.writestr(item, zf_in.read(fname))
                             
-            print(f"📦 ZIP-Paket erfolgreich erstellt: {zip_filepath}")
-            self.write_log(f"SYSTEM: 📦 Datenpaket erstellt -> {zip_filepath}")
+                # 4B. Bilder von der Festplatte holen (Für den TargetVision Live-Betrieb)
+                elif source_folder and os.path.exists(source_folder):
+                    for fname in os.listdir(source_folder):
+                        if should_skip(fname): 
+                            continue
+                        full_path = os.path.join(source_folder, fname)
+                        if os.path.isfile(full_path):
+                            # ---> DER FIX: Wir zwingen die Bilder wieder in den debug_bilder Ordner! <---
+                            zip_internal_path = os.path.join(self.DEBUG_FOLDER, fname)
+                            zf_out.write(full_path, zip_internal_path)
+                            
+            self.write_log(f"SYSTEM: 📦 ELA-Paket erfolgreich exportiert -> {filepath}")
             return True
         except Exception as e:
-            print(f"❌ Fehler beim Erstellen der ZIP: {e}")
-            self.write_log(f"SYSTEM: ❌ Fehler beim Erstellen der ZIP -> {e}")
+            self.write_log(f"SYSTEM: ❌ Fehler beim Exportieren von {filepath}: {e}")
             return False
+
+
+        
+    #def create_debug_zip(self):
+    #    """Generiert den Pfad für das Debug-Paket und ruft die allgemeine ZIP-Funktion auf."""
+    #    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    #    zip_filepath = os.path.join(self.ZIP_FOLDER, f"Debug_Paket_{timestamp}.zip")
+    #    
+    #    return self.create_zip_package(zip_filepath)
+    #
+    #def create_zip_package(self, zip_filepath, match_data=None):
+    #    """
+    #    Erstellt ein ZIP-Archiv mit Config, Log und allen aktuellen Bildern.
+    #    Wenn match_data übergeben wird, wird zusätzlich eine match.json erzeugt.
+    #    """
+    #    try:
+    #        with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
+    #            if os.path.exists(self.CONFIG_FILE):
+    #                zipf.write(self.CONFIG_FILE, os.path.basename(self.CONFIG_FILE))
+    #            if os.path.exists(self.LOG_FILE):
+    #                zipf.write(self.LOG_FILE, os.path.basename(self.LOG_FILE))
+    #            
+    #            if os.path.exists(self.DEBUG_FOLDER):
+    #                for file in os.listdir(self.DEBUG_FOLDER):
+    #                    file_path = os.path.join(self.DEBUG_FOLDER, file)
+    #                    if os.path.isfile(file_path):
+    #                        zipf.write(file_path, os.path.join(self.DEBUG_FOLDER, file))
+    #                        
+    #            if match_data is not None:
+    #                json_str = json.dumps(match_data, indent=4)
+    #                zipf.writestr("match.json", json_str)
+    #                        
+    #        print(f"📦 ZIP-Paket erfolgreich erstellt: {zip_filepath}")
+    #        self.write_log(f"SYSTEM: 📦 Datenpaket erstellt -> {zip_filepath}")
+    #        return True
+    #    except Exception as e:
+    #        print(f"❌ Fehler beim Erstellen der ZIP: {e}")
+    #        self.write_log(f"SYSTEM: ❌ Fehler beim Erstellen der ZIP -> {e}")
+    #        return False
             
     def load_targets(self):
         """Lädt die zielscheiben.json aus dem Projektverzeichnis."""
