@@ -40,7 +40,7 @@ class DummyConfig:
         if key == 'max_image_change_percent': return 90.0
         if key == 'max_aspect_ratio': return self.app.max_aspect_ratio_var.get()
         # ---> NEU <---
-        if key == 'gesamt_anteil_am_200score': return self.app.score_weight_var.get()
+        if key == 'gesamt_anteil_am_200score': return self.app.gesamt_anteil_am_200score_var.get()
         return fallback
         
     def get(self, section, key, fallback=''):
