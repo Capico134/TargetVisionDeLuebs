@@ -4,6 +4,7 @@ import numpy as np
 import time
 import subprocess
 import os
+import sys #für log-Ausgabe
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -12,6 +13,50 @@ from tkinter import ttk, messagebox
 from DateiManagerDeLuebs import DateiManager
 from StateManagerDeLuebs import StateManager
 from DetectionDeLuebs import TargetDetector  # <--- HIER ZIEHT DER NEUE DETECTOR EIN!
+
+
+# =========================================================================
+# ---> NEU: DUAL-LOGGER FÜR DIE KONSOLE UND EXCEPTION-REPORTS <---
+# =========================================================================
+
+# 1. Ordner sicherstellen
+os.makedirs("savegames", exist_ok=True)
+log_file = os.path.join("savegames", "console_log.txt")
+old_log_file = os.path.join("savegames", "console_log_old.txt")
+
+# 2. Log-Rotation: Das Log vom vorherigen Start als "old" aufbewahren!
+if os.path.exists(log_file):
+    if os.path.exists(old_log_file):
+        try: os.remove(old_log_file)
+        except Exception: pass
+    try: os.rename(log_file, old_log_file)
+    except Exception: pass
+
+# 3. Unsere Klasse, die beides gleichzeitig macht (Terminal + Datei)
+class DualLogger:
+    def __init__(self, filepath, stream):
+        self.terminal = stream
+        # Wir hängen Text an ("a") und erzwingen UTF-8 für deutsche Umlaute
+        self.log = open(filepath, "a", encoding="utf-8")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush() # WICHTIG: Sofort auf die Festplatte schreiben, falls es crasht!
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
+# 4. Standard-Ausgabe (print) und Fehler-Ausgabe (Exceptions) umleiten!
+sys.stdout = DualLogger(log_file, sys.stdout)
+sys.stderr = DualLogger(log_file, sys.stderr)
+
+# =========================================================================
+
+
+
+
 
 class TargetTracker:
     def __init__(self, config, datei_manager, state_manager):
@@ -145,7 +190,7 @@ class TargetTracker:
             else:
                 if state.is_moving:
                     state.still_counter += 1
-                    if state.still_counter >= state.stillness_limit:
+                    if state.still_counter >= state.stillness_frames:
                         state.is_moving = False
                         self.log(state.side, "Bewegung beendet (Bild stabil).")
                         self.detector.check_background_and_evaluate(frame, state) 
@@ -417,8 +462,10 @@ class TargetTracker:
                 if side == 'left' and not self.nutze_kamera_links: continue
                 if side == 'right' and not self.nutze_kamera_rechts: continue
 
-                display_shots = side_shots[-max_items:] if len(side_shots) > max_items else side_shots
-                start_idx = len(side_shots) - len(display_shots)
+                # ---> NEU: Liste umdrehen und Zählung anpassen <---
+                total_shots = len(side_shots)
+                display_shots = side_shots[-max_items:] if total_shots > max_items else side_shots
+                display_shots_rev = list(reversed(display_shots)) 
                 
                 # Links dockt links an, rechts dockt rechts an!
                 if side == 'left':
@@ -426,7 +473,7 @@ class TargetTracker:
                 else:
                     box_x = win_w - box_w - 10
                     
-                box_h = (len(display_shots) + 2) * line_h
+                box_h = (len(display_shots_rev) + 2) * line_h
                 
                 hud_overlay = combined_view.copy()
                 cv2.rectangle(hud_overlay, (box_x - 10, start_y_hud - 25), (box_x + box_w, start_y_hud + box_h), (20, 20, 20), -1)
@@ -436,26 +483,42 @@ class TargetTracker:
                 cv2.putText(combined_view, titel, (box_x - 5, start_y_hud - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
                 cv2.line(combined_view, (box_x - 5, start_y_hud - 2), (box_x + box_w - 5, start_y_hud - 2), (100, 100, 100), 1)
                 
-                for i, shot in enumerate(display_shots):
-                    shot_num = start_idx + i + 1
+                # ---> NEU: Die umgedrehte Liste iterieren <---
+                for i, shot in enumerate(display_shots_rev):
+                    shot_num = total_shots - i  # Zählt jetzt rückwärts (z.B. 17, 16, 15...)
                     score_val = shot.get('score', 0.0)
                     text_color = (0, 255, 255) if score_val < 10.0 else (0, 255, 0)
                     text = f" {shot_num}:"
                     score_str = f"{score_val:.1f}"
                     y_pos = start_y_hud + 20 + (i * line_h)
                     
-                    cv2.putText(combined_view, text, (box_x - 5, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
-                    cv2.putText(combined_view, score_str, (box_x + 50, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.55, text_color, 1, cv2.LINE_AA)
+                    # ---> NEU: Den aktuellsten Schuss als Headliner hervorheben <---
+                    if i == 0:
+                        f_scale_num = 0.55
+                        f_scale_score = 0.65
+                        thick = 2
+                        color_num = (255, 255, 255) # Leuchtendes reines Weiß
+                    else:
+                        f_scale_num = 0.5
+                        f_scale_score = 0.55
+                        thick = 1
+                        color_num = (200, 200, 200) # Gedimmtes Grau für die Historie
 
-                cv2.line(combined_view, (box_x - 5, start_y_hud + 8 + len(display_shots) * line_h), (box_x + box_w - 5, start_y_hud + 8 + len(display_shots) * line_h), (100, 100, 100), 1)
+                    cv2.putText(combined_view, text, (box_x - 5, y_pos), cv2.FONT_HERSHEY_SIMPLEX, f_scale_num, color_num, thick, cv2.LINE_AA)
+                    cv2.putText(combined_view, score_str, (box_x + 50, y_pos), cv2.FONT_HERSHEY_SIMPLEX, f_scale_score, text_color, thick, cv2.LINE_AA)
+                    
+                    # ---> NEU: Dezente Trennlinie unter dem ersten Treffer <---
+                    if i == 0 and len(display_shots_rev) > 1:
+                        cv2.line(combined_view, (box_x - 5, y_pos + 8), (box_x + box_w - 5, y_pos + 8), (70, 70, 70), 1)
+
+                cv2.line(combined_view, (box_x - 5, start_y_hud + 8 + len(display_shots_rev) * line_h), (box_x + box_w - 5, start_y_hud + 8 + len(display_shots_rev) * line_h), (100, 100, 100), 1)
                 gesamt = sum(s.get('score', 0.0) for s in side_shots)
                 gesamt_text = "Ges.:"
                 gesamt_val = f"{gesamt:.1f}"
-                y_sum = start_y_hud + 28 + len(display_shots) * line_h
+                y_sum = start_y_hud + 28 + len(display_shots_rev) * line_h
                 
                 cv2.putText(combined_view, gesamt_text, (box_x - 5, y_sum), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
                 cv2.putText(combined_view, gesamt_val, (box_x + 45, y_sum), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (50, 200, 255), 2, cv2.LINE_AA)
-
         cv2.imshow(self.window_name, combined_view)
 
     def check_keys(self):
