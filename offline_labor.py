@@ -15,6 +15,8 @@ from PIL import Image, ImageTk
 from DetectionDeLuebs import TargetDetector
 from DateiManagerDeLuebs import DateiManager
 
+import LoggerDeLuebs
+
 # ==========================================
 # DUMMY-KLASSEN FÜR DIE TARGET-DETECTION
 # ==========================================

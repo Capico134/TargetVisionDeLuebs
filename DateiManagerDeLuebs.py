@@ -224,162 +224,58 @@ darstellung_ohne_weissabgleich = yes
 
         # --- AUTO-PATCH / MIGRATION ---
         needs_reload = False
-        
-        if not config.has_option('Erkennung', 'ausloeser_durch_erschuetterung'):
-            print("🔧 Führe Auto-Patch aus: Füge 'ausloeser_durch_erschuetterung = yes' hinzu...")
-            self.update_ini_value('Erkennung', 'ausloeser_durch_erschuetterung', 'yes')
-            needs_reload = True
-            
-        if not config.has_option('Erkennung', 'erkennungs_methode'):
-            print("🔧 Führe Auto-Patch aus: Füge 'erkennungs_methode = C' hinzu...")
-            self.update_ini_value('Erkennung', 'erkennungs_methode', 'C')
-            needs_reload = True
-        
-        if not config.has_option('Erkennung', 'hybrid_riss_faktor'):
-            print("🔧 Führe Auto-Patch aus: Füge 'hybrid_riss_faktor = 1.175' hinzu...")
-            self.update_ini_value('Erkennung', 'hybrid_riss_faktor', '1.175')
-            needs_reload = True
-        
-        if not config.has_option('Erkennung', 'hybrid_sichel_faktor'):
-            print("🔧 Führe Auto-Patch aus: Füge 'hybrid_sichel_faktor = 0.95' hinzu...")
-            self.update_ini_value('Erkennung', 'hybrid_sichel_faktor', '0.95')
-            needs_reload = True
-        
-        if not config.has_option('Erkennung', 'hybrid_discard_faktor'):
-            print("🔧 Führe Auto-Patch aus: Füge 'hybrid_discard_faktor = 2.5' hinzu...")
-            self.update_ini_value('Erkennung', 'hybrid_discard_faktor', '2.5')
-            needs_reload = True
-        
-        if not config.has_option('Erkennung', 'hough_min_faktor'):
-            print("🔧 Führe Auto-Patch aus: Füge 'hough_min_faktor = 0.85' hinzu...")
-            self.update_ini_value('Erkennung', 'hough_min_faktor', '0.85')
-            needs_reload = True
-            
-        if not config.has_option('Erkennung', 'hough_max_faktor'):
-            print("🔧 Führe Auto-Patch aus: Füge 'hough_max_faktor = 1.15' hinzu...")
-            self.update_ini_value('Erkennung', 'hough_max_faktor', '1.15')
-            needs_reload = True
-            
-        if config.has_option('Erkennung', 'min_hole_area'):
-            try:
-                current_area = config.getint('Erkennung', 'min_hole_area')
-                if current_area < 28:
-                    print(f"🔧 Führe Auto-Patch aus: Erhöhe 'min_hole_area' von {current_area} auf 28...")
-                    self.update_ini_value('Erkennung', 'min_hole_area', '28')
-                    needs_reload = True
-            except ValueError:
-                pass 
 
-        if config.has_option('Erkennung', 'hit_tolerance'):
-            try:
-                current_value = config.getint('Erkennung', 'hit_tolerance')
-                if current_value < 25:
-                    print(f"🔧 Führe Auto-Patch aus: Erhöhe 'hit_tolerance' von {current_value} auf 25...")
-                    self.update_ini_value('Erkennung', 'hit_tolerance', '25')
-                    needs_reload = True
-            except ValueError:
-                pass 
-
-        if config.has_option('Erkennung', 'hybrid_sichel_faktor'):
-            try:
-                current_value = config.getfloat('Erkennung', 'hybrid_sichel_faktor')
-                if current_value < 1.05:
-                    print(f"🔧 Führe Auto-Patch aus: Erhöhe 'hybrid_sichel_faktor' von {current_value} auf 1.05...")
-                    self.update_ini_value('Erkennung', 'hybrid_sichel_faktor', '1.05')
-                    needs_reload = True
-            except ValueError:
-                pass 
-                
-        if config.has_option('Erkennung', 'hybrid_riss_faktor'):
-            try:
-                current_value = config.getfloat('Erkennung', 'hybrid_riss_faktor')
-                if current_value > 1.175:
-                    print(f"🔧 Führe Auto-Patch aus: Verringere 'hybrid_riss_faktor' von {current_value} auf 1.175...")
-                    self.update_ini_value('Erkennung', 'hybrid_riss_faktor', '1.175')
-                    needs_reload = True
-            except ValueError:
-                pass 
-
-        if not config.has_section('Zielscheibe'):
-            print("🔧 Führe Auto-Patch aus: Füge Sektion '[Zielscheibe]' hinzu...")
-            config.add_section('Zielscheibe')
-            self.update_ini_value('Zielscheibe', 'aktive_scheibe', 'Luftgewehr_10m')
-            needs_reload = True
-            
-        if not config.has_option('Zielscheibe', 'ringwertung_aktiv'):
-            print("🔧 Führe Auto-Patch aus: Füge 'ringwertung_aktiv = no' hinzu...")
-            self.update_ini_value('Zielscheibe', 'ringwertung_aktiv', 'no')
-            needs_reload = True
-            
-        for seite in ['links', 'rechts']:
-            for achse in ['x', 'y']:
-                key = f'px_pro_mm_{achse}_{seite}'
-                if not config.has_option('Kameras', key):
-                    print(f"🔧 Führe Auto-Patch aus: Füge '{key} = 5.0' hinzu...")
-                    self.update_ini_value('Kameras', key, '5.0')
-                    needs_reload = True    
-                    
-        if not config.has_option('Erkennung', 'debug_alle_bilder_speichern'):
-            print("🔧 Führe Auto-Patch aus: Füge 'debug_alle_bilder_speichern = yes' hinzu...")
-            self.update_ini_value('Erkennung', 'debug_alle_bilder_speichern', 'yes')
-            needs_reload = True
-
-        if not config.has_option('Erkennung', 'hough_param1'):
-            self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'hough_param1 = 25' hinzu...")
-            self.update_ini_value('Erkennung', 'hough_param1', '25')
-            needs_reload = True
-            
-        if not config.has_option('Erkennung', 'hough_param2'):
-            self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'hough_param2 = 4' hinzu...")
-            self.update_ini_value('Erkennung', 'hough_param2', '4')
-            needs_reload = True
-
-        if not config.has_option('Erkennung', 'morph_kernel_size'):
-            self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'morph_kernel_size = 5' hinzu...")
-            self.update_ini_value('Erkennung', 'morph_kernel_size', '5')
-            needs_reload = True
-            
-        if not config.has_option('Erkennung', 'max_aspect_ratio'):
-            self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'max_aspect_ratio = 3.5' hinzu...")
-            self.update_ini_value('Erkennung', 'max_aspect_ratio', '3.5')
-            needs_reload = True
-
-        if config.has_option('Erkennung', 'hough_param2'):
-            try:
-                current_value = config.getint('Erkennung', 'hough_param2')
-                if current_value > 4:
-                    print(f"🔧 Führe Auto-Patch aus: Verringere 'hough_param2' von {current_value} auf 4...")
-                    self.update_ini_value('Erkennung', 'hough_param2', '4')
-                    needs_reload = True
-            except ValueError:
-                pass 
-        
-        if config.has_option('Timing', 'stillness_frames'):
-            try:
-                current_value = config.getint('Timing', 'stillness_frames')
-                if current_value < 20:
-                    print(f"🔧 Führe Auto-Patch aus: Erhöhe 'stillness_frames' von {current_value} auf 20...")
-                    self.update_ini_value('Timing', 'stillness_frames', '20')
-                    needs_reload = True
-            except ValueError:
-                pass 
-        
-        if config.has_option('Anzeige', 'darstellung_ohne_weissabgleich'):
-            try:
-                current_value = config.get('Anzeige', 'darstellung_ohne_weissabgleich')
-                # Wir prüfen auf 'yes', 'true' etc., falls es jemand manuell eingetragen hat
-                if current_value.strip().lower() in ['yes', 'true', '1']:
-                    print(f"🔧 Führe Auto-Patch aus: Ändere 'darstellung_ohne_weissabgleich' von '{current_value}' auf 'no'...")
-                    self.update_ini_value('Anzeige', 'darstellung_ohne_weissabgleich', 'no')
-                    needs_reload = True
-            except ValueError:
-                pass 
-                
-        if not config.has_option('Erkennung', 'gesamt_anteil_am_200score'):
-            self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'gesamt_anteil_am_200score = 0.667' hinzu...")
-            self.update_ini_value('Erkennung', 'gesamt_anteil_am_200score', '0.667')
-            needs_reload = True
-        
+# ALTE BEISPIELE:
+#        if not config.has_option('Erkennung', 'ausloeser_durch_erschuetterung'):
+#            print("🔧 Führe Auto-Patch aus: Füge 'ausloeser_durch_erschuetterung = yes' hinzu...")
+#            self.update_ini_value('Erkennung', 'ausloeser_durch_erschuetterung', 'yes')
+#            needs_reload = True
+#        
+#        if not config.has_option('Erkennung', 'hybrid_riss_faktor'):
+#            print("🔧 Führe Auto-Patch aus: Füge 'hybrid_riss_faktor = 1.175' hinzu...")
+#            self.update_ini_value('Erkennung', 'hybrid_riss_faktor', '1.175')
+#            needs_reload = True
+#            
+#        if config.has_option('Erkennung', 'min_hole_area'):
+#            try:
+#                current_area = config.getint('Erkennung', 'min_hole_area')
+#                if current_area < 28:
+#                    print(f"🔧 Führe Auto-Patch aus: Erhöhe 'min_hole_area' von {current_area} auf 28...")
+#                    self.update_ini_value('Erkennung', 'min_hole_area', '28')
+#                    needs_reload = True
+#            except ValueError:
+#                pass 
+#
+#        if not config.has_section('Zielscheibe'):
+#            print("🔧 Führe Auto-Patch aus: Füge Sektion '[Zielscheibe]' hinzu...")
+#            config.add_section('Zielscheibe')
+#            self.update_ini_value('Zielscheibe', 'aktive_scheibe', 'Luftgewehr_10m')
+#            needs_reload = True
+#            
+#        if not config.has_option('Zielscheibe', 'ringwertung_aktiv'):
+#            print("🔧 Führe Auto-Patch aus: Füge 'ringwertung_aktiv = no' hinzu...")
+#            self.update_ini_value('Zielscheibe', 'ringwertung_aktiv', 'no')
+#            needs_reload = True
+#            
+#        for seite in ['links', 'rechts']:
+#            for achse in ['x', 'y']:
+#                key = f'px_pro_mm_{achse}_{seite}'
+#                if not config.has_option('Kameras', key):
+#                    print(f"🔧 Führe Auto-Patch aus: Füge '{key} = 5.0' hinzu...")
+#                    self.update_ini_value('Kameras', key, '5.0')
+#                    needs_reload = True    
+#        
+#        if config.has_option('Anzeige', 'darstellung_ohne_weissabgleich'):
+#            try:
+#                current_value = config.get('Anzeige', 'darstellung_ohne_weissabgleich')
+#                # Wir prüfen auf 'yes', 'true' etc., falls es jemand manuell eingetragen hat
+#                if current_value.strip().lower() in ['yes', 'true', '1']:
+#                    print(f"🔧 Führe Auto-Patch aus: Ändere 'darstellung_ohne_weissabgleich' von '{current_value}' auf 'no'...")
+#                    self.update_ini_value('Anzeige', 'darstellung_ohne_weissabgleich', 'no')
+#                    needs_reload = True
+#            except ValueError:
+#                pass 
+#        
         if config.has_option('Erkennung', 'morph_kernel_size'):
             try:
                 current_value = config.getint('Erkennung', 'morph_kernel_size')

@@ -9,6 +9,8 @@ import datetime as dt
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 import configparser  
 
+import LoggerDeLuebs
+
 class MatchDetailWindow(tk.Toplevel):
     def __init__(self, parent, match_id, zip_path):
         super().__init__(parent)
@@ -236,18 +238,28 @@ class MatchDetailWindow(tk.Toplevel):
                 idx += 1
 
     def on_tree_select(self, event, side):
+        # ---> NEU: Das Schutzschild gegen den Ping-Pong-Absturz! <---
+        if getattr(self, '_ignore_selection', False):
+            return
+
         if self.orig_img_l: self.canvas_l.delete("highlight")
         if self.orig_img_r: self.canvas_r.delete("highlight")
 
-        # Selektion bereinigen (Wer in Tabelle L klickt, hebt R auf)
-        if side == 'l':
-            self.tree_r.selection_remove(self.tree_r.selection())
-            tree = self.tree_l
-        elif side == 'r':
-            self.tree_l.selection_remove(self.tree_l.selection())
-            tree = self.tree_r
-        else:
-            return
+        # Wir schalten das Schutzschild ein, BEVOR wir die andere Tabelle anfassen
+        self._ignore_selection = True
+        try:
+            # Selektion bereinigen (Wer in Tabelle L klickt, hebt R auf)
+            if side == 'l':
+                self.tree_r.selection_remove(self.tree_r.selection())
+                tree = self.tree_l
+            elif side == 'r':
+                self.tree_l.selection_remove(self.tree_l.selection())
+                tree = self.tree_r
+            else:
+                return
+        finally:
+            # Schutzschild wieder aus, egal was passiert
+            self._ignore_selection = False
 
         selected = tree.selection()
         if not selected: return
@@ -265,7 +277,6 @@ class MatchDetailWindow(tk.Toplevel):
         canvas = self.canvas_l if hit['s'] == 'l' else self.canvas_r
         if canvas:
             canvas.create_oval(cx - r, cy - r, cx + r, cy + r, outline="#00ffff", width=7, tags="highlight")
-
 
 class HighscoreViewer:
     def __init__(self, root):
@@ -459,6 +470,7 @@ class HighscoreViewer:
         self.apply_filters()
 
     def show_hit_images(self):
+        #print("HIT IMAGES")
         selected = self.tree.selection()
         if not selected: return
         
