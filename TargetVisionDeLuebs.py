@@ -339,8 +339,8 @@ class TargetTracker:
                 color = (0, 0, 255) if (shot.get('is_new', False) and blink_state) else (255, 100, 0)
                 
                 # Zuerst den Kreis und den Mittelpunkt malen
-                cv2.circle(combined_view, (final_x, final_y), final_radius, color, 2)
-                cv2.circle(combined_view, (final_x, final_y), max(1, int(2*avg_scale)), color, -1)
+                cv2.circle(combined_view, (final_x, final_y), final_radius, color, 1)
+                #cv2.circle(combined_view, (final_x, final_y), max(1, int(2*avg_scale)), color, -1)
                 
                 # Dann die Treffer-Nummer absolut mittig darüberlegen
                 if self.ringwertung_aktiv:

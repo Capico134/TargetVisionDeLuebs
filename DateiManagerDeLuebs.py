@@ -139,7 +139,7 @@ px_pro_mm_y_rechts = 5.0
 
 [Erkennung]
 max_aspect_ratio = 3.5
-morph_kernel_size = 6
+morph_kernel_size = 5
 # Auslöser für die Auswertung:
 # yes = Auslösen erst durch Bewegungen im Kamerabild (Z.B. durch Bewegung der laufenden Scheibe, sehr ressourcenschonend)
 # no = Dauerhaftes Scannen (Für statische Scheiben, Webcams, Lasertraining)
@@ -335,8 +335,8 @@ darstellung_ohne_weissabgleich = yes
             needs_reload = True
 
         if not config.has_option('Erkennung', 'morph_kernel_size'):
-            self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'morph_kernel_size = 6' hinzu...")
-            self.update_ini_value('Erkennung', 'morph_kernel_size', '6')
+            self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'morph_kernel_size = 5' hinzu...")
+            self.update_ini_value('Erkennung', 'morph_kernel_size', '5')
             needs_reload = True
             
         if not config.has_option('Erkennung', 'max_aspect_ratio'):
@@ -379,6 +379,17 @@ darstellung_ohne_weissabgleich = yes
             self.write_log("SYSTEM: 🔧 Führe Auto-Patch aus: Füge 'gesamt_anteil_am_200score = 0.667' hinzu...")
             self.update_ini_value('Erkennung', 'gesamt_anteil_am_200score', '0.667')
             needs_reload = True
+        
+        if config.has_option('Erkennung', 'morph_kernel_size'):
+            try:
+                current_value = config.getint('Erkennung', 'morph_kernel_size')
+                if current_value != 5:
+                    print(f"🔧 Führe Auto-Patch aus: Setze 'morph_kernel_size' von {current_value} auf 5...")
+                    self.update_ini_value('Erkennung', 'morph_kernel_size', '5')
+                    needs_reload = True
+            except ValueError:
+                pass         
+        
         
         if needs_reload:
             config.read(self.CONFIG_FILE, encoding='utf-8')
