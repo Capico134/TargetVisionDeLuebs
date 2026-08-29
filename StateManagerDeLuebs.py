@@ -183,7 +183,7 @@ class StateManager:
                 score = math.floor(raw_score * 10) / 10.0
                 
                 if score > 10.9: score = 10.9
-                if score < 0.0: score = 0.0
+                if score < 1.0: score = 0.0
                 
         return score
 
