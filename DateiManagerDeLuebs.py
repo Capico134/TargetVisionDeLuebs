@@ -19,12 +19,21 @@ class DateiManager:
         
         self._init_system()
 
-    def _init_system(self):
+    # ---> ELA: Standardmäßig False, damit Zweit-Tools (Labor) nichts löschen!
+    def __init__(self, clear_on_start=False):
+        self.CONFIG_FILE = 'config.ini'
+        self.DEBUG_FOLDER = 'debug_bilder'
+        self.LOG_FILE = 'treffer_log.txt'
+        self.ZIP_FOLDER = 'debug_pakete'
+        
+        self._init_system(clear_on_start)
+
+    def _init_system(self, clear_on_start):
         """Erstellt Ordner und leert das Log beim Start."""
         if not os.path.exists(self.DEBUG_FOLDER):
             os.makedirs(self.DEBUG_FOLDER)
-        else:
-            # ---> NEU (Punkt A): Löscht alte Debug-Bilder bei jedem Programmstart <---
+        elif clear_on_start:
+            # ---> NEU: Fegt den Ordner nur noch, wenn es explizit gewünscht ist!
             alte_dateien = glob.glob(os.path.join(self.DEBUG_FOLDER, "*"))
             for f in alte_dateien:
                 try:
@@ -36,6 +45,9 @@ class DateiManager:
         if not os.path.exists(self.ZIP_FOLDER):
             os.makedirs(self.ZIP_FOLDER)    
 
+        # Das Log wird weiterhin bei JEDEM Start der DateiManager-Klasse (also auch 
+        # bei TargetVision Start) sauber getrennt. Da die Log-Rotation vorher läuft,
+        # geht nichts verloren.
         with open(self.LOG_FILE, "w", encoding="utf-8") as f:
             f.write(f"=== DIGITALE TREFFERANZEIGE LOG - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n")
 

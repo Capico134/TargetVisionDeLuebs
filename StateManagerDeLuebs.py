@@ -234,6 +234,28 @@ class StateManager:
             self.dm.write_log("SYSTEM: Speichern abgebrochen - Keine Treffer vorhanden.")
             return False
 
+        # ---> ELA: Die gesamte Datenbeschaffung läuft nun über unsere zentrale Funktion! <---
+        match_data = self.get_match_data(player_name_l, player_name_r)
+
+        os.makedirs(os.path.join("savegames", "logs"), exist_ok=True)
+        zip_filepath = os.path.join("savegames", "logs", f"MATCH{self.get_formatted_match_id()}.zip")
+        
+        self.dm.export_match_package(
+            filepath=zip_filepath, 
+            match_data=match_data,
+            source_folder=self.dm.DEBUG_FOLDER,
+            apply_diet_filter=False
+        )
+
+        self.hm.save_highscore(match_data["metadata"])
+        ringe_str = match_data["metadata"]["gesamt_ringe_anzeige"]
+        self.dm.write_log(f"SYSTEM: 🏆 Match {self.get_formatted_match_id()} gespeichert (Ringe: {ringe_str})!")
+        
+        self.reset_match('all')
+        return True
+        
+    def get_match_data(self, player_name_l="Schütze 1", player_name_r="Schütze 2"):
+        """Zentrale ELA-Funktion: Generiert das komplette JSON-Datenpaket für ein Match."""
         cam_l = self.config.getboolean('Kameras', 'nutze_kamera_links')
         cam_r = self.config.getboolean('Kameras', 'nutze_kamera_rechts')
         
@@ -242,13 +264,11 @@ class StateManager:
         elif cam_r: cam_str = "Nur Rechts"
         else: cam_str = "Keine"
 
-        # Wir berechnen die Gesamtringzahl getrennt!
         shots_l = self.get_shots_for_side('left')
         shots_r = self.get_shots_for_side('right')
         gesamt_l = round(sum(s.get('score', 0.0) for s in shots_l), 1)
         gesamt_r = round(sum(s.get('score', 0.0) for s in shots_r), 1)
 
-        # ---> NEU: Cleveres Formatting für das Duell! <---
         if cam_l and cam_r and player_name_l != player_name_r:
             spieler_str = f"{player_name_l} / {player_name_r}"
             ringe_str = f"{gesamt_l} / {gesamt_r}"
@@ -261,7 +281,6 @@ class StateManager:
             else:
                 ringe_str = str(gesamt_r)
 
-        # ---> NEU: Schüsse getrennt formatieren <---
         if cam_l and cam_r:
             schuesse_str = f"{len(shots_l)} / {len(shots_r)}"
         elif cam_l:
@@ -269,16 +288,13 @@ class StateManager:
         else:
             schuesse_str = str(len(shots_r))
 
-        # Nullpunkte sicher abgreifen
         center_l_raw = self.nullpunkts.get('left')
         center_r_raw = self.nullpunkts.get('right')
 
-        # ---> NEU: Startzeit aus dem monotonic-Timer rückwärts berechnen <---
         dauer_sekunden = time.monotonic() - getattr(self, 'match_start_mono', time.monotonic())
         start_zeit_timestamp = time.time() - dauer_sekunden
         start_zeit_str = datetime.fromtimestamp(start_zeit_timestamp).strftime("%d.%m.%y %H:%M:%S")
 
-        # 1. Metadaten für Highscore und JSON (mit explizitem Typen-Cast für NumPy-Sicherheit)
         metadata = {
             "spieler": spieler_str,  
             "programm_name": "TargetVision",
@@ -292,7 +308,7 @@ class StateManager:
             "erkennungs_methode": str(self.config.get('Erkennung', 'erkennungs_methode')),
             "match_id": int(self.current_match_id),
             "version": str(self.dm.get_current_version()),
-            "start_zeit": start_zeit_str,  # <--- NEU: Rückberechnete Startzeit
+            "start_zeit": start_zeit_str,
             "timestamp": datetime.now().strftime("%d.%m.%y %H:%M:%S"),
             "center_l": [int(center_l_raw[0]), int(center_l_raw[1])] if (cam_l and center_l_raw) else None,
             "center_r": [int(center_r_raw[0]), int(center_r_raw[1])] if (cam_r and center_r_raw) else None,
@@ -300,7 +316,6 @@ class StateManager:
             "fortsetzung_rechts": bool(self.state_right.is_fortsetzung) if (cam_r and self.state_right) else False
         }
 
-        # 2. Timeline (Hier waschen wir die x/y Koordinaten in Standard-Ints)
         timeline = []
         for s in self.shots:
             timeline.append({
@@ -311,30 +326,11 @@ class StateManager:
                 "a": round(float(s['area']), 1),
                 "score": float(s.get('score', 0.0)),
                 "cv_score": round(float(s.get('cv_score', 0.0)), 1),
-                "edited": bool(s.get('is_edited', False)) # <--- NEU: Speichert True, falls der Schuss editiert wurde
+                "edited": bool(s.get('is_edited', False))
             })
 
-        match_data = {"metadata": metadata, "timeline": timeline}
+        return {"metadata": metadata, "timeline": timeline}
 
-        # 3. ZIP erstellen und die JSON-Daten direkt übergeben
-        os.makedirs(os.path.join("savegames", "logs"), exist_ok=True)
-        zip_filepath = os.path.join("savegames", "logs", f"MATCH{self.get_formatted_match_id()}.zip")
-        
-        # ---> ELA: Wir nutzen den Live-Ordner als Bild-Quelle für das finale Match-ZIP <---
-        self.dm.export_match_package(
-            filepath=zip_filepath, 
-            match_data=match_data,
-            source_folder=self.dm.DEBUG_FOLDER,
-            apply_diet_filter=False # Beim echten Match wollen wir alles behalten!
-        )
-
-        # 4. Highscore speichern und Match auf null setzen
-        self.hm.save_highscore(metadata)
-        self.dm.write_log(f"SYSTEM: 🏆 Match {self.get_formatted_match_id()} gespeichert (Ringe: {ringe_str})!")
-        
-        self.reset_match('all')
-        return True
-        
 
     def update_shot(self, shot_ref, new_x, new_y, new_score):
         """Aktualisiert die Koordinaten und den Score eines existierenden Schusses."""

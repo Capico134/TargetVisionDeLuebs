@@ -62,6 +62,8 @@ class TargetTracker:
         self.scale_x = 1.0
         self.scale_y = 1.0
         self.w_left_displayed = 0
+        self.last_frame_l = None
+        self.last_frame_r = None
         
         self.msg_left = "System gestartet. Warte..."
         self.msg_right = "System gestartet. Warte..."
@@ -545,8 +547,7 @@ class TargetTracker:
                 zx1, zy1, zx2, zy2 = self.btn_zip_coords
                 if zx1 <= x <= zx2 and zy1 <= y <= zy2:
                     self.log("SYSTEM", "Generiere Debug-Paket... Bitte warten.", True)
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    zip_filepath = os.path.join(self.dm.ZIP_FOLDER, f"Debug_Paket_{timestamp}.zip")
+                    zip_filepath = os.path.join(export_dir, "Live_Tuning_Bridge.zip")
                     # ---> ELA: Auch der Bug-Zip nutzt jetzt die einheitliche Funktion <---
                     success = self.dm.export_match_package(
                         filepath=zip_filepath,
@@ -703,14 +704,50 @@ class TargetTracker:
                             self.log("SYSTEM", "Speichern abgebrochen (Keine Treffer).", True)
                     return
 
-            # ---> NEU: Offline Labor Button <---
+            # ---> NEU: Offline Labor Button (Der Brückenschlag) <---
             if getattr(self, 'btn_labor_coords', None):
                 lx1, ly1, lx2, ly2 = self.btn_labor_coords
                 if lx1 <= x <= lx2 and ly1 <= y <= ly2:
-                    self.log("SYSTEM", "Öffne Offline-Labor...", True)
-                    # Subprozess starten, damit das Hauptfenster weiterlaufen kann
-                    subprocess.Popen(["python", "offline_labor.py"])
+                    
+                    ref_l = self.sm.state_left and self.sm.state_left.is_initialized
+                    ref_r = self.sm.state_right and self.sm.state_right.is_initialized
+                    
+                    if not ref_l and not ref_r:
+                        self.log("SYSTEM", "Labor startet leer (Noch keine Scheibe erkannt).", True)
+                        subprocess.Popen(["python", "offline_labor.py"])
+                        return
+                    
+                    self.log("SYSTEM", "Generiere Live-Snapshot und pausiere System...", True)
+                    
+                    if self.nutze_kamera_links and self.last_frame_l is not None:
+                        self.dm.save_debug_image("ZZZ_Live_Snapshot_left_orig", self.last_frame_l)
+                    if self.nutze_kamera_rechts and self.last_frame_r is not None:
+                        self.dm.save_debug_image("ZZZ_Live_Snapshot_right_orig", self.last_frame_r)
+                        
+                    # ---> ELA: Wir rufen einfach die neue, zentrale Funktion auf! <---
+                    match_data = self.sm.get_match_data("Live-Tuning", "Live-Tuning")
+                    export_dir = "labor_export"
+                    os.makedirs(export_dir, exist_ok=True)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    zip_filepath = os.path.join(export_dir, f"Live_Tuning_{timestamp}.zip")
+                    
+                    success = self.dm.export_match_package(
+                        filepath=zip_filepath,
+                        match_data=match_data,
+                        source_folder=self.dm.DEBUG_FOLDER,
+                        apply_diet_filter=False
+                    )
+                    
+                    if success:
+                        self.log("SYSTEM", f"Labor gestartet. TargetVision pausiert!", True)
+                        # ---> ELA: .run() friert TargetVision ein, bis das Labor geschlossen wird!
+                        subprocess.run(["python", "offline_labor.py", zip_filepath])
+                        self.log("SYSTEM", "Labor geschlossen. Kamera läuft weiter!", True)
+                    else:
+                        self.log("SYSTEM", "Fehler beim ZIP-Export. Starte Labor leer.", True)
+                        subprocess.Popen(["python", "offline_labor.py"])
                     return
+                    
     def process_edits(self):
         if self.trigger_edit_left:
             self.open_edit_dialog('left')
@@ -900,6 +937,9 @@ class TargetTracker:
 
         while True:
             frame_l, frame_r = self.read_frames()
+            self.last_frame_l = frame_l  # <--- NEU: Merken fürs Labor!
+            self.last_frame_r = frame_r  # <--- NEU: Merken fürs Labor!
+            
             self.process_resets(frame_l, frame_r)
             
             # ---> NEU: Aufruf für die Editier-Menüs <---
@@ -920,7 +960,8 @@ class TargetTracker:
         self.cleanup()
 
 if __name__ == "__main__":
-    dm = DateiManager()
+    # ---> NEU: Nur das Hauptprogramm darf beim Start die alten Bilder löschen!
+    dm = DateiManager(clear_on_start=True)
     config = dm.load_or_create_config()
     sm = StateManager(config, dm)
     

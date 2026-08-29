@@ -362,11 +362,14 @@ class OfflineLaborApp:
         self.log_text.insert(tk.END, f"[{side.upper()}] {msg}\n")
         self.log_text.see(tk.END)
 
-    def load_zip(self):
-        filepath = filedialog.askopenfilename(title="Wähle ZIP", filetypes=[("ZIP", "*.zip")])
+    def load_zip(self, filepath=None):
+        if not filepath:
+            filepath = filedialog.askopenfilename(title="Wähle ZIP", filetypes=[("ZIP", "*.zip")])
+            
         if filepath:
             self.current_zip_path = filepath
-            self.lbl_file.config(text=f"📂 {filepath.split('/')[-1]}", fg="black")
+            self.lbl_file.config(text=f"📂 {os.path.basename(filepath)}", fg="black")
+            # ... (Rest der Methode bleibt absolut gleich!)
             
             # ---> ELA: DateiManager entpackt alles direkt mundgerecht in den RAM! <---
             self.package_data = self.dm.import_match_package(filepath)
@@ -1293,6 +1296,14 @@ class OfflineLaborApp:
         self.lbl_image.config(image=self.tk_image, text="")
 
 if __name__ == "__main__":
+    import sys # Für sys.argv
     root = tk.Tk()
     app = OfflineLaborApp(root)
+    
+    # Wurde uns vom Hauptprogramm ein ZIP-Pfad in die Hand gedrückt?
+    if len(sys.argv) > 1:
+        zip_path = sys.argv[1]
+        # Wir warten 100ms, damit die GUI erst kurz aufploppt, bevor sie rechnet
+        root.after(100, lambda: app.load_zip(zip_path))
+        
     root.mainloop()
