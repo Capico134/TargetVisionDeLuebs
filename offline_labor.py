@@ -26,35 +26,29 @@ class DummyConfig:
     def __init__(self, app):
         self.app = app
         
-    def getint(self, section, key, fallback=0):
-        if key == 'min_hole_area': return self.app.min_hole_area_var.get()
-        if key == 'caliber_radius': return self.app.caliber_radius_var.get()
-        if key == 'hit_tolerance': return self.app.hit_tolerance_var.get()
-        if key == 'hough_param1': return self.app.hough_param1_var.get()
-        if key == 'hough_param2': return self.app.hough_param2_var.get()
-        # ---> NEU <---
-        if key == 'morph_kernel_size': return self.app.morph_kernel_var.get()
+    def _get_val(self, section, key, fallback):
+        if getattr(self.app, 'package_data', None) and self.app.package_data.get('config'):
+            parser = self.app.package_data['config']
+            if parser.has_option(section, key):
+                return parser.get(section, key)
         return fallback
+
+    def getint(self, section, key, fallback=0):
+        try: return int(self._get_val(section, key, fallback))
+        except ValueError: return fallback
         
     def getfloat(self, section, key, fallback=0.0):
-        if key == 'hybrid_riss_faktor': return self.app.hybrid_riss_faktor_var.get()
-        if key == 'hybrid_sichel_faktor': return self.app.hybrid_sichel_faktor_var.get()
-        if key == 'hybrid_discard_faktor': return self.app.hybrid_discard_faktor_var.get()
-        if key == 'hough_min_faktor': return self.app.hough_min_faktor_var.get()
-        if key == 'hough_max_faktor': return self.app.hough_max_faktor_var.get()
-        if key == 'max_image_change_percent': return 90.0
-        if key == 'max_aspect_ratio': return self.app.max_aspect_ratio_var.get()
-        # ---> NEU <---
-        if key == 'gesamt_anteil_am_200score': return self.app.gesamt_anteil_am_200score_var.get()
+        try: return float(self._get_val(section, key, fallback))
+        except ValueError: return fallback
+        
+    def getboolean(self, section, key, fallback=False):
+        val = self._get_val(section, key, str(fallback)).strip().lower()
+        if val in ('yes', 'true', '1', 'on'): return True
+        if val in ('no', 'false', '0', 'off'): return False
         return fallback
         
     def get(self, section, key, fallback=''):
-        if key == 'erkennungs_methode': return 'C'
-        if key == 'aktive_scheibe': return 'Luftgewehr_10m'
-        return fallback
-        
-    def getboolean(self, section, key, fallback=False):
-        return fallback
+        return self._get_val(section, key, fallback)
 
 class DummyState:
     def __init__(self, side):
@@ -142,29 +136,10 @@ class OfflineLaborApp:
         self.pan_y = 0
         self.view_mode_var = tk.IntVar(value=1)
         
-        # ---> ELA: Die universelle Zuordnung zwischen INI-Datei und GUI-Slidern <---
-        self.gui_to_config_map = {
-            'Erkennung': {
-                'hit_tolerance': self.hit_tolerance_var,
-                'min_hole_area': self.min_hole_area_var,
-                'caliber_radius': self.caliber_radius_var,
-                'hybrid_riss_faktor': self.hybrid_riss_faktor_var,
-                'hybrid_sichel_faktor': self.hybrid_sichel_faktor_var,
-                'hybrid_discard_faktor': self.hybrid_discard_faktor_var,
-                'hough_min_faktor': self.hough_min_faktor_var,
-                'hough_max_faktor': self.hough_max_faktor_var,
-                'hough_param1': self.hough_param1_var,
-                'hough_param2': self.hough_param2_var,
-                'morph_kernel_size': self.morph_kernel_var,
-                'max_aspect_ratio': self.max_aspect_ratio_var,
-                'gesamt_anteil_am_200score': self.gesamt_anteil_am_200score_var
-            }
-        }
-        
         self.setup_ui()
         
-    def make_slider(self, parent, label_text, tk_var, from_, to_, res=1):
-        """Hilfsfunktion für einheitliche Slider mit direkter Eingabe und Reset"""
+    def make_slider(self, parent, label_text, tk_var, from_, to_, res=1, section="Erkennung", key=None):
+        """Hilfsfunktion für Slider mit direkter Eingabe, Reset und Live-Data-Binding"""
         frame = tk.Frame(parent)
         frame.pack(fill=tk.X, pady=2)
         
@@ -180,20 +155,26 @@ class OfflineLaborApp:
         
         entry.bind('<Return>', lambda e: self.on_param_change(force=True))
         
-        # =========================================================
-        # ---> NEU: Mittelklick-Reset (Mausrad-Klick) <---
-        # =========================================================
+        # ---> NEU: Der Trace-Spion (Live-Data-Binding) <---
+        if key:
+            def sync_to_config(*args):
+                if getattr(self, 'package_data', None) and self.package_data.get('config'):
+                    parser = self.package_data['config']
+                    if not parser.has_section(section):
+                        parser.add_section(section)
+                    parser.set(section, key, str(tk_var.get()))
+            
+            # Überwacht jeden Schreibvorgang auf die tk_var
+            tk_var.trace_add("write", sync_to_config)
+
+        # ---> Mittelklick-Reset <---
         def reset_to_original(event):
             var_key = str(tk_var)
-            # Prüfen, ob wir überhaupt schon ein ZIP geladen und Originalwerte haben
             if hasattr(self, 'original_values') and var_key in self.original_values:
                 tk_var.set(self.original_values[var_key])
                 self.on_param_change(force=True)
-                
-            # ---> NEU: Stoppt die interne Tkinter-Event-Kette! <---
             return "break" 
                 
-        # Wir binden den Mittelklick an alle Elemente der Zeile!
         scale.bind('<Button-2>', reset_to_original)
         lbl.bind('<Button-2>', reset_to_original)
         entry.bind('<Button-2>', reset_to_original)
@@ -208,15 +189,18 @@ class OfflineLaborApp:
         self.lbl_file.pack(side=tk.LEFT, padx=15)
         
         # ---> HIER WANDERT DER BUTTON HIN <---
-        self.btn_compare = tk.Button(top_frame, text="📊 Match-Abweichung messen", command=self.show_comparison, font=("Arial", 10, "bold"))
+        self.btn_compare = tk.Button(top_frame, text="📊 Abweichung messen", command=self.show_comparison, font=("Arial", 10, "bold"))
         self.btn_compare.pack(side=tk.LEFT, padx=20)        
         
         #Button Test-Case-Export
-        btn_export = tk.Button(top_frame, text="💾 Als Test-Case exportieren", command=self.export_test_case)
+        btn_export = tk.Button(top_frame, text="💾 Test-Case exportieren", command=self.export_test_case)
         btn_export.pack(side=tk.LEFT, pady=5, padx=(0, 20))
         
+        btn_einstellungen = tk.Button(top_frame, text="⚙️ Erweiterte Einstellungen", command=self.open_all_settings_dialog, bg="#34495e", fg="white")
+        btn_einstellungen.pack(side=tk.LEFT, pady=5, padx=(0, 20))# (fill=tk.X, pady=(15, 0)
+        
         # ---> NEU: Der Übernehmen-Button <---
-        self.btn_apply = tk.Button(top_frame, text="✅ Parameter ans Live-System senden & Schließen", 
+        self.btn_apply = tk.Button(top_frame, text="✅ Parameter übernehmen und schließen", 
                                    command=self.apply_to_live, bg="#27ae60", fg="white", font=("Arial", 10, "bold"))
         self.btn_apply.pack(side=tk.LEFT, pady=5)
         
@@ -324,29 +308,22 @@ class OfflineLaborApp:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # --- Hier kommen die Slider in das neue scrollbare param_frame ---
-        self.make_slider(param_frame, "hit_tolerance:", self.hit_tolerance_var, 1, 100)
-        self.make_slider(param_frame, "min_hole_area:", self.min_hole_area_var, 5, 500)
-        self.make_slider(param_frame, "caliber_radius:", self.caliber_radius_var, 5, 50)
-        
+        self.make_slider(param_frame, "hit_tolerance:", self.hit_tolerance_var, 1, 100, key="hit_tolerance")
+        self.make_slider(param_frame, "min_hole_area:", self.min_hole_area_var, 5, 500, key="min_hole_area")
+        self.make_slider(param_frame, "caliber_radius:", self.caliber_radius_var, 5, 50, key="caliber_radius")
         tk.Label(param_frame, text="--- Hybrid & Hough Faktoren ---", fg="gray").pack(pady=(10, 5))
-        
-        # ---> NEU: Feineres Raster (0.01 oder 0.025) für die Slider! <---
-        self.make_slider(param_frame, "hybrid_sichel_faktor:", self.hybrid_sichel_faktor_var, 0.1, 1.5, 0.01)
-        # resolution=0.001 zwingt Tkinter dazu, immer 3 Nachkommastellen (z.B. 1.175) anzuzeigen!
-        self.make_slider(param_frame, "hybrid_riss_faktor:", self.hybrid_riss_faktor_var, 1.0, 3.0, 0.001)
-        self.make_slider(param_frame, "hybrid_discard_faktor:", self.hybrid_discard_faktor_var, 1.5, 5.0, 0.1)
-        self.make_slider(param_frame, "hough_min_faktor:", self.hough_min_faktor_var, 0.5, 1.0, 0.01)
-        self.make_slider(param_frame, "hough_max_faktor:", self.hough_max_faktor_var, 1.0, 2.0, 0.01)
-        
-        self.make_slider(param_frame, "hough_param1 (Kanten):", self.hough_param1_var, 10, 100)
-        self.make_slider(param_frame, "hough_param2 (Strenge):", self.hough_param2_var, 1, 20)
-        
+        self.make_slider(param_frame, "hybrid_sichel_faktor:", self.hybrid_sichel_faktor_var, 0.1, 1.5, 0.01, key="hybrid_sichel_faktor")
+        self.make_slider(param_frame, "hybrid_riss_faktor:", self.hybrid_riss_faktor_var, 1.0, 3.0, 0.001, key="hybrid_riss_faktor")
+        self.make_slider(param_frame, "hybrid_discard_faktor:", self.hybrid_discard_faktor_var, 1.5, 5.0, 0.1, key="hybrid_discard_faktor")
+        self.make_slider(param_frame, "hough_min_faktor:", self.hough_min_faktor_var, 0.5, 1.0, 0.01, key="hough_min_faktor")
+        self.make_slider(param_frame, "hough_max_faktor:", self.hough_max_faktor_var, 1.0, 2.0, 0.01, key="hough_max_faktor")
+        self.make_slider(param_frame, "hough_param1 (Kanten):", self.hough_param1_var, 10, 100, key="hough_param1")
+        self.make_slider(param_frame, "hough_param2 (Strenge):", self.hough_param2_var, 1, 20, key="hough_param2")
         tk.Label(param_frame, text="--- Bild-Filterung ---", fg="gray").pack(pady=(10, 5))
-        self.make_slider(param_frame, "morph_kernel_size:", self.morph_kernel_var, 0, 15)
-        self.make_slider(param_frame, "max_aspect_ratio (Sichel):", self.max_aspect_ratio_var, 1.5, 6.0, 0.1)
-        # ---> NEU <---
+        self.make_slider(param_frame, "morph_kernel_size:", self.morph_kernel_var, 0, 15, key="morph_kernel_size")
+        self.make_slider(param_frame, "max_aspect_ratio (Sichel):", self.max_aspect_ratio_var, 1.5, 6.0, 0.1, key="max_aspect_ratio")
         tk.Label(param_frame, text="--- Score-Gewichtung ---", fg="gray").pack(pady=(10, 5))
-        self.make_slider(param_frame, "gesamt_anteil (Raw):", self.gesamt_anteil_am_200score_var, 0.1, 0.9, 0.001)
+        self.make_slider(param_frame, "gesamt_anteil (Raw):", self.gesamt_anteil_am_200score_var, 0.1, 0.9, 0.001, key="gesamt_anteil_am_200score")
         
         tk.Checkbutton(param_frame, text="💾 Simulations-Bilder exportieren", 
                        variable=self.export_images_var, fg="#00aaff").pack(anchor=tk.W, pady=(15, 0))
@@ -1138,28 +1115,10 @@ class OfflineLaborApp:
 
 
             # =========================================================================
-            # NEU: 6. ELA Export (Wir updaten einfach das Config-Objekt im RAM!)
+            # NEU: 6. ELA Export (Einfach den RAM-String ziehen!)
             # =========================================================================
             parser = self.package_data.get('config')
             if parser:
-                if not parser.has_section('Erkennung'):
-                    parser.add_section('Erkennung')
-                
-                parser.set('Erkennung', 'hit_tolerance', str(self.hit_tolerance_var.get()))
-                parser.set('Erkennung', 'min_hole_area', str(self.min_hole_area_var.get()))
-                parser.set('Erkennung', 'caliber_radius', str(self.caliber_radius_var.get()))
-                parser.set('Erkennung', 'hybrid_riss_faktor', str(self.hybrid_riss_faktor_var.get()))
-                parser.set('Erkennung', 'hybrid_sichel_faktor', str(self.hybrid_sichel_faktor_var.get()))
-                parser.set('Erkennung', 'hybrid_discard_faktor', str(self.hybrid_discard_faktor_var.get()))
-                parser.set('Erkennung', 'hough_min_faktor', str(self.hough_min_faktor_var.get()))
-                parser.set('Erkennung', 'hough_max_faktor', str(self.hough_max_faktor_var.get()))
-                parser.set('Erkennung', 'hough_param1', str(self.hough_param1_var.get()))
-                parser.set('Erkennung', 'hough_param2', str(self.hough_param2_var.get()))
-                parser.set('Erkennung', 'morph_kernel_size', str(self.morph_kernel_var.get()))
-                parser.set('Erkennung', 'max_aspect_ratio', str(self.max_aspect_ratio_var.get()))
-                parser.set('Erkennung', 'gesamt_anteil_am_200score', str(self.gesamt_anteil_am_200score_var.get()))
-                
-                # Wir machen wieder einen sauberen String daraus, um ihn ins ZIP zu packen
                 string_io = io.StringIO()
                 parser.write(string_io)
                 new_ini_str = string_io.getvalue()
@@ -1213,36 +1172,22 @@ class OfflineLaborApp:
                 backup_vorher_path = os.path.join(export_dir, f"{safe_basename}_Vorher_{timestamp}.zip")
                 shutil.copy2(current_path, backup_vorher_path)
 
-            # 1. & 2. RAM-Config updaten und Updates-Dictionary bauen
+            # 1. & 2. RAM-Config in String wandeln und Bulk-Update-Dict bauen
             parser = self.package_data.get('config')
             updates = {}
-            
             if parser:
-                # Wir haben eine Config aus dem ZIP -> Aktualisieren und in String wandeln
-                for section, keys in self.gui_to_config_map.items():
-                    if not parser.has_section(section):
-                        parser.add_section(section)
-                    for key, tk_var in keys.items():
-                        parser.set(section, key, str(tk_var.get()))
-                
                 string_io = io.StringIO()
                 parser.write(string_io)
                 new_ini_str = string_io.getvalue()
                 
-                # Sauberes Dictionary für das Bulk-Update bauen
+                # Sauberes Dictionary für das physische config.ini Backup-Update
                 for section in parser.sections():
                     updates[section] = {}
                     for key, val in parser.items(section):
                         updates[section][key] = str(val)
             else:
-                # Fallback: Falls absolut kein Parser existiert, bauen wir das Update 
-                # einfach hart aus unseren Slidern auf!
                 new_ini_str = None
-                for section, keys in self.gui_to_config_map.items():
-                    updates[section] = {}
-                    for key, tk_var in keys.items():
-                        updates[section][key] = str(tk_var.get())
-
+ 
             # 3. Physische config.ini aktualisieren (Kommentare bleiben erhalten!)
             self.dm.update_ini_file_bulk(updates)
 
@@ -1464,6 +1409,139 @@ class OfflineLaborApp:
         img_pil = Image.fromarray(cv2.cvtColor(combined, cv2.COLOR_BGR2RGB))
         self.tk_image = ImageTk.PhotoImage(img_pil)
         self.lbl_image.config(image=self.tk_image, text="")
+
+    def open_all_settings_dialog(self):
+        """Öffnet ein dynamisches Fenster mit allen ERWEITERTEN Werten aus der aktuellen config.ini."""
+        if not getattr(self, 'package_data', None) or not self.package_data.get('config'):
+            messagebox.showwarning("Fehler", "Es ist kein ZIP-Paket geladen!")
+            return
+
+        parser = self.package_data['config']
+
+        # ---> NEU: Diese Keys haben bereits einen Slider in der Haupt-GUI und werden hier versteckt <---
+        ignore_keys = {
+            'hit_tolerance', 'min_hole_area', 'caliber_radius', 
+            'hybrid_sichel_faktor', 'hybrid_riss_faktor', 'hybrid_discard_faktor', 
+            'hough_min_faktor', 'hough_max_faktor', 'hough_param1', 'hough_param2', 
+            'morph_kernel_size', 'max_aspect_ratio', 'gesamt_anteil_am_200score'
+        }
+
+        # Neues Fenster erstellen
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Erweiterte Einstellungen (Live Data-Binding)")
+        dialog.geometry("550x800")
+        dialog.attributes('-topmost', True)
+
+        # =========================================================================
+        # ---> NEU: Der universelle, wartungsfreie Hinweis-Banner <---
+        # =========================================================================
+        info_frame = tk.Frame(dialog, bg="#fff3cd", bd=1, relief=tk.SOLID)
+        info_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
+        info_lbl = tk.Label(info_frame, 
+                            text="⚠️ WICHTIGER HINWEIS:\nTiefe Systemeinstellungen (wie Kamera-Zuweisungen oder Vollbild)\nwerden erst nach einem Neustart von TargetVision aktiv.\nAlle Erkennungs-Parameter und Bild-Zuschnitte (Crops) greifen sofort!",
+                            bg="#fff3cd", fg="#856404", font=("Arial", 9), justify=tk.CENTER)
+        info_lbl.pack(padx=5, pady=5)
+        # =========================================================================
+
+        # Scrollbereich aufbauen
+        canvas = tk.Canvas(dialog, borderwidth=0, highlightthickness=0)
+        scrollbar = tk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas)
+
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_window, width=e.width))
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Zielscheiben für das Dropdown laden
+        targets = list(self.dm.load_targets().keys()) if self.dm.load_targets() else ["Luftgewehr_10m"]
+
+        # Durch die Config schleifen
+        for section in parser.sections():
+            
+            # ---> NEU: Vorab prüfen, ob überhaupt noch Keys übrig sind, die wir anzeigen wollen <---
+            visible_keys = [k for k in parser.options(section) if k not in ignore_keys]
+            if not visible_keys:
+                continue # Sektion überspringen, falls sie durch den Filter komplett leer wäre
+
+            sec_frame = tk.LabelFrame(scrollable_frame, text=f" {section} ", font=("Arial", 11, "bold"), pady=8, padx=8)
+            sec_frame.pack(fill=tk.X, pady=5, padx=10)
+
+            for key, val in parser.items(section):
+                # ---> NEU: Slider-Keys rigoros ignorieren <---
+                if key in ignore_keys:
+                    continue
+                    
+                val_str = str(val).strip()
+                
+                row = tk.Frame(sec_frame)
+                row.pack(fill=tk.X, pady=2)
+                tk.Label(row, text=key, width=32, anchor="w").pack(side=tk.LEFT)
+
+                # Der universelle Trace-Spion
+                def make_trace_cmd(s, k, var_obj):
+                    def cmd(*args):
+                        v = var_obj.get()
+                        # Booleans wieder als yes/no in die Config schreiben
+                        if isinstance(v, bool):
+                            v_str = "yes" if v else "no"
+                        else:
+                            v_str = str(v)
+                        
+                        parser.set(s, k, v_str)
+                        # Trigger Live-Update in der Haupt-GUI
+                        self.on_param_change() 
+                    return cmd
+
+                # 1. SPECIAL CASE: Aktive Scheibe
+                if key == 'aktive_scheibe':
+                    var = tk.StringVar(value=val_str)
+                    cb = ttk.Combobox(row, textvariable=var, values=targets, state="readonly", width=20)
+                    cb.pack(side=tk.RIGHT)
+                    var.trace_add("write", make_trace_cmd(section, key, var))
+
+                # 2. BOOLEAN (yes/no) - '0' und '1' wurden hier als Trigger entfernt!
+                elif val_str.lower() in ['yes', 'no', 'true', 'false', 'on', 'off']:
+                    is_true = val_str.lower() in ['yes', 'true', 'on']
+                    var = tk.BooleanVar(value=is_true)
+                    chk = tk.Checkbutton(row, text="Aktiv", variable=var)
+                    chk.pack(side=tk.RIGHT)
+                    var.trace_add("write", make_trace_cmd(section, key, var))
+
+                # 3. FLOAT (Hat einen Punkt und besteht sonst aus Zahlen/Minus)
+                elif '.' in val_str and val_str.replace('.', '', 1).replace('-', '', 1).isdigit():
+                    var = tk.DoubleVar(value=float(val_str))
+                    entry = tk.Entry(row, textvariable=var, width=12, justify="right")
+                    entry.pack(side=tk.RIGHT)
+                    var.trace_add("write", make_trace_cmd(section, key, var))
+
+                # 4. INTEGER (Besteht nur aus Zahlen/Minus)
+                elif val_str.replace('-', '', 1).isdigit():
+                    var = tk.IntVar(value=int(val_str))
+                    entry = tk.Entry(row, textvariable=var, width=12, justify="right")
+                    entry.pack(side=tk.RIGHT)
+                    var.trace_add("write", make_trace_cmd(section, key, var))
+
+                # 5. STRING (Alles andere)
+                else:
+                    var = tk.StringVar(value=val_str)
+                    entry = tk.Entry(row, textvariable=var, width=22, justify="right")
+                    entry.pack(side=tk.RIGHT)
+                    var.trace_add("write", make_trace_cmd(section, key, var))
+
+        # Scroll-Fix fürs Mausrad
+        def _on_mousewheel(event):
+            if event.num == 4 or getattr(event, 'delta', 0) > 0:
+                canvas.yview_scroll(-1, "units")
+            elif event.num == 5 or getattr(event, 'delta', 0) < 0:
+                canvas.yview_scroll(1, "units")
+
+        dialog.bind("<MouseWheel>", _on_mousewheel)
+        dialog.bind("<Button-4>", _on_mousewheel)
+        dialog.bind("<Button-5>", _on_mousewheel)
 
 if __name__ == "__main__":
     import sys # Für sys.argv

@@ -443,17 +443,21 @@ class TargetTracker:
         # 1. Beenden (Grau)
         self.btn_exit_coords, x_cursor = draw_button(combined_view, "Beenden", x_cursor, (60, 60, 60))
         
-        # 2. Bug ZIP (Grün)
+        # ---> NEU: 2. Handbuch (Warmes Blau) <---
+        self.btn_hilfe_coords, x_cursor = draw_button(combined_view, "Handbuch", x_cursor, (30, 140, 255))
+        
+        # 3. Bug ZIP (Grün)
         self.btn_zip_coords, x_cursor = draw_button(combined_view, "Bug ZIP", x_cursor, (40, 120, 40))
         
-        # 3. Highscore (Blau)
+        # 4. Highscore (Blau)
         self.btn_highscore_coords, x_cursor = draw_button(combined_view, "Highscore", x_cursor, (50, 150, 200))
         
-        # 4. Match Speichern (Rot)
+        # 5. Match Speichern (Rot)
         self.btn_save_coords, x_cursor = draw_button(combined_view, "Match Speichern", x_cursor, (180, 70, 70))
         
-        # 5. Offline Labor (Lila)
-        self.btn_labor_coords, x_cursor = draw_button(combined_view, "Offline Labor", x_cursor, (150, 50, 150))
+        # 6. Offline Labor (Lila)
+        self.btn_labor_coords, x_cursor = draw_button(combined_view, "Labor & Einstellungen", x_cursor, (150, 50, 150))
+        
         
         # ---> HUD / Trefferliste (Getrennt für beide Seiten) <---
         if self.ringwertung_aktiv:
@@ -813,7 +817,17 @@ class TargetTracker:
                         self.log("SYSTEM", "Fehler beim ZIP-Export. Starte Labor leer.", True)
                         subprocess.Popen(["python", "offline_labor.py"])
                     return
-                    
+            
+            # ---> NEU: Handbuch Button <---
+            if getattr(self, 'btn_hilfe_coords', None):
+                hx1, hy1, hx2, hy2 = self.btn_hilfe_coords
+                if hx1 <= x <= hx2 and hy1 <= y <= hy2:
+                    self.log("SYSTEM", "Öffne Handbuch...", True)
+                    # WICHTIG: Dateiname angepasst!
+                    subprocess.Popen(["python", "HandbuchDeLuebs.py"]) 
+                    return
+
+            
     def process_edits(self):
         if self.trigger_edit_left:
             self.open_edit_dialog('left')

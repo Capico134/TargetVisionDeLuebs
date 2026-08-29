@@ -6,6 +6,7 @@ savegames/
 __pycache__/
 *.pyc
 config.ini
+config_backup.ini
 treffer_log.txt
 test_report.txt
 Thumbs.db
