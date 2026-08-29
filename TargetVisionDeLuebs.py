@@ -176,7 +176,56 @@ class TargetTracker:
             ret_r, raw_r = self.cap_right.read()
             frame_r = self.apply_crop(raw_r, 'right') if ret_r else None
         return frame_l, frame_r
+    
+    def apply_handover(self, zip_path):
+        """Liest das Handover-Paket des Labors und injiziert die perfektionierte Historie ins Live-System."""
+        package = self.dm.import_match_package(zip_path)
+        if not package: return
+        
+        # 1. Config.ini NEU in den RAM laden und GUI-Variablen updaten
+        self.config.read(self.dm.CONFIG_FILE, encoding='utf-8')
+        self.caliber_radius = self.config.getint('Erkennung', 'caliber_radius')
+        self.ausloeser_durch_erschuetterung = self.config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
+        self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+        
+        # 2. Alte Referenzbilder aus dem RAM retten (Die Scheibe hat sich ja nicht bewegt)
+        old_ref_l = getattr(self.detector, 'ref_left', None)
+        old_ref_r = getattr(self.detector, 'ref_right', None)
+        
+        # 3. Engine neu starten, damit sie die neuen Config-Werte frisst
+        self.detector = TargetDetector(self.config, self.dm, self.sm, self.log)
+        
+        # Referenzen wieder einpflanzen
+        if old_ref_l is not None:
+            self.detector.set_reference_image(old_ref_l, 'left')
+        if old_ref_r is not None:
+            self.detector.set_reference_image(old_ref_r, 'right')
 
+        # 4. Alle Bilder aus dem Labor physisch auf die Festplatte legen
+        for img_name, img_data in package['images'].items():
+            base_name = os.path.basename(img_name)
+            clean_name = base_name.replace('.png', '').replace('.jpg', '')
+            self.dm.save_debug_image(clean_name, img_data)
+            
+        # =========================================================================
+        # 5. DIE NEUE WAHRHEIT AKZEPTIEREN (JSON & Diff-Gesamt übernehmen!)
+        # =========================================================================
+        if package['match_data']:
+            self.sm.load_match_state(package['match_data'])
+            
+        for s in ['left', 'right']:
+            state = self.sm.state_left if s == 'left' else self.sm.state_right
+            if not state: continue
+            
+            # Das korrigierte Diff-Gesamt aus dem Labor suchen und einpflanzen!
+            mask_name = next((f for f in package['images'] if f"diff_gesamt_{s}" in f or f"cumulative_startmask_{s}" in f), None)
+            if mask_name:
+                mask_bgr = package['images'][mask_name]
+                state.cumulative_mask = cv2.cvtColor(mask_bgr, cv2.COLOR_BGR2GRAY)
+                # Direkt als Startmaske für den laufenden Prozess sichern
+                self.dm.save_debug_image(f"cumulative_startmask_{s}", state.cumulative_mask)
+                state.is_fortsetzung = True
+    
     def execute_manual_reset(self, side, frame):
         self.sm.reset_match(side)
         
@@ -547,7 +596,8 @@ class TargetTracker:
                 zx1, zy1, zx2, zy2 = self.btn_zip_coords
                 if zx1 <= x <= zx2 and zy1 <= y <= zy2:
                     self.log("SYSTEM", "Generiere Debug-Paket... Bitte warten.", True)
-                    zip_filepath = os.path.join(export_dir, "Live_Tuning_Bridge.zip")
+                    imestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    zip_filepath = os.path.join(self.dm.ZIP_FOLDER, f"Debug_Paket_{timestamp}.zip")
                     # ---> ELA: Auch der Bug-Zip nutzt jetzt die einheitliche Funktion <---
                     success = self.dm.export_match_package(
                         filepath=zip_filepath,
@@ -728,8 +778,7 @@ class TargetTracker:
                     match_data = self.sm.get_match_data("Live-Tuning", "Live-Tuning")
                     export_dir = "labor_export"
                     os.makedirs(export_dir, exist_ok=True)
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    zip_filepath = os.path.join(export_dir, f"Live_Tuning_{timestamp}.zip")
+                    zip_filepath = os.path.join(export_dir, "Live_Tuning_Bridge.zip")
                     
                     success = self.dm.export_match_package(
                         filepath=zip_filepath,
@@ -742,7 +791,24 @@ class TargetTracker:
                         self.log("SYSTEM", f"Labor gestartet. TargetVision pausiert!", True)
                         # ---> ELA: .run() friert TargetVision ein, bis das Labor geschlossen wird!
                         subprocess.run(["python", "offline_labor.py", zip_filepath])
-                        self.log("SYSTEM", "Labor geschlossen. Kamera läuft weiter!", True)
+                        
+                        # =========================================================
+                        # ---> DAS AUFWACHEN (Staffelstab greifen) <---
+                        # =========================================================
+                        handover_path = os.path.join(export_dir, "Live_Tuning_Handover.zip")
+                        if os.path.exists(handover_path):
+                            self.log("SYSTEM", "Labor-Handover gefunden! Lade Parameter...", True)
+                            self.apply_handover(handover_path)
+                            os.remove(handover_path) # Beweise vernichten!
+                            self.log("SYSTEM", "Live-System erfolgreich aktualisiert!", True)
+                        else:
+                            self.log("SYSTEM", "Labor ohne Übernahme geschlossen.", True)
+                            
+                        # Kleine Pause für die Kameras, um Puffer-Müll (Standbilder) zu leeren
+                        for _ in range(10): 
+                            if self.nutze_kamera_links: self.cap_left.read()
+                            if self.nutze_kamera_rechts: self.cap_right.read()
+                            
                     else:
                         self.log("SYSTEM", "Fehler beim ZIP-Export. Starte Labor leer.", True)
                         subprocess.Popen(["python", "offline_labor.py"])

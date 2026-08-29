@@ -127,6 +127,52 @@ class DateiManager:
         self.write_log(f"SYSTEM: 💾 config.ini Update: [{target_section}] {target_key} = {new_value}")
 
 
+    def update_ini_file_bulk(self, updates_dict):
+        """
+        Aktualisiert die physische config.ini aus einem Dictionary, 
+        erhält alle Kommentare und erstellt ein Backup.
+        Format von updates_dict: {'Sektion': {'Key': 'Wert', ...}, ...}
+        """
+        if not os.path.exists(self.CONFIG_FILE):
+            return False
+
+        # Backup erstellen
+        import shutil
+        backup_file = self.CONFIG_FILE.replace('.ini', '_backup.ini')
+        shutil.copy2(self.CONFIG_FILE, backup_file)
+
+        with open(self.CONFIG_FILE, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        # Zeile für Zeile durchgehen und Werte austauschen
+        for section, keys in updates_dict.items():
+            in_target_section = False
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped.startswith('[') and stripped.endswith(']'):
+                    in_target_section = (stripped == f"[{section}]")
+                elif in_target_section and not stripped.startswith('#') and '=' in stripped:
+                    k, _ = line.split('=', 1)
+                    key_clean = k.strip()
+                    if key_clean in keys:
+                        # Wert austauschen, aber Zeilenumbruch behalten
+                        lines[i] = f"{key_clean} = {keys[key_clean]}\n"
+                        # Aus dem dict entfernen, damit wir wissen, was übrig ist
+                        del keys[key_clean] 
+            
+            # Fehlende (neue) Keys am Ende der Datei anhängen
+            if keys:
+                lines.append(f"\n[{section}]\n")
+                for k, v in keys.items():
+                    lines.append(f"{k} = {v}\n")
+
+        with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
+            f.writelines(lines)
+            
+        self.write_log("SYSTEM: 💾 config.ini (Bulk-Update) erfolgreich gespeichert. Backup erstellt.")
+        return True
+
+
     def load_or_create_config(self):
         """Lädt die Konfiguration, erstellt sie neu oder führt Patches aus."""
         if not os.path.exists(self.CONFIG_FILE):

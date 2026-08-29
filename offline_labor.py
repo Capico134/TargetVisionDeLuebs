@@ -10,6 +10,8 @@ import numpy as np
 import configparser
 import io
 from PIL import Image, ImageTk
+import shutil
+from datetime import datetime
 
 # ---> HIER IMPORTIEREN WIR DEINE ECHTE ENGINE UND DEN MANAGER! <---
 from DetectionDeLuebs import TargetDetector
@@ -140,6 +142,25 @@ class OfflineLaborApp:
         self.pan_y = 0
         self.view_mode_var = tk.IntVar(value=1)
         
+        # ---> ELA: Die universelle Zuordnung zwischen INI-Datei und GUI-Slidern <---
+        self.gui_to_config_map = {
+            'Erkennung': {
+                'hit_tolerance': self.hit_tolerance_var,
+                'min_hole_area': self.min_hole_area_var,
+                'caliber_radius': self.caliber_radius_var,
+                'hybrid_riss_faktor': self.hybrid_riss_faktor_var,
+                'hybrid_sichel_faktor': self.hybrid_sichel_faktor_var,
+                'hybrid_discard_faktor': self.hybrid_discard_faktor_var,
+                'hough_min_faktor': self.hough_min_faktor_var,
+                'hough_max_faktor': self.hough_max_faktor_var,
+                'hough_param1': self.hough_param1_var,
+                'hough_param2': self.hough_param2_var,
+                'morph_kernel_size': self.morph_kernel_var,
+                'max_aspect_ratio': self.max_aspect_ratio_var,
+                'gesamt_anteil_am_200score': self.gesamt_anteil_am_200score_var
+            }
+        }
+        
         self.setup_ui()
         
     def make_slider(self, parent, label_text, tk_var, from_, to_, res=1):
@@ -192,7 +213,12 @@ class OfflineLaborApp:
         
         #Button Test-Case-Export
         btn_export = tk.Button(top_frame, text="💾 Als Test-Case exportieren", command=self.export_test_case)
-        btn_export.pack(side=tk.LEFT, pady=5)
+        btn_export.pack(side=tk.LEFT, pady=5, padx=(0, 20))
+        
+        # ---> NEU: Der Übernehmen-Button <---
+        self.btn_apply = tk.Button(top_frame, text="✅ Parameter ans Live-System senden & Schließen", 
+                                   command=self.apply_to_live, bg="#27ae60", fg="white", font=("Arial", 10, "bold"))
+        self.btn_apply.pack(side=tk.LEFT, pady=5)
         
         # ---> NEU: Das Koordinaten-Label oben rechts <---
         self.lbl_coords = tk.Label(top_frame, text="Maus nicht im Bild", font=("Consolas", 12, "bold"), fg="#3498db")
@@ -1156,6 +1182,150 @@ class OfflineLaborApp:
         except Exception as e:
             messagebox.showerror("Fehler", f"Beim Exportieren ist ein Fehler aufgetreten:\n{str(e)}")
 
+    def apply_to_live(self):
+        """
+        Aktualisiert die physische config.ini und baut (falls Live-Tuning) ein Handover-Paket
+        sowie Vorher/Nachher-Backups zur Dokumentation.
+        """
+        if not getattr(self, 'package_data', None):
+            messagebox.showwarning("Fehler", "Es ist kein Paket geladen!")
+            return
+
+        antwort = messagebox.askyesno(
+            "Parameter übernehmen", 
+            "Möchtest du die aktuellen Einstellungen in die Live-Umgebung (config.ini) schreiben?\n\n"
+            "Das Labor wird danach geschlossen."
+        )
+        if not antwort:
+            return
+
+        try:
+            current_path = getattr(self, 'current_zip_path', '')
+            export_dir = os.path.join(os.getcwd(), "labor_export")
+            os.makedirs(export_dir, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_basename = os.path.basename(current_path).replace(".zip", "") if current_path else "Backup"
+
+            # =========================================================
+            # ---> WIEDER DA: Das "Vorher"-Backup <---
+            # =========================================================
+            if current_path and os.path.exists(current_path):
+                backup_vorher_path = os.path.join(export_dir, f"{safe_basename}_Vorher_{timestamp}.zip")
+                shutil.copy2(current_path, backup_vorher_path)
+
+            # 1. & 2. RAM-Config updaten und Updates-Dictionary bauen
+            parser = self.package_data.get('config')
+            updates = {}
+            
+            if parser:
+                # Wir haben eine Config aus dem ZIP -> Aktualisieren und in String wandeln
+                for section, keys in self.gui_to_config_map.items():
+                    if not parser.has_section(section):
+                        parser.add_section(section)
+                    for key, tk_var in keys.items():
+                        parser.set(section, key, str(tk_var.get()))
+                
+                string_io = io.StringIO()
+                parser.write(string_io)
+                new_ini_str = string_io.getvalue()
+                
+                # Sauberes Dictionary für das Bulk-Update bauen
+                for section in parser.sections():
+                    updates[section] = {}
+                    for key, val in parser.items(section):
+                        updates[section][key] = str(val)
+            else:
+                # Fallback: Falls absolut kein Parser existiert, bauen wir das Update 
+                # einfach hart aus unseren Slidern auf!
+                new_ini_str = None
+                for section, keys in self.gui_to_config_map.items():
+                    updates[section] = {}
+                    for key, tk_var in keys.items():
+                        updates[section][key] = str(tk_var.get())
+
+            # 3. Physische config.ini aktualisieren (Kommentare bleiben erhalten!)
+            self.dm.update_ini_file_bulk(updates)
+
+            # 4. Prüfen: Sind wir im "Live-Tuning" Modus? (Die Bridge-Weiche!)
+            if current_path and os.path.basename(current_path) == "Live_Tuning_Bridge.zip":
+                
+                # Wir müssen die aktuellen Masken/Diffs berechnen, um sie an TargetVision zu übergeben
+                d_config = DummyConfig(self)
+                d_dm = DummyDateiManager(self)
+                d_sm = DummyStateManager()
+                detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
+
+                for s in ['left', 'right']:
+                    ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
+                    if ref_name:
+                        detector.set_reference_image(self.get_img(ref_name), s)
+                    
+                    startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
+                    if startmask_name:
+                        startmask_gray = cv2.cvtColor(self.get_img(startmask_name), cv2.COLOR_BGR2GRAY)
+                        state = d_sm.state_left if s == 'left' else d_sm.state_right
+                        state.cumulative_mask = startmask_gray
+
+                for orig_name in self.orig_files:
+                    s = 'left' if 'left' in orig_name else 'right'
+                    detector.detect_new_shot(self.get_img(orig_name), s)
+
+                # Die Bilder über den DateiManager temporär auf die Festplatte legen, damit der Exporter sie greifen kann
+                for img_name, img_data in d_dm.debug_images.items():
+                    self.dm.save_debug_image(img_name, img_data)
+
+                # =========================================================
+                # ---> DER FIX 2: Die neuen JSON-Daten bauen! <---
+                # =========================================================
+                new_match_data = {
+                    "metadata": self.original_match_data.get("metadata", {}).copy(),
+                    "timeline": []
+                }
+                shots_l = [s for s in d_sm.shots if s['side'] == 'left']
+                shots_r = [s for s in d_sm.shots if s['side'] == 'right']
+                new_match_data["metadata"]["treffer_links"] = len(shots_l)
+                new_match_data["metadata"]["treffer_rechts"] = len(shots_r)
+                new_match_data["metadata"]["gesamtpunkte"] = len(d_sm.shots)
+                
+                for s in d_sm.shots:
+                    side_char = "l" if s['side'] == 'left' else "r"
+                    new_match_data["timeline"].append({
+                        "t": float(len(new_match_data["timeline"]) + 1.0),
+                        "s": side_char,
+                        "x": int(s['pos'][0]),
+                        "y": int(s['pos'][1]),
+                        "a": round(float(s['area']), 1),
+                        "score": float(s.get('score', 0.0)),
+                        "cv_score": round(float(s.get('cv_score', 0.0)), 1),
+                        "edited": False
+                    })
+                
+                # =========================================================
+                # ---> WIEDER DA: Das "Nachher"-Backup <---
+                # =========================================================
+                backup_nachher_path = os.path.join(export_dir, f"{safe_basename}_Nachher_{timestamp}.zip")
+                self.dm.export_match_package(
+                    filepath=backup_nachher_path,
+                    match_data=new_match_data,  # <--- HIER WAR NOCH self.original_match_data !!
+                    source_folder=self.dm.DEBUG_FOLDER,
+                    apply_diet_filter=False 
+                )
+
+                # Handover-Paket schnüren (Nimmt die Bilder direkt aus dem debug_bilder Ordner)
+                handover_path = os.path.join(export_dir, "Live_Tuning_Handover.zip")
+                self.dm.export_match_package(
+                    filepath=handover_path,
+                    match_data=new_match_data,  # <--- UND AUCH HIER MUSS new_match_data HIN !!
+                    source_folder=self.dm.DEBUG_FOLDER,
+                    apply_diet_filter=False 
+                )
+                self.print_log("SYSTEM", "Handover-Paket und Backups erstellt.")
+
+            self.print_log("SYSTEM", "Schließe Labor...")
+            self.root.destroy() 
+
+        except Exception as e:
+            messagebox.showerror("Kritischer Fehler", f"Fehler beim Übernehmen:\n{str(e)}")
         
     def update_image_display(self):
         """Zeichnet die zwischengespeicherten Bilder mit dem aktuellen Zoom-Faktor neu"""

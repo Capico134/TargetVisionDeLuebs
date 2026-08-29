@@ -331,6 +331,33 @@ class StateManager:
 
         return {"metadata": metadata, "timeline": timeline}
 
+    def load_match_state(self, match_data):
+        """ELA: Überschreibt den aktuellen Live-Status mit Daten aus einer JSON."""
+        self.shots = []
+        meta = match_data.get('metadata', {})
+        self.current_match_id = meta.get('match_id', self.current_match_id)
+        
+        # Nullpunkte wiederherstellen
+        cl = meta.get('center_l')
+        cr = meta.get('center_r')
+        if cl: self.nullpunkts['left'] = tuple(cl)
+        if cr: self.nullpunkts['right'] = tuple(cr)
+        
+        # Timeline wiederherstellen
+        for h in match_data.get('timeline', []):
+            side_str = 'left' if h['s'] == 'l' else 'right'
+            self.shots.append({
+                'side': side_str,
+                'pos': (h['x'], h['y']),
+                'area': h.get('a', 0.0),
+                'score': h.get('score', 0.0),
+                'cv_score': h.get('cv_score', 0.0),
+                't_mono': h.get('t', 0.0),
+                'timestamp': time.time(), # Optischer Dummy für die GUI
+                'is_new': False, # WICHTIG: Alte Schüsse sollen nicht rot blinken!
+                'is_edited': h.get('edited', False)
+            })
+        self.dm.write_log(f"SYSTEM: 🔄 Status aus Handover wiederhergestellt ({len(self.shots)} Treffer).")
 
     def update_shot(self, shot_ref, new_x, new_y, new_score):
         """Aktualisiert die Koordinaten und den Score eines existierenden Schusses."""
