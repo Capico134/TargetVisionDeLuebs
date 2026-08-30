@@ -809,13 +809,19 @@ class TargetTracker:
                                 self.sm.state_left.cumulative_mask = backup_mask_l
                                 if backup_mask_l is not None:
                                     self.dm.save_debug_image("cumulative_startmask_left", backup_mask_l)
+                                    # ---> NEU: Das echte Kamerabild als Optik-Referenz mitspeichern <---
+                                    if self.last_frame_l is not None:
+                                        self.dm.save_debug_image("cumulative_orig_left", self.last_frame_l)
                                     self.sm.state_left.is_fortsetzung = True  # Flag für JSON setzen
                                     
                             if self.nutze_kamera_rechts and self.sm.state_right:
                                 self.sm.state_right.cumulative_mask = backup_mask_r
                                 if backup_mask_r is not None:
                                     self.dm.save_debug_image("cumulative_startmask_right", backup_mask_r)
-                                    self.sm.state_right.is_fortsetzung = True 
+                                    # ---> NEU: Das echte Kamerabild als Optik-Referenz mitspeichern <---
+                                    if self.last_frame_r is not None:
+                                        self.dm.save_debug_image("cumulative_orig_right", self.last_frame_r)
+                                    self.sm.state_right.is_fortsetzung = True
                             
                             self.log("SYSTEM", "Leere Kamera-Puffer nach Pause...")
                             for _ in range(10): 

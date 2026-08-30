@@ -697,9 +697,13 @@ class OfflineLaborApp:
             mask_img = self.get_img(mask_name) if mask_name else np.zeros((h, w), dtype=np.uint8)
             if len(mask_img.shape) == 3: mask_img = cv2.cvtColor(mask_img, cv2.COLOR_BGR2GRAY)
 
-            # Für die Anzeige zwischenspeichern
-            self.last_live_img = ref_img
-            self.last_clean_live_img = ref_img.copy()
+            # ---> NEU: Das echte alte Bild (mit Löchern) suchen <---
+            cum_orig_name = next((f for f in self.all_files if f"cumulative_orig_{side}" in f), None)
+            cum_orig_img = self.get_img(cum_orig_name) if cum_orig_name else ref_img.copy()
+
+            # ZUWEISUNG: Links saubere Referenz, Rechts in Ansicht 5 das Bild mit Löchern!
+            self.last_live_img = ref_img                # Linke UI-Hälfte
+            self.last_clean_live_img = cum_orig_img     # Rechte UI-Hälfte (nur in Modus 5)
             self.last_diff_img = np.zeros_like(ref_img)
             self.last_diff_gesamt_img = mask_img
             self.last_ref_img = ref_img

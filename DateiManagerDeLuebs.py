@@ -373,6 +373,13 @@ darstellung_ohne_weissabgleich = yes
 #            except ValueError:
 #                pass    
         
+        # --- AUTO-PATCH: Veraltete Parameter aufräumen ---
+        if config.has_option('Anzeige', 'fenster_skalierung'):
+            print("🔧 Führe Auto-Patch aus: Entferne obsoleten Parameter 'fenster_skalierung'...")
+            self.remove_ini_value('Anzeige', 'fenster_skalierung')
+            needs_reload = True
+        
+        
         if not config.has_option('Kameras', 'cam_width_links'):
             print("🔧 Führe Auto-Patch aus: Füge Kamera-Auflösungen hinzu...")
             self.update_ini_value('Kameras', 'cam_width_links', '1280')
@@ -436,9 +443,9 @@ darstellung_ohne_weissabgleich = yes
                 if os.path.isfile(bild):
                     basename = os.path.basename(bild)
                     
-                    # ---> NEU: Ausnahme-Regel für den "Besen" <---
+                    # ---> NEU: cumulative_orig vor dem Löschen schützen! <---
                     if keep_startmask:
-                        if basename.startswith("cumulative_startmask_") or basename.startswith("referenz_"):
+                        if basename.startswith("cumulative_startmask_") or basename.startswith("cumulative_orig_") or basename.startswith("referenz_"):
                             continue # Überspringen, nicht löschen!
                             
                     try:
@@ -542,45 +549,8 @@ darstellung_ohne_weissabgleich = yes
         except Exception as e:
             self.write_log(f"SYSTEM: ❌ Fehler beim Exportieren von {filepath}: {e}")
             return False
+       
 
-
-        
-    #def create_debug_zip(self):
-    #    """Generiert den Pfad für das Debug-Paket und ruft die allgemeine ZIP-Funktion auf."""
-    #    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    #    zip_filepath = os.path.join(self.ZIP_FOLDER, f"Debug_Paket_{timestamp}.zip")
-    #    
-    #    return self.create_zip_package(zip_filepath)
-    #
-    #def create_zip_package(self, zip_filepath, match_data=None):
-    #    """
-    #    Erstellt ein ZIP-Archiv mit Config, Log und allen aktuellen Bildern.
-    #    Wenn match_data übergeben wird, wird zusätzlich eine match.json erzeugt.
-    #    """
-    #    try:
-    #        with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
-    #            if os.path.exists(self.CONFIG_FILE):
-    #                zipf.write(self.CONFIG_FILE, os.path.basename(self.CONFIG_FILE))
-    #            if os.path.exists(self.LOG_FILE):
-    #                zipf.write(self.LOG_FILE, os.path.basename(self.LOG_FILE))
-    #            
-    #            if os.path.exists(self.DEBUG_FOLDER):
-    #                for file in os.listdir(self.DEBUG_FOLDER):
-    #                    file_path = os.path.join(self.DEBUG_FOLDER, file)
-    #                    if os.path.isfile(file_path):
-    #                        zipf.write(file_path, os.path.join(self.DEBUG_FOLDER, file))
-    #                        
-    #            if match_data is not None:
-    #                json_str = json.dumps(match_data, indent=4)
-    #                zipf.writestr("match.json", json_str)
-    #                        
-    #        print(f"📦 ZIP-Paket erfolgreich erstellt: {zip_filepath}")
-    #        self.write_log(f"SYSTEM: 📦 Datenpaket erstellt -> {zip_filepath}")
-    #        return True
-    #    except Exception as e:
-    #        print(f"❌ Fehler beim Erstellen der ZIP: {e}")
-    #        self.write_log(f"SYSTEM: ❌ Fehler beim Erstellen der ZIP -> {e}")
-    #        return False
             
     def load_targets(self):
         """Lädt die zielscheiben.json aus dem Projektverzeichnis."""
@@ -593,3 +563,35 @@ darstellung_ohne_weissabgleich = yes
             print(f"❌ Fehler beim Lesen der {target_file}: {e}")
             self.write_log(f"SYSTEM: ❌ Fehler beim Lesen der zielscheiben.json -> {e}")
             return {}
+            
+            
+    def remove_ini_value(self, target_section, target_key):
+        """Entfernt einen veralteten Parameter restlos aus der config.ini."""
+        if not os.path.exists(self.CONFIG_FILE):
+            return
+
+        with open(self.CONFIG_FILE, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        new_lines = []
+        in_target_section = False
+        removed = False
+
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('[') and stripped.endswith(']'):
+                in_target_section = (stripped == f"[{target_section}]")
+                new_lines.append(line)
+            elif in_target_section and not stripped.startswith('#') and '=' in stripped:
+                k, _ = line.split('=', 1)
+                if k.strip() == target_key:
+                    removed = True
+                    continue  # Zeile gnadenlos überspringen (löschen)
+                new_lines.append(line)
+            else:
+                new_lines.append(line)
+
+        if removed:
+            with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
+                f.writelines(new_lines)
+            self.write_log(f"SYSTEM: 🧹 config.ini aufgeräumt: [{target_section}] {target_key} wurde entfernt.")
