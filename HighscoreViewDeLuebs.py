@@ -545,17 +545,18 @@ class HighscoreViewer:
                     px_x_r = cam_sec.getfloat('px_pro_mm_x_rechts', fallback=5.0)
                     px_y_r = cam_sec.getfloat('px_pro_mm_y_rechts', fallback=5.8)
 
-                # --- HEADER ---
-                info_lines.extend([
-                    f"{'MATCH ID:':<13} {match_id:06d}",
-                    f"{'VERSION:':<13} {meta.get('version', 'Unbekannt')}",
-                    f"{'SPIELER:':<13} {meta.get('spieler', 'Unbekannt')}",
-                    f"{'START:':<13} {meta.get('start_zeit', 'Unbekannt')}",
-                    f"{'GESPEICHERT:':<13} {meta.get('timestamp', 'Unbekannt')}",
-                    f"{'KAMERAS:':<13} {meta.get('kameras', 'Unbekannt')}",
-                    "-" * 85,
-                    "WICHTIGSTE ERKENNUNGS-PARAMETER (Aus Config-Snapshot):"
-                ])
+                # --- HEADER & ALLE METADATEN ---
+                info_lines.append(f"=== DETAIL-REPORT FÜR MATCH {match_id:06d} ===")
+                info_lines.append(f"Generiert von: {meta.get('programm_name', 'TargetVision')} (v{meta.get('version', 'Unbekannt')})\n")
+                
+                info_lines.append("METADATEN (match.json):")
+                # Wir iterieren über das gesamte Dictionary und geben jeden Key-Value-Pair aus
+                for key, value in meta.items():
+                    # Damit es sauber aussieht, füllen wir den Key auf 25 Zeichen auf
+                    info_lines.append(f"  {key:<25}: {value}")
+                
+                info_lines.append("-" * 85)
+                info_lines.append("WICHTIGSTE ERKENNUNGS-PARAMETER (Aus Config-Snapshot):")
                 
                 if config.has_section('Zielscheibe'):
                     zs = config['Zielscheibe']

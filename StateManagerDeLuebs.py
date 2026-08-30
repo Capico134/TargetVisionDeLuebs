@@ -5,6 +5,7 @@ import json
 import time
 import math
 from datetime import datetime
+import shutil
 
 
 class HighscoreManager:
@@ -304,6 +305,17 @@ class StateManager:
         start_zeit_timestamp = time.time() - dauer_sekunden
         start_zeit_str = datetime.fromtimestamp(start_zeit_timestamp).strftime("%d.%m.%y %H:%M:%S")
 
+        # ==========================================================
+        # ---> NEU: Freien Festplattenspeicher ermitteln <---
+        # ==========================================================
+        try:
+            # os.getcwd() fragt genau das Laufwerk ab, auf dem das Programm gerade liegt
+            usage = shutil.disk_usage(os.getcwd())
+            # Umrechnung von Bytes in Gigabyte (GB) auf 2 Nachkommastellen
+            free_space_gb = round(usage.free / (1024 ** 3), 2)
+        except Exception:
+            free_space_gb = -1.0 # Fallback, falls das OS die Auskunft verweigert
+
         metadata = {
             "spieler": spieler_str,  
             "programm_name": "TargetVision",
@@ -317,6 +329,7 @@ class StateManager:
             "erkennungs_methode": str(self.config.get('Erkennung', 'erkennungs_methode')),
             "match_id": int(self.current_match_id),
             "version": str(self.dm.get_current_version()),
+            "festplattenspeicher_gb": free_space_gb, # <--- NEU IM JSON!
             "start_zeit": start_zeit_str,
             "timestamp": datetime.now().strftime("%d.%m.%y %H:%M:%S"),
             "center_l": [int(center_l_raw[0]), int(center_l_raw[1])] if (cam_l and center_l_raw) else None,
