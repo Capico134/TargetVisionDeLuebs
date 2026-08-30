@@ -281,7 +281,7 @@ class TargetDetector:
                         continue 
                         
                     # 1. Check: Ist der Radius ohnehin perfekt in der Norm UND gut gefüllt?
-                    elif limit_sichel <= radius <= limit_riss and base_score > 130.0:
+                    elif limit_sichel <= radius <= limit_riss and base_score > 145.0:
                         self.log(side, f"✅ Loch ist in der Norm und gut gefüllt (Radius {radius:.1f}px | Score {base_score:.1f}). Überspringe Hough!")
                         cx, cy = int(base_x), int(base_y) # <--- HIER base_x/y nutzen!
                         final_shot_score = base_score

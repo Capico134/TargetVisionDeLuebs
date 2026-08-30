@@ -154,7 +154,7 @@ class DateiManager:
         """
         Aktualisiert die physische config.ini aus einem Dictionary, 
         erhält alle Kommentare und erstellt ein Backup.
-        Format von updates_dict: {'Sektion': {'Key': 'Wert', ...}, ...}
+        Fügt fehlende Keys sicher in die zugehörige Sektion ein!
         """
         if not os.path.exists(self.CONFIG_FILE):
             return False
@@ -170,31 +170,51 @@ class DateiManager:
         # Zeile für Zeile durchgehen und Werte austauschen
         for section, keys in updates_dict.items():
             in_target_section = False
+            section_found = False
+            insert_idx = -1
+            
             for i, line in enumerate(lines):
                 stripped = line.strip()
                 if stripped.startswith('[') and stripped.endswith(']'):
-                    in_target_section = (stripped == f"[{section}]")
+                    if stripped == f"[{section}]":
+                        in_target_section = True
+                        section_found = True
+                        insert_idx = i + 1 # Fallback, falls Sektion komplett leer ist
+                    else:
+                        if in_target_section:
+                            in_target_section = False
+                            insert_idx = i # Wir haben das Ende der Sektion erreicht!
+                            
                 elif in_target_section and not stripped.startswith('#') and '=' in stripped:
                     k, _ = line.split('=', 1)
                     key_clean = k.strip()
+                    insert_idx = i + 1 # Wir merken uns stets die Zeile NACH dem letzten Parameter
                     if key_clean in keys:
                         # Wert austauschen, aber Zeilenumbruch behalten
                         lines[i] = f"{key_clean} = {keys[key_clean]}\n"
                         # Aus dem dict entfernen, damit wir wissen, was übrig ist
                         del keys[key_clean] 
             
-            # Fehlende (neue) Keys am Ende der Datei anhängen
+            # ---> DER FIX: Fehlende Keys clever einfügen <---
             if keys:
-                lines.append(f"\n[{section}]\n")
-                for k, v in keys.items():
-                    lines.append(f"{k} = {v}\n")
+                if section_found:
+                    # Sektion existiert, wir schieben die fehlenden Keys einfach unten in die Sektion rein
+                    if insert_idx == -1: insert_idx = len(lines)
+                    new_lines = [f"{k} = {v}\n" for k, v in keys.items()]
+                    lines[insert_idx:insert_idx] = new_lines
+                else:
+                    # Sektion existiert GAR NICHT im Dokument -> Komplett neu am Ende anhängen
+                    if lines and not lines[-1].endswith('\n'):
+                        lines.append('\n')
+                    lines.append(f"\n[{section}]\n")
+                    for k, v in keys.items():
+                        lines.append(f"{k} = {v}\n")
 
         with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
             f.writelines(lines)
             
         self.write_log("SYSTEM: 💾 config.ini (Bulk-Update) erfolgreich gespeichert. Backup erstellt.")
         return True
-
 
     def load_or_create_config(self):
         """Lädt die Konfiguration, erstellt sie neu oder führt Patches aus."""
