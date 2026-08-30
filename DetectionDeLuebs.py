@@ -418,9 +418,9 @@ class TargetDetector:
                     # HIER FEHLTE DIE ZUWEISUNG:
                     final_shot_score, _, _ = self.calculate_hole_score(cx, cy, self.caliber_radius, thresh_new, thresh_raw)
                 
-                # --- FEHLALARM-FILTER: Score < 80 ---
+                # --- FEHLALARM-FILTER: Score < 70 ---
                 if final_shot_score < 80:
-                    self.log(side, f"🚫 Fehlalarm: Score {final_shot_score:.1f} < 80 -> nicht als Treffer gewertet!")
+                    self.log(side, f"🚫 Fehlalarm: Score {final_shot_score:.1f} < 70 -> nicht als Treffer gewertet!")
                     update_mask_only = True
                     continue
 
