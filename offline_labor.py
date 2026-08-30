@@ -236,14 +236,30 @@ class OfflineLaborApp:
         self.log_text.pack(side=tk.BOTTOM, fill=tk.X)
         # -------------------------------------------
         
-        # RECHTS: Steuerpult
+        # RECHTS: Steuerpult (Nur noch EINMAL definiert!)
         control_frame = tk.Frame(main_frame, width=400)
         control_frame.pack(side=tk.RIGHT, fill=tk.Y)
         
+        # ==========================================================
+        # ---> DER KAMERA-UMSCHALTER <---
+        # ==========================================================
+        cam_frame = tk.LabelFrame(control_frame, text=" Aktive Kamera ", pady=5, padx=5)
+        cam_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.active_camera_var = tk.StringVar(value="left")
+        
+        self.rb_cam_left = tk.Radiobutton(cam_frame, text="Kamera Links", variable=self.active_camera_var, value="left", command=self.switch_camera)
+        self.rb_cam_left.pack(side=tk.LEFT, expand=True)
+        
+        self.rb_cam_right = tk.Radiobutton(cam_frame, text="Kamera Rechts", variable=self.active_camera_var, value="right", command=self.switch_camera)
+        self.rb_cam_right.pack(side=tk.LEFT, expand=True)
+        # ==========================================================
+        
+        # Schuss-Navigation (Nur noch EINMAL definiert!)
         nav_frame = tk.LabelFrame(control_frame, text=" Schuss-Navigation ", pady=10, padx=10)
         nav_frame.pack(fill=tk.X, pady=(0, 15))
         
-        # ---> NEU: 5 Buttons mit fester Breite und ohne Expand <---
+        # ---> 5 Buttons mit fester Breite und ohne Expand <---
         self.btn_first = tk.Button(nav_frame, text="<<", state=tk.DISABLED, command=self.first_shot, width=3)
         self.btn_first.pack(side=tk.LEFT, padx=(0, 2))
         self.btn_prev = tk.Button(nav_frame, text="◀ Zurück", state=tk.DISABLED, command=self.prev_shot, width=8)
@@ -359,6 +375,17 @@ class OfflineLaborApp:
                        variable=self.show_orig_hits_var, fg="#f1c40f", 
                        command=lambda: self.on_param_change(force=True)).pack(anchor=tk.W, pady=(5, 0))
 
+    def switch_camera(self):
+        """Wird aufgerufen, wenn man zwischen Links/Rechts umschaltet."""
+        self.current_index = 0 # Zurück auf Start!
+        self.process_and_display()
+
+    def get_current_side_origs(self):
+        """Gibt nur die Original-Schüsse der aktuell gewählten Kamera zurück."""
+        side = self.active_camera_var.get()
+        return sorted([f for f in self.orig_files if side in f])
+
+
     # ---> NEU: Parameter 'show_gui' hinzugefügt, damit das Programm nicht crasht <---
     def print_log(self, side, msg, show_gui=False):
         """Simuliert den Log-Output der Engine in der GUI"""
@@ -399,37 +426,9 @@ class OfflineLaborApp:
                 str(self.gesamt_anteil_am_200score_var): self.gesamt_anteil_am_200score_var.get()
             }
 
-    def load_zip(self, filepath=None):
-        if not filepath:
-            filepath = filedialog.askopenfilename(title="Wähle ZIP", filetypes=[("ZIP", "*.zip")])
-            
-        if filepath:
-            self.current_zip_path = filepath
-            self.lbl_file.config(text=f"📂 {os.path.basename(filepath)}", fg="black")
-            
-            self.package_data = self.dm.import_match_package(filepath)
-            if not self.package_data:
-                messagebox.showerror("Fehler", "Konnte ZIP-Paket nicht laden!")
-                return
-                
-            # Schick ausgelagert: Slider aus Parser befüllen
-            parser = self.package_data.get('config')
-            self.apply_config_to_ui(parser)
-            
-            self.original_match_data = self.package_data.get('match_data')
-            
-            self.all_files = list(self.package_data['images'].keys())
-            self.orig_files = sorted([f for f in self.all_files if "_orig" in f])
-            if not self.orig_files:
-                self.lbl_image.config(text="⚠️ Keine Schuss-Bilder (_orig) gefunden!", fg="red")
-                return
-                
-            self.current_index = 0
-            self.btn_prev.config(state=tk.NORMAL)
-            self.btn_next.config(state=tk.NORMAL)
-            self.btn_first.config(state=tk.NORMAL)
-            self.btn_last.config(state=tk.NORMAL)
-            self.process_and_display()
+    def get_img(self, name):
+        """Holt ein Bild blitzschnell aus dem vorbereiteten RAM-Speicher"""
+        return self.package_data['images'].get(name)
 
     def load_local_config(self):
         """Lädt die lokale config.ini im Stand-Alone Modus."""
@@ -448,9 +447,43 @@ class OfflineLaborApp:
         # Exakt dieselbe Hilfsfunktion nutzen – keine Redundanz mehr!
         self.apply_config_to_ui(parser)
 
-    def get_img(self, name):
-        """Holt ein Bild blitzschnell aus dem vorbereiteten RAM-Speicher"""
-        return self.package_data['images'].get(name)
+    def load_zip(self, filepath=None):
+        if not filepath:
+            filepath = filedialog.askopenfilename(title="Wähle ZIP", filetypes=[("ZIP", "*.zip")])
+            
+        if filepath:
+            self.current_zip_path = filepath
+            self.lbl_file.config(text=f"📂 {os.path.basename(filepath)}", fg="black")
+            
+            self.package_data = self.dm.import_match_package(filepath)
+            if not self.package_data:
+                messagebox.showerror("Fehler", "Konnte ZIP-Paket nicht laden!")
+                return
+                
+            parser = self.package_data.get('config')
+            self.apply_config_to_ui(parser)
+            self.original_match_data = self.package_data.get('match_data')
+            
+            self.all_files = list(self.package_data['images'].keys())
+            self.orig_files = sorted([f for f in self.all_files if "_orig" in f])
+            
+            # ---> NEU: Prüfen, welche Kameras überhaupt Daten im Paket haben <---
+            has_left = any("left" in f for f in self.all_files)
+            has_right = any("right" in f for f in self.all_files)
+            
+            self.rb_cam_left.config(state=tk.NORMAL if has_left else tk.DISABLED)
+            self.rb_cam_right.config(state=tk.NORMAL if has_right else tk.DISABLED)
+            
+            if has_left: self.active_camera_var.set("left")
+            elif has_right: self.active_camera_var.set("right")
+                
+            # Wir starten sauber bei 0 (Referenzbild)
+            self.current_index = 0
+            self.btn_prev.config(state=tk.NORMAL)
+            self.btn_next.config(state=tk.NORMAL)
+            self.btn_first.config(state=tk.NORMAL)
+            self.btn_last.config(state=tk.NORMAL)
+            self.process_and_display()
 
     def prev_shot(self):
         if self.current_index > 0:
@@ -458,54 +491,37 @@ class OfflineLaborApp:
             self.process_and_display()
 
     def next_shot(self):
-        if self.current_index < len(self.orig_files) - 1:
+        if self.current_index < len(self.get_current_side_origs()):
             self.current_index += 1
             self.process_and_display()
 
-    # ---> NEU: Intelligente Pfeiltasten-Steuerung <---
     def safe_prev_shot(self, event=None):
-        """Geht einen Schuss zurück, außer der Cursor ist gerade im Textfeld."""
-        if self.root.focus_get() != self.entry_shot_jump:
-            self.prev_shot()
+        if self.root.focus_get() != self.entry_shot_jump: self.prev_shot()
 
     def safe_next_shot(self, event=None):
-        """Geht einen Schuss weiter, außer der Cursor ist gerade im Textfeld."""
-        if self.root.focus_get() != self.entry_shot_jump:
-            self.next_shot()
+        if self.root.focus_get() != self.entry_shot_jump: self.next_shot()
 
     def first_shot(self):
-        if self.orig_files and self.current_index > 0:
+        if self.current_index > 0:
             self.current_index = 0
             self.process_and_display()
 
     def last_shot(self):
-        if self.orig_files and self.current_index < len(self.orig_files) - 1:
-            self.current_index = len(self.orig_files) - 1
+        max_idx = len(self.get_current_side_origs())
+        if self.current_index < max_idx:
+            self.current_index = max_idx
             self.process_and_display() 
 
     def jump_to_shot(self, event=None):
-        if not self.orig_files:
-            return
+        max_idx = len(self.get_current_side_origs())
         try:
-            # Benutzereingabe auslesen (Benutzer tippen 1-basiert)
             target_shot = int(self.shot_jump_var.get().strip())
-            
-            # Sicherheits-Check: Zahl in den gültigen Bereich zwingen
-            target_shot = max(1, min(target_shot, len(self.orig_files)))
-            
-            # Auf den internen (0-basierten) Index umrechnen
-            self.current_index = target_shot - 1
-            
-            # Simulation starten
+            target_shot = max(0, min(target_shot, max_idx))
+            self.current_index = target_shot
             self.process_and_display()
-            
-            # Fokus vom Textfeld nehmen, damit man danach wieder scrollen/zoomen kann
             self.root.focus()
-            
         except ValueError:
-            # Wenn jemand aus Versehen Buchstaben ("abc") eintippt, 
-            # setzen wir einfach den aktuellen Stand wieder ein
-            self.shot_jump_var.set(str(self.current_index + 1))
+            self.shot_jump_var.set(str(self.current_index))
 
  
     def on_param_change(self, event=None, force=False):
@@ -652,28 +668,56 @@ class OfflineLaborApp:
         self.on_mouse_move(event)   
 
     def process_and_display(self):
-        # ---> NEU: Klaut dem Textfeld sofort den Fokus, egal ob Slider oder Button benutzt wurde! <---
         self.root.focus()
+        if not self.current_zip_path: return
         
-        if not self.orig_files or not self.current_zip_path: return
-        # ---> NEU: Das Textfeld und das Total-Label updaten <---
-        self.shot_jump_var.set(str(self.current_index + 1))
-        self.lbl_shot_total.config(text=f" / {len(self.orig_files)}")
-        self.log_text.delete(1.0, tk.END) # Log leeren
+        side = self.active_camera_var.get()
+        side_origs = self.get_current_side_origs()
         
-        orig_name = self.orig_files[self.current_index]
-        side = 'left' if 'left' in orig_name else 'right'
+        # UI updaten
+        self.shot_jump_var.set(str(self.current_index))
+        self.lbl_shot_total.config(text=f" / {len(side_origs)}")
+        self.log_text.delete(1.0, tk.END)
         
-        # ---> NEU: Dateiname live in den Fenster-Rahmen schreiben <---
+        # ==========================================================
+        # ---> SONDERFALL: INDEX 0 = DAS REFERENZBILD <---
+        # ==========================================================
+        if self.current_index == 0:
+            self.image_frame.config(text=f" Live-Labor (Referenz & Startmaske)  |  📷 Kamera {side.upper()} ")
+            self.print_log("SYSTEM", f"Zeige initialen Zustand für Kamera {side.upper()}.")
+            
+            # Bilder laden (Mit schwarzem Fallback-Bild, falls nichts existiert)
+            dummy_img = self.get_img(side_origs[0]) if side_origs else None
+            h, w = dummy_img.shape[:2] if dummy_img is not None else (720, 1280)
+            
+            ref_name = next((f for f in self.all_files if f"referenz_{side}" in f), None)
+            ref_img = self.get_img(ref_name) if ref_name else np.zeros((h, w, 3), dtype=np.uint8)
+            
+            mask_name = next((f for f in self.all_files if f"cumulative_startmask_{side}" in f), None)
+            mask_img = self.get_img(mask_name) if mask_name else np.zeros((h, w), dtype=np.uint8)
+            if len(mask_img.shape) == 3: mask_img = cv2.cvtColor(mask_img, cv2.COLOR_BGR2GRAY)
+
+            # Für die Anzeige zwischenspeichern
+            self.last_live_img = ref_img
+            self.last_clean_live_img = ref_img.copy()
+            self.last_diff_img = np.zeros_like(ref_img)
+            self.last_diff_gesamt_img = mask_img
+            self.last_ref_img = ref_img
+            self.last_raw_diff = np.zeros((h, w), dtype=np.uint8)
+            self.last_thresh_raw = np.zeros((h, w), dtype=np.uint8)
+            self.last_history_mask = np.zeros((h, w), dtype=np.uint8)
+            
+            self.update_image_display()
+            return
+            
+        # ==========================================================
+        # ---> NORMALE SCHÜSSE (Index > 0) <---
+        # ==========================================================
+        target_idx = self.current_index - 1
+        orig_name = side_origs[target_idx]
+        
         self.image_frame.config(text=f" Live-Labor (Mausrad = Zoom | Klick = Bewegen | Rechtsklick = Reset)  |  📄 {orig_name} ")
         
-        # Alle Schüsse DIESER Seite bis zum aktuellen ermitteln (für Time-Travel)
-        side_origs = sorted([f for f in self.orig_files if side in f])
-        try:
-            target_idx = side_origs.index(orig_name)
-        except ValueError:
-            return
-
         # 1. DUMMYS AUFBAUEN
         d_config = DummyConfig(self)
         d_dm = DummyDateiManager(self)
@@ -682,47 +726,34 @@ class OfflineLaborApp:
         # 2. ECHTE ENGINE STARTEN
         detector = TargetDetector(d_config, d_dm, d_sm, self.print_log)
         
-        ##### WEG START   with zipfile.ZipFile(self.current_zip_path, 'r') as zf:
         ref_name = next((f for f in self.all_files if f"referenz_{side}" in f), None)
         if not ref_name: return
-        
-        ref_img = self.get_img( ref_name)
+        ref_img = self.get_img(ref_name)
         detector.set_reference_image(ref_img, side)
         
-        # ---> NEU: Start-Maske (Fortsetzung) suchen und injizieren <---
         startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{side}" in f), None)
         if startmask_name:
-            # Bild laden und in Graustufen (1 Kanal) wandeln, wie es die cumulative_mask erwartet
-            startmask_bgr = self.get_img( startmask_name)
+            startmask_bgr = self.get_img(startmask_name)
             startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
-            
-            # In den Dummy-State schmuggeln
             state = d_sm.state_left if side == 'left' else d_sm.state_right
             state.cumulative_mask = startmask_gray
             self.print_log("SYSTEM", f"Fortsetzung erkannt! Start-Maske für {side} geladen.")
-        # -------------------------------------------------------------
         
         # 3. TIME-TRAVEL SIMULATION
-        # Wir spielen alle Bilder der Seite ab, um die Maske perfekt aufzubauen
         for i in range(target_idx + 1):
-            img = self.get_img( side_origs[i])
+            img = self.get_img(side_origs[i])
             
-            # ---> NEU: Die unübersehbare Trennlinie vor dem aktuellen Schuss <---
             if i == target_idx:
                 self.log_text.insert(tk.END, "\n" + "▼"*70 + "\n")
                 self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR DEN AKTUELLEN SCHUSS ({i+1})  ███\n")
                 self.log_text.insert(tk.END, "▼"*70 + "\n\n")
                 
-                # ==========================================================
-                # ---> DER FIX: Geisterbilder aus der Vergangenheit löschen! <---
-                # ==========================================================
                 d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
                 d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
                 
                 live_img = img.copy()
                 clean_live_img = img.copy()
                 
-                # ---> NEU: Snapshot der Maske BEVOR die Engine den neuen Schuss reinmalt! <---
                 temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
                 if temp_state.cumulative_mask is not None:
                     history_mask = temp_state.cumulative_mask.copy()
@@ -731,7 +762,8 @@ class OfflineLaborApp:
                 
             detector.detect_new_shot(img, side)
 
-        ##### WEG ENDE
+        # 4. VISUALISIERUNG DER ENGINE-ERGEBNISSE
+        # ... (Ab hier geht der bisherige Code von "Hole das Diff-Bild direkt aus dem Dummy..." exakt wie gewohnt weiter!)
 
         # 4. VISUALISIERUNG DER ENGINE-ERGEBNISSE
         # Hole das Diff-Bild direkt aus dem Dummy-DateiManager der Engine!
