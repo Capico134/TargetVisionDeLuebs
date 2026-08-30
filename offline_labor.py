@@ -146,16 +146,47 @@ class OfflineLaborApp:
         lbl = tk.Label(frame, text=label_text, width=25, anchor="w")
         lbl.pack(side=tk.LEFT)
         
-        entry = tk.Entry(frame, textvariable=tk_var, width=6, justify="right")
+        # ---> DER FIX: Wir trennen das Textfeld von der strengen Slider-Variable! <---
+        entry = tk.Entry(frame, width=6, justify="right")
         entry.pack(side=tk.RIGHT, padx=(5, 0))
+        entry.insert(0, str(tk_var.get()))
         
         scale = tk.Scale(frame, from_=from_, to_=to_, resolution=res, orient=tk.HORIZONTAL, 
                          variable=tk_var, command=self.on_param_change)
         scale.pack(side=tk.RIGHT, fill=tk.X, expand=True)
         
-        entry.bind('<Return>', lambda e: self.on_param_change(force=True))
+        # ---> NEU: Wert erst bei Enter oder Klick woanders übernehmen <---
+        def apply_entry_val(event=None):
+            try:
+                # Prüfen, ob es eine Kommazahl oder Ganzzahl sein soll
+                if isinstance(tk_var, tk.IntVar):
+                    val = int(float(entry.get()))
+                else:
+                    val = float(entry.get())
+                tk_var.set(val)
+                self.on_param_change(force=True)
+            except ValueError:
+                pass # Wenn jemand "abc" tippt, ignorieren wir es
+                
+            # Nach der Übernahme formatieren wir das Feld wieder sauber 
+            # (falls der Slider es z.B. ans Limit gezwungen hat)
+            entry.delete(0, tk.END)
+            entry.insert(0, str(tk_var.get()))
+            self.root.focus() # Fokus vom Feld nehmen, damit Pfeiltasten wieder gehen!
+
+        # Löst aus, wenn Enter gedrückt wird oder das Textfeld den Fokus verliert
+        entry.bind('<Return>', apply_entry_val)
+        entry.bind('<FocusOut>', apply_entry_val)
         
-        # ---> NEU: Der Trace-Spion (Live-Data-Binding) <---
+        # ---> NEU: Wenn der SLIDER bewegt wird, updaten wir das Textfeld (außer der Nutzer tippt gerade!) <---
+        def sync_entry(*args):
+            if self.root.focus_get() != entry:
+                entry.delete(0, tk.END)
+                entry.insert(0, str(tk_var.get()))
+                
+        tk_var.trace_add("write", sync_entry)
+
+        # ---> NEU: Der Trace-Spion (Live-Data-Binding für die Config) <---
         if key:
             def sync_to_config(*args):
                 if getattr(self, 'package_data', None) and self.package_data.get('config'):
@@ -164,7 +195,6 @@ class OfflineLaborApp:
                         parser.add_section(section)
                     parser.set(section, key, str(tk_var.get()))
             
-            # Überwacht jeden Schreibvorgang auf die tk_var
             tk_var.trace_add("write", sync_to_config)
 
         # ---> Mittelklick-Reset <---
