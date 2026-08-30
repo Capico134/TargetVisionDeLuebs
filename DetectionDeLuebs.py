@@ -470,7 +470,7 @@ class TargetDetector:
                 self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!", True)
             
             # Maske für BEIDE Fälle (Treffer & Discard-Risse) updaten
-            state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, thresh_raw)
+            state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, thresh_new)
             self.save_debug_image(f"diff_gesamt_{side}", state.cumulative_mask)
             self.save_debug_image(f"diff_letzter_treffer_{side}", thresh_new)
             self.save_debug_image(f"letzte_aufnahme_{side}", frame)

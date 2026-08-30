@@ -18,7 +18,77 @@ from DetectionDeLuebs import TargetDetector
 from DateiManagerDeLuebs import DateiManager
 
 import LoggerDeLuebs
+from HandbuchDeLuebs import PARAMETER_LEXIKON
 
+# ==========================================
+# TOOLTIP-KLASSE FÜR DIE GUI
+# ==========================================
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        self.show_id = None
+        self.hide_id = None
+        
+        self.widget.bind("<Enter>", self.enter_widget)
+        self.widget.bind("<Leave>", self.leave_widget)
+        
+    def enter_widget(self, event=None):
+        self.cancel_hide()
+        if not self.tip_window:
+            self.show_id = self.widget.after(500, self.show)
+            
+    def leave_widget(self, event=None):
+        if self.show_id:
+            self.widget.after_cancel(self.show_id)
+            self.show_id = None
+        self.schedule_hide()
+        
+    def enter_tooltip(self, event=None):
+        self.cancel_hide()
+        
+    def leave_tooltip(self, event=None):
+        self.schedule_hide()
+        
+    def schedule_hide(self):
+        self.cancel_hide()
+        # 200ms Gnadenfrist, um mit der Maus vom Label auf den Tooltip zu wechseln
+        self.hide_id = self.widget.after(200, self.hide)
+        
+    def cancel_hide(self):
+        if self.hide_id:
+            self.widget.after_cancel(self.hide_id)
+            self.hide_id = None
+            
+    def show(self):
+        if self.tip_window or not self.text: return
+        x, y, cx, cy = self.widget.bbox("insert")
+        
+        # Etwas weiter weg geschoben, damit große Mauszeiger den Text nicht verdecken
+        x += self.widget.winfo_rootx() + 45
+        y += self.widget.winfo_rooty() + 30
+        
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True) # Entfernt den Windows-Rahmen
+        tw.wm_geometry(f"+{x}+{y}")
+        
+        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
+                         background="#ffffe0", relief=tk.SOLID, borderwidth=1,
+                         font=("Arial", 10), wraplength=350, padx=5, pady=5)
+        label.pack()
+        
+        # ---> NEU: Der Tooltip registriert jetzt auch selbst, ob die Maus auf ihm ruht! <---
+        tw.bind("<Enter>", self.enter_tooltip)
+        tw.bind("<Leave>", self.leave_tooltip)
+        label.bind("<Enter>", self.enter_tooltip)
+        label.bind("<Leave>", self.leave_tooltip)
+        
+    def hide(self):
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
+            
 # ==========================================
 # DUMMY-KLASSEN FÜR DIE TARGET-DETECTION
 # ==========================================
@@ -100,7 +170,7 @@ class DummyDateiManager:
 class OfflineLaborApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("TargetVision Replay-Labor (Live Engine)")
+        self.root.title("Labor & Einstellungen")
         self.root.geometry("1400x850")
         
         self.dm = DateiManager() # <--- NEU: Unser zentraler ELA-Werkzeugkasten
@@ -145,6 +215,9 @@ class OfflineLaborApp:
         
         lbl = tk.Label(frame, text=label_text, width=25, anchor="w")
         lbl.pack(side=tk.LEFT)
+        # ---> NEU: Tooltip aus dem Handbuch anhängen, falls vorhanden <---
+        if key and key in PARAMETER_LEXIKON:
+            ToolTip(lbl, PARAMETER_LEXIKON[key])
         
         # ---> DER FIX: Wir trennen das Textfeld von der strengen Slider-Variable! <---
         entry = tk.Entry(frame, width=6, justify="right")
@@ -221,26 +294,23 @@ class OfflineLaborApp:
         top_frame.pack(fill=tk.X)
         
         tk.Button(top_frame, text="📦 ZIP-Paket laden", command=self.load_zip, font=("Arial", 10, "bold")).pack(side=tk.LEFT)
-        self.lbl_file = tk.Label(top_frame, text="Kein ZIP ausgewählt", fg="gray", font=("Arial", 10))
-        self.lbl_file.pack(side=tk.LEFT, padx=15)
         
-        # ---> HIER WANDERT DER BUTTON HIN <---
+        # ---> lbl_file wurde hier komplett gelöscht! <---
+        
         self.btn_compare = tk.Button(top_frame, text="📊 Abweichung messen", command=self.show_comparison, font=("Arial", 10, "bold"))
         self.btn_compare.pack(side=tk.LEFT, padx=20)        
         
-        #Button Test-Case-Export
         btn_export = tk.Button(top_frame, text="💾 Test-Case exportieren", command=self.export_test_case)
         btn_export.pack(side=tk.LEFT, pady=5, padx=(0, 20))
         
         btn_einstellungen = tk.Button(top_frame, text="⚙️ Erweiterte Einstellungen", command=self.open_all_settings_dialog, bg="#34495e", fg="white")
-        btn_einstellungen.pack(side=tk.LEFT, pady=5, padx=(0, 20))# (fill=tk.X, pady=(15, 0)
+        btn_einstellungen.pack(side=tk.LEFT, pady=5, padx=(0, 20))
         
-        # ---> NEU: Der Übernehmen-Button <---
-        self.btn_apply = tk.Button(top_frame, text="✅ Speichern und schließen", 
+        # ---> NEU: Der lange, eindeutige Button-Text <---
+        self.btn_apply = tk.Button(top_frame, text="✅ Einstellungen speichern und Labor schließen", 
                                    command=self.apply_to_live, bg="#27ae60", fg="white", font=("Arial", 10, "bold"))
         self.btn_apply.pack(side=tk.LEFT, pady=5)
         
-        # ---> NEU: Das Koordinaten-Label oben rechts <---
         self.lbl_coords = tk.Label(top_frame, text="Maus nicht im Bild", font=("Consolas", 12, "bold"), fg="#3498db")
         self.lbl_coords.pack(side=tk.RIGHT, padx=15)
         
@@ -476,7 +546,7 @@ class OfflineLaborApp:
             'match_data': None
         }
         
-        self.lbl_file.config(text="⚙️ Lokale config.ini geladen", fg="#2980b9")
+        self.root.title("Labor & Einstellungen - Lokale config.ini")
         self.print_log("SYSTEM", "Stand-Alone Modus: Lokale config.ini geladen.")
         self.lbl_image.config(text="Stand-Alone Modus aktiv.\n(Klicke auf 'Erweiterte Einstellungen')", fg="white")
         
@@ -489,7 +559,7 @@ class OfflineLaborApp:
             
         if filepath:
             self.current_zip_path = filepath
-            self.lbl_file.config(text=f"📂 {os.path.basename(filepath)}", fg="black")
+            self.root.title(f"Labor & Einstellungen - {os.path.basename(filepath)}")
             
             self.package_data = self.dm.import_match_package(filepath)
             if not self.package_data:
@@ -1238,17 +1308,43 @@ class OfflineLaborApp:
         sowie Vorher/Nachher-Backups zur Dokumentation.
         """
         if not getattr(self, 'package_data', None):
-            messagebox.showwarning("Fehler", "Es ist kein Paket geladen!")
+            messagebox.showwarning("Fehler", "Es ist keine Konfiguration geladen!")
             return
 
-        antwort = messagebox.askyesno(
-            "Parameter übernehmen", 
-            "Möchtest du die aktuellen Einstellungen in die Live-Umgebung (config.ini) schreiben?\n\n"
-            "Das Labor wird danach geschlossen."
-        )
+        # ---> NEU: Die 3-Wege Text-Weiche <---
+        current_path = getattr(self, 'current_zip_path', '')
+
+        if not current_path:
+            # Fall 1: Stand-Alone Modus (Nur lokale config.ini)
+            titel = "Globale Einstellungen speichern?"
+            text = (
+                "Möchtest du diese Werte direkt in die System-Konfiguration schreiben?\n\n"
+                "▶ Sie gelten ab sofort als Standard für alle NEUEN Matches.\n\n"
+                "Das Labor wird danach geschlossen."
+            )
+        elif os.path.basename(current_path) == "Live_Tuning_Bridge.zip":
+            # Fall 2: Live-Tuning am Schießstand
+            titel = "Live-System aktualisieren?"
+            text = (
+                "Möchtest du diese Einstellungen an das laufende System am Schießstand senden?\n\n"
+                "▶ Das aktuelle Match wird sofort damit fortgesetzt.\n"
+                "▶ Das Labor wird danach geschlossen."
+            )
+        else:
+            # Fall 3: Altes Highscore-Match geladen
+            titel = "Als neuen Standard speichern?"
+            text = (
+                "Möchtest du diese Werte als neuen Standard für die Zukunft übernehmen?\n\n"
+                "WICHTIG: Das geladene Match-Archiv bleibt davon unberührt! "
+                "Diese Werte gelten nur für NEUE Matches.\n\n"
+                "Das Labor wird danach geschlossen."
+            )
+
+        antwort = messagebox.askyesno(titel, text)
         if not antwort:
             return
-
+            
+            
         try:
             current_path = getattr(self, 'current_zip_path', '')
             export_dir = os.path.join(os.getcwd(), "labor_export")
@@ -1535,7 +1631,7 @@ class OfflineLaborApp:
         info_frame = tk.Frame(dialog, bg="#fff3cd", bd=1, relief=tk.SOLID)
         info_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
         info_lbl = tk.Label(info_frame, 
-                            text="⚠️ WICHTIGER HINWEIS:\nTiefe Systemeinstellungen (wie Kamera-Zuweisungen oder Vollbild)\nwerden erst nach einem Neustart von TargetVision aktiv.\nAlle Erkennungs-Parameter und Bild-Zuschnitte (Crops) greifen sofort!",
+                            text="⚠️ WICHTIGER HINWEIS:\nTiefe Systemeinstellungen (wie Kameras, Bild-Zuschnitte/Crops oder Vollbild)\nwerden erst nach einem Neustart von TargetVision aktiv.\nAlle Erkennungs-Parameter (Filter, Toleranzen) greifen sofort!",
                             bg="#fff3cd", fg="#856404", font=("Arial", 9), justify=tk.CENTER)
         info_lbl.pack(padx=5, pady=5)
         # =========================================================================
