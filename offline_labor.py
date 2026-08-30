@@ -310,7 +310,7 @@ class OfflineLaborApp:
         # --- Hier kommen die Slider in das neue scrollbare param_frame ---
         self.make_slider(param_frame, "hit_tolerance:", self.hit_tolerance_var, 1, 100, key="hit_tolerance")
         self.make_slider(param_frame, "min_hole_area:", self.min_hole_area_var, 5, 500, key="min_hole_area")
-        self.make_slider(param_frame, "caliber_radius:", self.caliber_radius_var, 5, 50, key="caliber_radius")
+        self.make_slider(param_frame, "caliber_radius:", self.caliber_radius_var, 5.0, 50.0, res=0.1, key="caliber_radius")
         tk.Label(param_frame, text="--- Hybrid & Hough Faktoren ---", fg="gray").pack(pady=(10, 5))
         self.make_slider(param_frame, "hybrid_sichel_faktor:", self.hybrid_sichel_faktor_var, 0.1, 1.5, 0.01, key="hybrid_sichel_faktor")
         self.make_slider(param_frame, "hybrid_riss_faktor:", self.hybrid_riss_faktor_var, 1.0, 3.0, 0.001, key="hybrid_riss_faktor")
@@ -385,7 +385,7 @@ class OfflineLaborApp:
                     # Alte Parameter
                     self.hit_tolerance_var.set(parser.getint('Erkennung', 'hit_tolerance', fallback=22))
                     self.min_hole_area_var.set(parser.getint('Erkennung', 'min_hole_area', fallback=25))
-                    self.caliber_radius_var.set(parser.getint('Erkennung', 'caliber_radius', fallback=11))
+                    self.caliber_radius_var.set(parser.getfloat('Erkennung', 'caliber_radius', fallback=11))
                     self.hybrid_riss_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.175))
                     self.hybrid_sichel_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=1.05))
                     self.hybrid_discard_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5))
@@ -1219,6 +1219,12 @@ class OfflineLaborApp:
                 for img_name, img_data in d_dm.debug_images.items():
                     self.dm.save_debug_image(img_name, img_data)
 
+                # =========================================================
+                # ---> NEU: Warten, bis der Koch alle Bilder auf die Platte geschrieben hat! <---
+                # =========================================================
+                if hasattr(self.dm, 'flush_image_queue'):
+                    self.dm.flush_image_queue()
+                    
                 # =========================================================
                 # ---> DER FIX 2: Die neuen JSON-Daten bauen! <---
                 # =========================================================

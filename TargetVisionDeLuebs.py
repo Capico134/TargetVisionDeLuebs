@@ -33,6 +33,12 @@ class TargetTracker:
         # ---> NEU: Kameraindizes aus der Config laden <---
         cam_left_idx = config.getint('Kameras', 'cam_left_index')
         cam_right_idx = config.getint('Kameras', 'cam_right_index')
+
+        width_l = config.getint('Kameras', 'cam_width_links', fallback=1280)
+        height_l = config.getint('Kameras', 'cam_height_links', fallback=720)
+        width_r = config.getint('Kameras', 'cam_width_rechts', fallback=1280)
+        height_r = config.getint('Kameras', 'cam_height_rechts', fallback=720)        
+        
         # Erkennt automatisch das Betriebssystem ('Windows', 'Linux', 'Darwin' für Mac)
         if is_windows:
             # Unter Windows DirectShow für schnellen Start nutzen
@@ -43,8 +49,18 @@ class TargetTracker:
             self.cap_left = cv2.VideoCapture(cam_left_idx) if self.nutze_kamera_links else None
             self.cap_right = cv2.VideoCapture(cam_right_idx) if self.nutze_kamera_rechts else None
         
+        # ---> NEU: OpenCV mit den Werten aus der Config zwingen <---
+        if self.nutze_kamera_links and self.cap_left:
+            self.cap_left.set(cv2.CAP_PROP_FRAME_WIDTH, width_l)
+            self.cap_left.set(cv2.CAP_PROP_FRAME_HEIGHT, height_l)
+            
+        if self.nutze_kamera_rechts and self.cap_right:
+            self.cap_right.set(cv2.CAP_PROP_FRAME_WIDTH, width_r)
+            self.cap_right.set(cv2.CAP_PROP_FRAME_HEIGHT, height_r)
+        
+        
         # --- Nur noch Variablen, die wir explizit für die GUI/Steuerung brauchen ---
-        self.caliber_radius = config.getint('Erkennung', 'caliber_radius')
+        self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius')
         self.ausloeser_durch_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.poll_ms = config.getint('Timing', 'poll_ms', fallback=33)
         self.vollbild = config.getboolean('Anzeige', 'vollbild', fallback=False)
@@ -312,6 +328,7 @@ class TargetTracker:
             else:
                 padded_frames.append(f)
                 
+        # ... (vorheriger Code bleibt gleich, wo combined_view gebaut wird)
         combined_view = np.hstack(padded_frames)
         orig_h, orig_w = combined_view.shape[:2]
         
@@ -322,15 +339,49 @@ class TargetTracker:
             rect = cv2.getWindowImageRect(self.window_name)
             if rect[2] > 0 and rect[3] > 0:
                 win_w, win_h = rect[2], rect[3]
-                combined_view = cv2.resize(combined_view, (win_w, win_h))
-                self.scale_x = win_w / orig_w
-                self.scale_y = win_h / orig_h
+                
+                # =========================================================
+                # ---> NEU: Proportionale Skalierung (Letterboxing) <---
+                # =========================================================
+                # Berechne den maximalen Skalierungsfaktor (damit es ins Fenster passt, aber nicht verzerrt)
+                scale = min(win_w / orig_w, win_h / orig_h)
+                
+                # Neue, proportionale Größe berechnen
+                new_w = int(orig_w * scale)
+                new_h = int(orig_h * scale)
+                
+                # Das Bild proportional vergrößern
+                resized_view = cv2.resize(combined_view, (new_w, new_h))
+                
+                # Einen schwarzen Hintergrund (Leinwand) in der tatsächlichen Fenstergröße erstellen
+                canvas = np.zeros((win_h, win_w, 3), dtype=np.uint8)
+                
+                # Berechne die Position, um das Bild zu zentrieren (Letterbox-Ränder)
+                x_offset = (win_w - new_w) // 2
+                y_offset = (win_h - new_h) // 2
+                
+                # Das vergrößerte Bild auf den schwarzen Hintergrund kleben
+                canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized_view
+                
+                # Die Variable austauschen, damit der Rest des Codes mit der Leinwand weiterarbeitet
+                combined_view = canvas
+                
+                # X und Y Scale sind nun identisch (da proportional) UND wir müssen den Offset speichern!
+                self.scale_x = scale
+                self.scale_y = scale
+                self.pad_x = x_offset # WICHTIG für das Zeichnen von Treffern und Klicks!
+                self.pad_y = y_offset
             else:
                 win_w, win_h = orig_w, orig_h
+                self.pad_x = 0
+                self.pad_y = 0
         except Exception:
             win_w, win_h = orig_w, orig_h
+            self.pad_x = 0
+            self.pad_y = 0
             
-        avg_scale = (self.scale_x + self.scale_y) / 2
+        # Den Offset müssen wir im Kopf behalten, da die Skalierung (avg_scale) jetzt proportional ist
+        avg_scale = self.scale_x # self.scale_x und _y sind identisch
         final_radius = max(2, int(self.caliber_radius * avg_scale))
         
         # ---> TREFFER ZEICHNEN (Nach Seite getrennt, Nummer mittig im Kreis) <---
@@ -342,8 +393,9 @@ class TargetTracker:
                 if shot['side'] == 'right' and self.nutze_kamera_links:
                     x += self.w_left_displayed
                     
-                final_x = int(x * self.scale_x)
-                final_y = int(y * self.scale_y)
+                # ---> OFFSET ADDIEIREN! <---
+                final_x = int(x * self.scale_x) + self.pad_x
+                final_y = int(y * self.scale_y) + self.pad_y
                 
                 color = (0, 0, 255) if (shot.get('is_new', False) and blink_state) else (255, 100, 0)
                 
@@ -370,12 +422,15 @@ class TargetTracker:
                     text_color = (255, 255, 255) if not shot.get('is_new', False) else (200, 200, 255)
                     cv2.putText(combined_view, id_str, (text_x, text_y), font, font_scale, text_color, thickness, cv2.LINE_AA)
 
+        # ---> OFFSET ADDIEIREN! <---
         scaled_w_left = int(self.w_left_displayed * self.scale_x)
         
         if self.nutze_kamera_links:
-            self.draw_camera_overlay(combined_view, 'left', 0, scaled_w_left, win_h)
+            # Wir rücken es um pad_x ein und nutzen new_h statt win_h, damit die Balken nicht übermalt werden
+            new_h = int(orig_h * self.scale_y)
+            self.draw_camera_overlay(combined_view, 'left', self.pad_x, scaled_w_left, self.pad_y + new_h)
         if self.nutze_kamera_rechts:
-            self.draw_camera_overlay(combined_view, 'right', scaled_w_left, win_w - scaled_w_left, win_h)
+            self.draw_camera_overlay(combined_view, 'right', self.pad_x + scaled_w_left, int((orig_w - self.w_left_displayed) * self.scale_x), self.pad_y + new_h)
         
         # --- VISUELLES FEEDBACK ---
         current_time = time.time()
@@ -386,12 +441,17 @@ class TargetTracker:
                 if use_cam:
                     offset_x = 0 if s == 'left' else scaled_w_left
                     
-                    fb_cx = int(feedback['cx'] * self.scale_x) + offset_x
-                    fb_cy = int(feedback['cy'] * self.scale_y)
+                    # ---> NEU: self.pad_x und self.pad_y auf die Zentren addieren! <---
+                    fb_cx = int(feedback['cx'] * self.scale_x) + offset_x + getattr(self, 'pad_x', 0)
+                    fb_cy = int(feedback['cy'] * self.scale_y) + getattr(self, 'pad_y', 0)
+                    
                     fb_ideal_rx = int(feedback['ideal_rx'] * self.scale_x)
                     fb_ideal_ry = int(feedback['ideal_ry'] * self.scale_y)
-                    fb_red_cx = int(feedback['red_cx'] * self.scale_x) + offset_x
-                    fb_red_cy = int(feedback['red_cy'] * self.scale_y)
+                    
+                    # ---> NEU: Auch beim roten Fehler-Kreis den Offset addieren! <---
+                    fb_red_cx = int(feedback['red_cx'] * self.scale_x) + offset_x + getattr(self, 'pad_x', 0)
+                    fb_red_cy = int(feedback['red_cy'] * self.scale_y) + getattr(self, 'pad_y', 0)
+                    
                     fb_red_rx = int(feedback['red_rx'] * self.scale_x)
                     fb_red_ry = int(feedback['red_ry'] * self.scale_y)
 
@@ -553,20 +613,21 @@ class TargetTracker:
         return False
 
     def cleanup(self):
+        # ---> NEU: Koch fertig arbeiten lassen vor dem Feierabend <---
+        self.dm.flush_image_queue()
         if self.nutze_kamera_links: self.cap_left.release()
         if self.nutze_kamera_rechts: self.cap_right.release()
         cv2.destroyAllWindows()
 
     def on_mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
-            
             # ---> NEU: Befinden wir uns im "Pick-Koordinaten"-Modus? <---
             if getattr(self, 'active_picker', None) is not None:
                 s = self.active_picker['side']
                 
-                # Klick-Koordinaten auf Original-Bildgröße umrechnen
-                raw_x = x / self.scale_x
-                raw_y = y / self.scale_y
+                # ---> OFFSET ABZIEHEN! <---
+                raw_x = (x - getattr(self, 'pad_x', 0)) / self.scale_x
+                raw_y = (y - getattr(self, 'pad_y', 0)) / self.scale_y
                 
                 # Wenn wir rechts sind, müssen wir die Breite des linken Bildes abziehen
                 if s == 'right' and self.nutze_kamera_links:
@@ -602,6 +663,8 @@ class TargetTracker:
                     self.log("SYSTEM", "Generiere Debug-Paket... Bitte warten.", True)
                     imestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     zip_filepath = os.path.join(self.dm.ZIP_FOLDER, f"Debug_Paket_{timestamp}.zip")
+                    # ---> NEU: Warten bis alle Bilder gespeichert sind! <---
+                    self.dm.flush_image_queue()
                     # ---> ELA: Auch der Bug-Zip nutzt jetzt die einheitliche Funktion <---
                     success = self.dm.export_match_package(
                         filepath=zip_filepath,
@@ -730,6 +793,8 @@ class TargetTracker:
                         backup_mask_l = self.sm.state_left.cumulative_mask.copy() if (self.nutze_kamera_links and self.sm.state_left and self.sm.state_left.cumulative_mask is not None) else None
                         backup_mask_r = self.sm.state_right.cumulative_mask.copy() if (self.nutze_kamera_rechts and self.sm.state_right and self.sm.state_right.cumulative_mask is not None) else None
                         
+                        # ---> NEU: Warten bis alle Bilder sicher auf der Platte sind <---
+                        self.dm.flush_image_queue()
                         if self.sm.save_current_match(player_name_l, player_name_r):
                             self.log("SYSTEM", "Match erfolgreich gespeichert!", True)
                             
@@ -777,7 +842,9 @@ class TargetTracker:
                         self.dm.save_debug_image("ZZZ_Live_Snapshot_left_orig", self.last_frame_l)
                     if self.nutze_kamera_rechts and self.last_frame_r is not None:
                         self.dm.save_debug_image("ZZZ_Live_Snapshot_right_orig", self.last_frame_r)
-                        
+                    
+                    # ---> NEU: Warten, damit der Snapshot auch wirklich da ist! <---
+                    self.dm.flush_image_queue()
                     # ---> ELA: Wir rufen einfach die neue, zentrale Funktion auf! <---
                     match_data = self.sm.get_match_data("Live-Tuning", "Live-Tuning")
                     export_dir = "labor_export"

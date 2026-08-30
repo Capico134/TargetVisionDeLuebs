@@ -9,16 +9,10 @@ from datetime import datetime
 from AuditedConfig import AuditedConfigParser
 import numpy as np
 import io
+import threading #Für die Warteschlange
+import queue     #Für die Warteschlange
 
 class DateiManager:
-    def __init__(self):
-        self.CONFIG_FILE = 'config.ini'
-        self.DEBUG_FOLDER = 'debug_bilder'
-        self.LOG_FILE = 'treffer_log.txt'
-        self.ZIP_FOLDER = 'debug_pakete'
-        
-        self._init_system()
-
     # ---> ELA: Standardmäßig False, damit Zweit-Tools (Labor) nichts löschen!
     def __init__(self, clear_on_start=False):
         self.CONFIG_FILE = 'config.ini'
@@ -27,6 +21,11 @@ class DateiManager:
         self.ZIP_FOLDER = 'debug_pakete'
         
         self._init_system(clear_on_start)
+        
+        # ---> NEU: Multithreading für verzögerungsfreies Speichern <---
+        self.image_queue = queue.Queue()
+        self.save_thread = threading.Thread(target=self._image_writer_worker, daemon=True)
+        self.save_thread.start()
 
     def _init_system(self, clear_on_start):
         """Erstellt Ordner und leert das Log beim Start."""
@@ -50,6 +49,19 @@ class DateiManager:
         # geht nichts verloren.
         with open(self.LOG_FILE, "w", encoding="utf-8") as f:
             f.write(f"=== DIGITALE TREFFERANZEIGE LOG - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+
+    def _image_writer_worker(self):
+        """Der Koch: Läuft unsichtbar im Hintergrund und speichert Bilder ab."""
+        while True:
+            # Holt den ältesten Auftrag (blockiert sanft, wenn die Queue leer ist)
+            task = self.image_queue.get()
+            if task is None: 
+                break # Das "Feierabend"-Signal
+                
+            filepath, image_data = task
+            cv2.imwrite(filepath, image_data)
+            self.image_queue.task_done()
+
 
     def get_current_version(self):
         """Holt die Version aus Git oder gibt einen Fallback zurück."""
@@ -78,9 +90,20 @@ class DateiManager:
     #    cv2.imwrite(path, image)
 
     def save_debug_image(self, name, image):
-        """Speichert alle Debug-Bilder konsequent als verlustfreies PNG."""
+        """Wirft das Bild in die Warteschlange (als Kopie!), um TargetVision nicht zu blockieren."""
         path = os.path.join(self.DEBUG_FOLDER, f"{name}.png")
-        cv2.imwrite(path, image)
+        
+        # WICHTIG: image.copy(), damit der Main-Thread das Array nicht nachträglich verändert!
+        self.image_queue.put((path, image.copy()))
+
+    def flush_image_queue(self):
+        """Blockiert den Main-Thread, bis die Warteschlange komplett leer gearbeitet ist."""
+        if hasattr(self, 'image_queue'):
+            if not self.image_queue.empty():
+                self.write_log("SYSTEM: ⏳ Schreibe restliche Bilder aus dem Puffer auf Festplatte...")
+            # Hier wartet Python automatisch, bis für jedes 'put' ein 'task_done' vom Koch gemeldet wurde!
+            self.image_queue.join()
+
 
     def update_ini_value(self, target_section, target_key, new_value):
         """Aktualisiert oder fügt einen Wert in der config.ini hinzu (Ninja-Patch)."""
@@ -190,6 +213,10 @@ nutze_kamera_rechts = yes
 # Kamera-Indizes im System (0 ist meist die Standard-Webcam/OBS Virtual Cam)
 cam_left_index = 0
 cam_right_index = 1
+cam_width_links = 1280
+cam_height_links = 720
+cam_width_rechts = 1280
+cam_height_rechts = 720
 px_pro_mm_x_links = 5.0
 px_pro_mm_y_links = 5.0
 px_pro_mm_x_rechts = 5.0
@@ -220,7 +247,7 @@ hough_param2 = 4
 # Mindestfläche in Pixeln, die eine Farb/Helligkeitsänderung haben muss, um als Loch zu gelten.
 min_hole_area = 28
 # Sperr-Radius um bestehende Treffer (in Pixeln) gegen Doppelzählungen.
-caliber_radius = 14
+caliber_radius = 20.0
 # Anzahl veränderter Pixel im Bild, ab der eine Bewegung (Vibration/Fahrt) erkannt wird.
 motion_threshold = 2000
 # Farb/Helligkeits-Toleranz für die Bewegungserkennung.
@@ -334,16 +361,49 @@ darstellung_ohne_weissabgleich = yes
 #            except ValueError:
 #                pass 
 #        
-        if config.has_option('Erkennung', 'morph_kernel_size'):
+#   
+#
+#        if config.has_option('Erkennung', 'caliber_radius'):
+#            try:
+#                current_value = config.getint('Erkennung', 'caliber_radius')
+#                if current_value != 10.5:
+#                    print(f"🔧 Führe Auto-Patch aus: Setze 'caliber_radius' von {current_value} auf 10.5...")
+#                    self.update_ini_value('Erkennung', 'caliber_radius', '10.5')
+#                    needs_reload = True
+#            except ValueError:
+#                pass    
+        
+        if not config.has_option('Kameras', 'cam_width_links'):
+            print("🔧 Führe Auto-Patch aus: Füge Kamera-Auflösungen hinzu...")
+            self.update_ini_value('Kameras', 'cam_width_links', '1280')
+            self.update_ini_value('Kameras', 'cam_height_links', '720')
+            self.update_ini_value('Kameras', 'cam_width_rechts', '1280')
+            self.update_ini_value('Kameras', 'cam_height_rechts', '720')
+            needs_reload = True
+
+        # --- AUTO-PATCH: 720p Migration für Skalierung & Kaliber ---
+        for seite in ['links', 'rechts']:
+            for achse in ['x', 'y']:
+                key = f'px_pro_mm_{achse}_{seite}'
+                if config.has_option('Kameras', key):
+                    try:
+                        current_val = config.getfloat('Kameras', key)
+                        if current_val < 6.0:  # Fängt alte 480p-Werte (z.B. 5.0) ab
+                            print(f"🔧 Führe Auto-Patch aus: Aktualisiere '{key}' von {current_val} auf 9.5 (720p-Anpassung)...")
+                            self.update_ini_value('Kameras', key, '9.5')
+                            needs_reload = True
+                    except ValueError:
+                        pass
+
+        if config.has_option('Erkennung', 'caliber_radius'):
             try:
-                current_value = config.getint('Erkennung', 'morph_kernel_size')
-                if current_value != 5:
-                    print(f"🔧 Führe Auto-Patch aus: Setze 'morph_kernel_size' von {current_value} auf 5...")
-                    self.update_ini_value('Erkennung', 'morph_kernel_size', '5')
+                current_radius = config.getfloat('Erkennung', 'caliber_radius')
+                if current_radius < 13.0:  # Fängt alte 480p-Werte (10.0 / 10.5) ab, lässt 720p-Werte in Ruhe
+                    print(f"🔧 Führe Auto-Patch aus: Aktualisiere 'caliber_radius' von {current_radius} auf 20.0 (720p-Anpassung)...")
+                    self.update_ini_value('Erkennung', 'caliber_radius', '20.0')
                     needs_reload = True
             except ValueError:
-                pass         
-        
+                pass
         
         if needs_reload:
             config.read(self.CONFIG_FILE, encoding='utf-8')

@@ -20,7 +20,7 @@ class MatchDetailWindow(tk.Toplevel):
         
         config = configparser.ConfigParser()
         config.read("config.ini")
-        self.caliber_radius = config.getint('Erkennung', 'caliber_radius', fallback=11)
+        self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius', fallback=10.5)
         
         self.zoom_factor = 1.0
         self.zip_path = zip_path
@@ -45,10 +45,10 @@ class MatchDetailWindow(tk.Toplevel):
                 try:
                     config_str = zipf.read("config.ini").decode('utf-8')
                     config.read_string(config_str)
-                    self.caliber_radius = config.getint('Erkennung', 'caliber_radius', fallback=11)
+                    self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius', fallback=10.5)
                 except KeyError:
                     config.read("config.ini")
-                    self.caliber_radius = config.getint('Erkennung', 'caliber_radius', fallback=11)
+                    self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius', fallback=10.5)
                 
                 # ---> NEU: Erst PNG versuchen (neue Version), dann Fallback auf JPG (alte Version) <---
                 try:

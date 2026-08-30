@@ -18,7 +18,7 @@ class TargetDetector:
         
         # Alle Schwellenwerte und Einstellungen für die Erkennung
         self.min_hole_area = config.getint('Erkennung', 'min_hole_area')
-        self.caliber_radius = config.getint('Erkennung', 'caliber_radius')
+        self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius')
         self.hit_tolerance = config.getint('Erkennung', 'hit_tolerance', fallback=15)
         self.erkennungs_methode = config.get('Erkennung', 'erkennungs_methode', fallback='C').upper()
         self.hybrid_riss_faktor = config.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.175)
