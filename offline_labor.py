@@ -163,16 +163,22 @@ class OfflineLaborApp:
                     val = int(float(entry.get()))
                 else:
                     val = float(entry.get())
-                tk_var.set(val)
-                self.on_param_change(force=True)
+                    
+                # Nur neu berechnen, wenn sich die Zahl WIRKLICH geändert hat!
+                if val != tk_var.get():
+                    tk_var.set(val)
+                    self.on_param_change(force=True)
+                    
             except ValueError:
                 pass # Wenn jemand "abc" tippt, ignorieren wir es
                 
             # Nach der Übernahme formatieren wir das Feld wieder sauber 
-            # (falls der Slider es z.B. ans Limit gezwungen hat)
             entry.delete(0, tk.END)
             entry.insert(0, str(tk_var.get()))
-            self.root.focus() # Fokus vom Feld nehmen, damit Pfeiltasten wieder gehen!
+            
+            # ---> DER FIX: Fokus nur bei 'Enter' klauen, nicht bei Mausklicks! <---
+            #if event and getattr(event, 'keysym', '') == 'Return':
+            #    self.root.focus()
 
         # Löst aus, wenn Enter gedrückt wird oder das Textfeld den Fokus verliert
         entry.bind('<Return>', apply_entry_val)
