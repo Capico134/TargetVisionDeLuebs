@@ -295,7 +295,7 @@ cut_right = 20
 
 [Anzeige]
 # Skalierungsfaktor für das Hauptfenster der Anzeige.
-fenster_skalierung = 1.0
+# fenster_skalierung = 1.0
 # Kiosk-Modus für den Schießstand (yes/no)
 vollbild = no
 # Hübscht das Bild für das Auge auf (mehr Farbe/Kontrast), ohne die Erkennung zu beeinflussen

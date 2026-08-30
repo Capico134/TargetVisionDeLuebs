@@ -171,15 +171,24 @@ class StateManager:
             dist_mm = math.sqrt(dx_mm**2 + dy_mm**2)
             
             aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+            print(f"aktive_scheibe_id {aktive_scheibe_id}")
             targets = self.dm.load_targets()
             
             if aktive_scheibe_id in targets:
                 target_data = targets[aktive_scheibe_id]
                 d_10 = target_data['ringe_durchmesser_mm']['10']
                 d_9 = target_data['ringe_durchmesser_mm']['9']
+                kaliber = target_data.get('kaliber_mm', 4.5)
+                
                 ring_abstand_radius_mm = (d_9 - d_10) / 2.0
                 
-                raw_score = 11.0 - (dist_mm / ring_abstand_radius_mm)
+                # Ab welchem Abstand vom Zentrum ist es exakt eine 10.0?
+                # (Halber 10er-Ring + halbes Kaliber)
+                radius_10_score = (d_10 + kaliber) / 2.0
+                
+                # Die universelle, physikalische Formel:
+                raw_score = 10.0 + ((radius_10_score - dist_mm) / ring_abstand_radius_mm)
+                
                 score = math.floor(raw_score * 10) / 10.0
                 
                 if score > 10.9: score = 10.9

@@ -200,7 +200,7 @@ class OfflineLaborApp:
         btn_einstellungen.pack(side=tk.LEFT, pady=5, padx=(0, 20))# (fill=tk.X, pady=(15, 0)
         
         # ---> NEU: Der Übernehmen-Button <---
-        self.btn_apply = tk.Button(top_frame, text="✅ Parameter übernehmen und schließen", 
+        self.btn_apply = tk.Button(top_frame, text="✅ Speichern und schließen", 
                                    command=self.apply_to_live, bg="#27ae60", fg="white", font=("Arial", 10, "bold"))
         self.btn_apply.pack(side=tk.LEFT, pady=5)
         
@@ -365,6 +365,40 @@ class OfflineLaborApp:
         self.log_text.insert(tk.END, f"[{side.upper()}] {msg}\n")
         self.log_text.see(tk.END)
 
+    def apply_config_to_ui(self, parser):
+        """Zentrale Methode: Füttert alle UI-Slider mit den Werten eines ConfigParsers."""
+        if parser and parser.has_section('Erkennung'):
+            self.hit_tolerance_var.set(parser.getint('Erkennung', 'hit_tolerance', fallback=22))
+            self.min_hole_area_var.set(parser.getint('Erkennung', 'min_hole_area', fallback=25))
+            self.caliber_radius_var.set(parser.getfloat('Erkennung', 'caliber_radius', fallback=11))
+            self.hybrid_riss_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.175))
+            self.hybrid_sichel_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=1.05))
+            self.hybrid_discard_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5))
+            self.hough_min_faktor_var.set(parser.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85))
+            self.hough_max_faktor_var.set(parser.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15))
+            self.hough_param1_var.set(parser.getint('Erkennung', 'hough_param1', fallback=25))
+            self.hough_param2_var.set(parser.getint('Erkennung', 'hough_param2', fallback=4))
+            self.morph_kernel_var.set(parser.getint('Erkennung', 'morph_kernel_size', fallback=6))
+            self.max_aspect_ratio_var.set(parser.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5))
+            self.gesamt_anteil_am_200score_var.set(parser.getfloat('Erkennung', 'gesamt_anteil_am_200score', fallback=0.667))
+            
+            # Reset-Punkte für den Mittelklick auf den Slidern speichern
+            self.original_values = {
+                str(self.hit_tolerance_var): self.hit_tolerance_var.get(),
+                str(self.min_hole_area_var): self.min_hole_area_var.get(),
+                str(self.caliber_radius_var): self.caliber_radius_var.get(),
+                str(self.hybrid_riss_faktor_var): self.hybrid_riss_faktor_var.get(),
+                str(self.hybrid_sichel_faktor_var): self.hybrid_sichel_faktor_var.get(),
+                str(self.hybrid_discard_faktor_var): self.hybrid_discard_faktor_var.get(),
+                str(self.hough_min_faktor_var): self.hough_min_faktor_var.get(),
+                str(self.hough_max_faktor_var): self.hough_max_faktor_var.get(),
+                str(self.hough_param1_var): self.hough_param1_var.get(),
+                str(self.hough_param2_var): self.hough_param2_var.get(),
+                str(self.morph_kernel_var): self.morph_kernel_var.get(),
+                str(self.max_aspect_ratio_var): self.max_aspect_ratio_var.get(),
+                str(self.gesamt_anteil_am_200score_var): self.gesamt_anteil_am_200score_var.get()
+            }
+
     def load_zip(self, filepath=None):
         if not filepath:
             filepath = filedialog.askopenfilename(title="Wähle ZIP", filetypes=[("ZIP", "*.zip")])
@@ -372,50 +406,18 @@ class OfflineLaborApp:
         if filepath:
             self.current_zip_path = filepath
             self.lbl_file.config(text=f"📂 {os.path.basename(filepath)}", fg="black")
-            # ... (Rest der Methode bleibt absolut gleich!)
             
-            # ---> ELA: DateiManager entpackt alles direkt mundgerecht in den RAM! <---
             self.package_data = self.dm.import_match_package(filepath)
             if not self.package_data:
                 messagebox.showerror("Fehler", "Konnte ZIP-Paket nicht laden!")
                 return
                 
+            # Schick ausgelagert: Slider aus Parser befüllen
             parser = self.package_data.get('config')
-            if parser and parser.has_section('Erkennung'):
-                    # Alte Parameter
-                    self.hit_tolerance_var.set(parser.getint('Erkennung', 'hit_tolerance', fallback=22))
-                    self.min_hole_area_var.set(parser.getint('Erkennung', 'min_hole_area', fallback=25))
-                    self.caliber_radius_var.set(parser.getfloat('Erkennung', 'caliber_radius', fallback=11))
-                    self.hybrid_riss_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.175))
-                    self.hybrid_sichel_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=1.05))
-                    self.hybrid_discard_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5))
-                    self.hough_min_faktor_var.set(parser.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85))
-                    self.hough_max_faktor_var.set(parser.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15))
-                    self.hough_param1_var.set(parser.getint('Erkennung', 'hough_param1', fallback=25))
-                    self.hough_param2_var.set(parser.getint('Erkennung', 'hough_param2', fallback=4))
-                    self.morph_kernel_var.set(parser.getint('Erkennung', 'morph_kernel_size', fallback=6))
-                    self.max_aspect_ratio_var.set(parser.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5))
-                    self.gesamt_anteil_am_200score_var.set(parser.getfloat('Erkennung', 'gesamt_anteil_am_200score', fallback=0.667))
-                    
-                    self.original_values = {
-                        str(self.hit_tolerance_var): self.hit_tolerance_var.get(),
-                        str(self.min_hole_area_var): self.min_hole_area_var.get(),
-                        str(self.caliber_radius_var): self.caliber_radius_var.get(),
-                        str(self.hybrid_riss_faktor_var): self.hybrid_riss_faktor_var.get(),
-                        str(self.hybrid_sichel_faktor_var): self.hybrid_sichel_faktor_var.get(),
-                        str(self.hybrid_discard_faktor_var): self.hybrid_discard_faktor_var.get(),
-                        str(self.hough_min_faktor_var): self.hough_min_faktor_var.get(),
-                        str(self.hough_max_faktor_var): self.hough_max_faktor_var.get(),
-                        str(self.hough_param1_var): self.hough_param1_var.get(),
-                        str(self.hough_param2_var): self.hough_param2_var.get(),
-                        str(self.morph_kernel_var): self.morph_kernel_var.get(),
-                        str(self.max_aspect_ratio_var): self.max_aspect_ratio_var.get(),
-                        str(self.gesamt_anteil_am_200score_var): self.gesamt_anteil_am_200score_var.get()
-                    }
+            self.apply_config_to_ui(parser)
             
             self.original_match_data = self.package_data.get('match_data')
             
-            # Finde alle "_orig" Bilder in den RAM-Bildern
             self.all_files = list(self.package_data['images'].keys())
             self.orig_files = sorted([f for f in self.all_files if "_orig" in f])
             if not self.orig_files:
@@ -428,6 +430,23 @@ class OfflineLaborApp:
             self.btn_first.config(state=tk.NORMAL)
             self.btn_last.config(state=tk.NORMAL)
             self.process_and_display()
+
+    def load_local_config(self):
+        """Lädt die lokale config.ini im Stand-Alone Modus."""
+        parser = self.dm.load_or_create_config()
+        
+        self.package_data = {
+            'config': parser,
+            'images': {},
+            'match_data': None
+        }
+        
+        self.lbl_file.config(text="⚙️ Lokale config.ini geladen", fg="#2980b9")
+        self.print_log("SYSTEM", "Stand-Alone Modus: Lokale config.ini geladen.")
+        self.lbl_image.config(text="Stand-Alone Modus aktiv.\n(Klicke auf 'Erweiterte Einstellungen')", fg="white")
+        
+        # Exakt dieselbe Hilfsfunktion nutzen – keine Redundanz mehr!
+        self.apply_config_to_ui(parser)
 
     def get_img(self, name):
         """Holt ein Bild blitzschnell aus dem vorbereiteten RAM-Speicher"""
@@ -1554,10 +1573,13 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = OfflineLaborApp(root)
     
-    # Wurde uns vom Hauptprogramm ein ZIP-Pfad in die Hand gedrückt?
+    # Wurde uns vom Live-System ein ZIP-Pfad in die Hand gedrückt?
     if len(sys.argv) > 1:
         zip_path = sys.argv[1]
         # Wir warten 100ms, damit die GUI erst kurz aufploppt, bevor sie rechnet
         root.after(100, lambda: app.load_zip(zip_path))
+    else:
+        # ---> NEU: Das Labor wurde manuell gestartet! Lade die lokale Config <---
+        root.after(100, lambda: app.load_local_config())
         
     root.mainloop()

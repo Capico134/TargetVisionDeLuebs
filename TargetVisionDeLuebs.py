@@ -354,7 +354,9 @@ class TargetTracker:
                 resized_view = cv2.resize(combined_view, (new_w, new_h))
                 
                 # Einen schwarzen Hintergrund (Leinwand) in der tatsächlichen Fenstergröße erstellen
-                canvas = np.zeros((win_h, win_w, 3), dtype=np.uint8)
+                #canvas = np.zeros((win_h, win_w, 3), dtype=np.uint8)
+                # Einen dunklen Grauhintergrund (z. B. BGR 40, 40, 40) statt reinem Schwarz erstellen
+                canvas = np.full((win_h, win_w, 3), (35, 35, 35), dtype=np.uint8)
                 
                 # Berechne die Position, um das Bild zu zentrieren (Letterbox-Ränder)
                 x_offset = (win_w - new_w) // 2
