@@ -417,7 +417,14 @@ class TargetDetector:
                     cx, cy = int(circle_x), int(circle_y)
                     # HIER FEHLTE DIE ZUWEISUNG:
                     final_shot_score, _, _ = self.calculate_hole_score(cx, cy, self.caliber_radius, thresh_new, thresh_raw)
+                
+                # --- FEHLALARM-FILTER: Score < 80 ---
+                if final_shot_score < 80:
+                    self.log(side, f"🚫 Fehlalarm: Score {final_shot_score:.1f} < 80 -> nicht als Treffer gewertet!")
+                    update_mask_only = True
+                    continue
 
+                
                 # Doppelzählungs-Schutz (Getrennt nach Historie und aktueller Frame-Schleife)
                 is_new = True
                 # 1. Prüfung gegen Historie (alte Treffer aus vorherigen Frames) -> Sehr streng (0.15)

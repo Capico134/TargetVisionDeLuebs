@@ -39,19 +39,31 @@ Damit die Zehntel-Ringe exakt berechnet werden, musst du das System optisch kali
 Drücke im Live-System auf "Labor & Einstellungen". Die Kamera pausiert und du kannst in der rechten Seitenleiste mit den Reglern spielen (z. B. "hit_tolerance" verringern, um empfindlicher zu werden). Klicke auf Übernehmen, und das System lernt sofort dazu.
 """
 
-# Dieses Dictionary kann später vom Offline-Labor importiert werden!
+# Dieses Dictionary wird vom Offline-Labor importiert. 
+# WICHTIG: Die Keys müssen exakt den Namen in der config.ini entsprechen!
 PARAMETER_LEXIKON = {
-    "px_pro_mm_x / y": "Kalibrierungsfaktor. Bestimmt, wie Pixel in Ringwerte umgerechnet werden. Optische Kontrolle: Der grüne Kreis nach einem Reset muss exakt den schwarzen Spiegel der Zielscheibe abdecken.",
     "hit_tolerance": "Empfindlichkeit: Wie stark muss sich ein Pixel verändern (Referenz vs. Live), damit es ein Loch ist. Kleinere Werte = empfindlicher (erkennt auch blasse Löcher).",
     "min_hole_area": "Mindestfläche in Pixeln. Schützt vor winzigem Rauschen und verschobenen Rändern. Erst wenn so viele Pixel verändert sind, gilt es als potenzieller Schuss.",
-    "caliber_radius": "Sperr-Radius in Pixeln. Verhindert, dass ein ausgefranstes Loch doppelt gezählt wird. Legt auch die Größe der gezeichneten Kreise auf dem Bildschirm fest.",
+    "caliber_radius": "Projektil-Radius (in Pixeln). Extrem wichtig! Definiert die Größe des echten Projektils. Dient als Basis für die Ringwertung, zeichnet die Trefferkreise auf dem HUD und verhindert als Sperr-Radius Doppelzählungen.",
     "ausloeser_durch_erschuetterung": "Bei 'Aktiv' wartet das System auf Bewegung (z.B. Seilzuganlage) und scannt erst, wenn das Bild wieder stillsteht. Spart massiv PC-Ressourcen. Bei statischen Scheiben (z.B. Lasertraining) deaktivieren.",
-    "motion_threshold": "Wie viele Pixel müssen sich bewegen, damit eine Erschütterung (Fahrt der Scheibe) überhaupt als solche erkannt wird?",
+    "motion_threshold": "Anzahl veränderter Pixel im Bild, ab der eine Erschütterung (Fahrt der Scheibe) erkannt wird. Verhindert das Auslösen durch reines Bildrauschen.",
+    "motion_tolerance": "Farb/Helligkeits-Toleranz für die Bewegungserkennung. Reagiert erst auf Pixel, die sich um mehr als diesen Wert ändern.",
+    "max_image_change_percent": "Notbremse gegen Standbild/Ruckler. Wenn sich schlagartig mehr als X % des Gesamtbildes ändern (z.B. Hand im Bild), wird die Auswertung blockiert, um das Referenzbild zu schützen.",
+    "erkennungs_methode": "A = Umschließender Kreis, B = Schwerpunkt, C = Smart-Hybrid (Hough-Kreise + minEnclosingCircle). Methode C ist der stark empfohlene Standard.",
     "hybrid_riss_faktor": "Smart-Hybrid: Ab diesem Vergrößerungsfaktor (bezogen auf den Kaliberradius) wird ein unsauberer Riss an den speziellen Hough-Filter übergeben, um das eigentliche Loch zu finden.",
+    "hybrid_sichel_faktor": "Smart-Hybrid: Löcher, die kleiner als dieser Faktor sind (Sichel-Risse am Rand bestehender Löcher), werden hart gegen echte Treffer aussortiert.",
+    "hybrid_discard_faktor": "Smart-Hybrid: Massive Risse (größer als dieser Faktor) werden als pure Papierzerstörung gewertet, maskiert und nicht als Treffer gezählt.",
+    "hough_min_faktor": "Hough-Kreis-Begrenzung: Der kleinstmögliche Radius, nach dem der Algorithmus in einem unsauberen Riss sucht (Faktor bezogen auf caliber_radius).",
+    "hough_max_faktor": "Hough-Kreis-Begrenzung: Der größtmögliche Radius, nach dem der Algorithmus sucht.",
     "hough_param1": "Kanten-Erkennung für unsaubere Löcher. Höhere Werte ignorieren weiche Schatten besser.",
     "hough_param2": "Kreis-Strenge. Niedrigere Werte finden leichter Kreise, produzieren aber eventuell mehr Fehlalarme.",
-    "morph_kernel_size": "Filter-Größe: Schließt kleine Lücken in stark ausgefransten Rissen künstlich, bevor die eigentliche Fläche berechnet wird.",
-    "gesamt_anteil_am_200score": "Gewichtung der reinen Differenzfläche im Verhältnis zum mathematischen Kreis für den unsichtbaren Debug-Score."
+    "morph_kernel_size": "Filter-Größe: Schließt kleine Lücken in stark ausgefransten Rissen künstlich, bevor die eigentliche Fläche und das Zentrum berechnet werden.",
+    "max_aspect_ratio": "Anti-Verschiebungs-Filter: Extrem flache, in die Länge gezogene Risse (z.B. durch Papierverschiebung) werden ab diesem Seitenverhältnis ignoriert.",
+    "gesamt_anteil_am_200score": "Gewichtung: Bestimmt, wie stark das rohe, ungefilterte Diff-Bild gegenüber dem neu gestanzten Loch bei der mathematischen Punktebewertung (0-200 Score) gewichtet wird.",
+    "poll_ms": "Bildwiederholrate (Haupttakt) in Millisekunden. 33 ms entspricht ca. 30 FPS. Niedrigere Werte (schneller) belasten die CPU stärker.",
+    "stillness_frames": "Wie viele Frames am Stück absolute Ruhe herrschen muss, damit das Bild nach einer Erschütterung wieder als 'stabil' gilt.",
+    "darstellung_ohne_weissabgleich": "Hübscht das Live-Bild für das menschliche Auge auf (mehr Farbe/Kontrast), ohne die eigentliche Erkennung im Hintergrund zu verfälschen.",
+    "debug_alle_bilder_speichern": "Speichert bei JEDEM erkannten Treffer die rohen und gefilterten Bilder im debug_bilder-Ordner ab. Ausschließlich für Entwicklungszwecke!"
 }
 
 DATENSTRUKTUR_TEXT = """Ein Blick unter die Haube: Wo speichert das System was?

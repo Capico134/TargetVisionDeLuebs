@@ -71,6 +71,10 @@ class ToolTip:
         
         self.tip_window = tw = tk.Toplevel(self.widget)
         tw.wm_overrideredirect(True) # Entfernt den Windows-Rahmen
+        
+        # ---> NEU: Mache den Tooltip zum König aller Fenster! <---
+        tw.attributes('-topmost', True) 
+        
         tw.wm_geometry(f"+{x}+{y}")
         
         label = tk.Label(tw, text=self.text, justify=tk.LEFT,
@@ -1672,7 +1676,13 @@ class OfflineLaborApp:
                 
                 row = tk.Frame(sec_frame)
                 row.pack(fill=tk.X, pady=2)
-                tk.Label(row, text=key, width=32, anchor="w").pack(side=tk.LEFT)
+                
+                # ---> NEU: Label in Variable speichern und Tooltip anheften <---
+                lbl_key = tk.Label(row, text=key, width=32, anchor="w")
+                lbl_key.pack(side=tk.LEFT)
+                
+                if key in PARAMETER_LEXIKON:
+                    ToolTip(lbl_key, PARAMETER_LEXIKON[key])
 
                 # Der universelle Trace-Spion
                 def make_trace_cmd(s, k, var_obj):
