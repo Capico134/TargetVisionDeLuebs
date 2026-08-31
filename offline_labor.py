@@ -899,22 +899,39 @@ class OfflineLaborApp:
                 
                 
         # ====================================================================
-        # ---> NEU: Original-Treffer (Gelbe Linien) einblenden <---
+        # ---> NEU: Original-Treffer (Gelbe Linien) einblenden (SYNCHRONISIERT) <---
         # ====================================================================
         if getattr(self, 'show_orig_hits_var', None) and self.show_orig_hits_var.get() and getattr(self, 'original_match_data', None):
             side_char = 'l' if side == 'left' else 'r'
             
-            # Alle Original-Schüsse für diese Kamera filtern
             orig_shots_side = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
+            curr_shots_side = [s for s in d_sm.shots if s.get('side') == side]
+            cal_r = self.caliber_radius_var.get()
             
-            # Wir zeigen so viele Original-Schüsse, wie wir Bilder auf dieser Seite abgespielt haben
-            shots_to_draw = orig_shots_side[:target_idx + 1]
+            # Wir nutzen das smarte Alignment, um die gelben Kreise an die neuen Treffer zu koppeln!
+            aligned = self.align_shots(orig_shots_side, curr_shots_side, cal_r * 2.5)
+            
+            # Finde den Punkt in der Timeline, an dem der aktuell letzte neue Schuss (curr_idx) steht
+            last_valid_align_idx = -1
+            for idx, (o_idx, c_idx, dist) in enumerate(aligned):
+                if c_idx is not None:
+                    last_valid_align_idx = idx
+                    
+            # Wir zeichnen alle Original-Schüsse, die chronologisch bis zu diesem Punkt passiert sind
+            shots_to_draw = []
+            if last_valid_align_idx >= 0:
+                for idx in range(last_valid_align_idx + 1):
+                    o_idx = aligned[idx][0]
+                    if o_idx is not None:
+                        shots_to_draw.append(orig_shots_side[o_idx])
+            else:
+                # Fallback: Falls noch gar kein neuer Schuss da ist, nutzen wir den Bild-Index
+                shots_to_draw = orig_shots_side[:target_idx + 1]
             
             for s in shots_to_draw:
                 ox, oy = s['x'], s['y']
                 # Gelb in BGR = (0, 255, 255), Dicke = 1
-                cv2.circle(live_img, (ox, oy), r, (0, 255, 255), 1)
-                #cv2.circle(clean_live_img, (ox, oy), r, (0, 255, 255), 1)
+                cv2.circle(live_img, (ox, oy), int(cal_r), (0, 255, 255), 1)
         # ====================================================================
 
         # ---> NEU: Daten für den späteren Vergleich merken <---
@@ -974,6 +991,54 @@ class OfflineLaborApp:
 
         
         self.update_image_display()
+
+    def align_shots(self, orig_shots, curr_shots, threshold):
+        """Sequenz-Alignment mit Lookahead, um Original-JSON und neu berechnete Treffer zu synchronisieren."""
+        i = 0
+        j = 0
+        aligned = []
+        while i < len(orig_shots) or j < len(curr_shots):
+            if i < len(orig_shots) and j < len(curr_shots):
+                ox, oy = orig_shots[i]['x'], orig_shots[i]['y']
+                cx, cy = int(curr_shots[j]['pos'][0]), int(curr_shots[j]['pos'][1])
+                dist = np.hypot(cx - ox, cy - oy)
+                
+                if dist < threshold:
+                    aligned.append((i, j, dist))
+                    i += 1
+                    j += 1
+                else:
+                    found_match = False
+                    for lookahead in range(1, min(6, len(curr_shots) - j)):
+                        nx, ny = int(curr_shots[j + lookahead]['pos'][0]), int(curr_shots[j + lookahead]['pos'][1])
+                        if np.hypot(nx - ox, ny - oy) < threshold:
+                            found_match = True
+                            for k in range(lookahead):
+                                aligned.append((None, j + k, None))
+                            j += lookahead
+                            break
+                    if found_match: continue
+                    
+                    for lookahead in range(1, min(6, len(orig_shots) - i)):
+                        nx, ny = orig_shots[i + lookahead]['x'], orig_shots[i + lookahead]['y']
+                        if np.hypot(cx - nx, cy - ny) < threshold:
+                            found_match = True
+                            for k in range(lookahead):
+                                aligned.append((i + k, None, None))
+                            i += lookahead
+                            break
+                    if found_match: continue
+                    
+                    aligned.append((i, j, dist))
+                    i += 1
+                    j += 1
+            elif i < len(orig_shots):
+                aligned.append((i, None, None))
+                i += 1
+            elif j < len(curr_shots):
+                aligned.append((None, j, None))
+                j += 1
+        return aligned
 
     def show_comparison(self):
         if not self.current_zip_path or not getattr(self, 'original_match_data', None) or not self.orig_files:
@@ -1042,64 +1107,9 @@ class OfflineLaborApp:
             txt.insert(tk.END, header)
             txt.insert(tk.END, "-"*99 + "\n")
             
-            # ---> NEUER ALGORITHMUS: Sequenz-Alignment mit Lookahead <---
-            i = 0 # Index für orig
-            j = 0 # Index für curr
-            aligned = []
-            
-            # So weit darf ein Schuss abweichen, um noch als "der gleiche Schuss" zu gelten
+            # ---> NEUER ALGORITHMUS: Sequenz-Alignment mit Lookahead (ausgelagert) <---
             threshold = cal_r * 2.5  
-            
-            while i < len(orig_shots) or j < len(curr_shots):
-                if i < len(orig_shots) and j < len(curr_shots):
-                    ox, oy = orig_shots[i]['x'], orig_shots[i]['y']
-                    cx, cy = int(curr_shots[j]['pos'][0]), int(curr_shots[j]['pos'][1])
-                    dist = np.hypot(cx - ox, cy - oy)
-                    
-                    if dist < threshold:
-                        # Perfektes Match
-                        aligned.append((i, j, dist))
-                        i += 1
-                        j += 1
-                    else:
-                        # LOOKAHEAD 1: Wurde ein neuer Schuss DAZWISCHEN gemogelt? (Einfügung)
-                        found_match = False
-                        for lookahead in range(1, min(6, len(curr_shots) - j)):
-                            nx, ny = int(curr_shots[j + lookahead]['pos'][0]), int(curr_shots[j + lookahead]['pos'][1])
-                            if np.hypot(nx - ox, ny - oy) < threshold:
-                                found_match = True
-                                # Alle Schüsse bis zum gefundenen Match sind NEU
-                                for k in range(lookahead):
-                                    aligned.append((None, j + k, None))
-                                j += lookahead
-                                break
-                                
-                        if found_match: continue
-                        
-                        # LOOKAHEAD 2: Wurde ein alter Schuss VERSCHLUCKT? (Löschung)
-                        for lookahead in range(1, min(6, len(orig_shots) - i)):
-                            nx, ny = orig_shots[i + lookahead]['x'], orig_shots[i + lookahead]['y']
-                            if np.hypot(cx - nx, cy - ny) < threshold:
-                                found_match = True
-                                # Alle Schüsse bis zum gefundenen Match FEHLEN nun
-                                for k in range(lookahead):
-                                    aligned.append((i + k, None, None))
-                                i += lookahead
-                                break
-                                
-                        if found_match: continue
-                        
-                        # Weder noch? Dann ist die Abweichung so extrem, dass wir es als "Ersetzt" werten
-                        aligned.append((i, j, dist))
-                        i += 1
-                        j += 1
-                        
-                elif i < len(orig_shots):
-                    aligned.append((i, None, None))
-                    i += 1
-                elif j < len(curr_shots):
-                    aligned.append((None, j, None))
-                    j += 1
+            aligned = self.align_shots(orig_shots, curr_shots, threshold)
                     
             # ---> AUSGABE DER ALIGNIERTEN LISTE (NEU FORMATIERT) <---
             total_dist = 0.0
