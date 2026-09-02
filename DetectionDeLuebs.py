@@ -18,7 +18,8 @@ class TargetDetector:
         
         # Alle Schwellenwerte und Einstellungen für die Erkennung
         self.min_hole_area = config.getint('Erkennung', 'min_hole_area')
-        self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius')
+        #self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius')
+        #self.caliber_durchmesser = config.getfloat('Erkennung', 'caliber_durchmesser') #NICHT NOTWENDIG
         self.hit_tolerance = config.getint('Erkennung', 'hit_tolerance', fallback=15)
         self.erkennungs_methode = config.get('Erkennung', 'erkennungs_methode', fallback='C').upper()
         self.hybrid_riss_faktor = config.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.175)
@@ -158,14 +159,49 @@ class TargetDetector:
                 self.sm.set_nullpunkt(side, mitte[0], mitte[1]) 
                 self.log("SYSTEM", f"🎯 Nullpunkt {side.upper()} gesetzt auf X:{int(mitte[0])} Y:{int(mitte[1])}", True)
 
+    def get_caliber_radius(self, side):
+        """Berechnet den dynamischen Pixel-Radius anhand der optischen Linsen-Kalibrierung."""
+        val = self.config.get('Erkennung', 'caliber_durchmesser', fallback=None)
+        
+        # 1. Der physikalische Weg (Millimeter) -> Automatisch linsenkorrigiert!
+        if val is not None:
+            if str(val).strip().lower() == 'auto':
+                aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+                targets = self.dm.load_targets()
+                durchmesser_mm = targets.get(aktive_scheibe_id, {}).get('kaliber_mm', 4.5)
+            else:
+                durchmesser_mm = float(val)
+                
+            radius_mm = durchmesser_mm / 2.0
+            seite_str = "links" if side == 'left' else "rechts"
+            px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+            px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+            
+            # Skaliert den Radius perfekt in Pixel um, basierend auf der aktuellen Kamera
+            return radius_mm * ((px_x + px_y) / 2.0)
+            
+        # 2. ABWÄRTSKOMPATIBILITÄT: Der alte, starre Legacy-Pixel-Radius
+        else:
+            return self.config.getfloat('Erkennung', 'caliber_radius', fallback=15.0)
+            
+            
+
+
     def detect_new_shot(self, frame, side):
+        current_caliber_radius = self.get_caliber_radius(side)
         state = self.sm.state_left if side == 'left' else self.sm.state_right
         reference_bgr = self.ref_left if side == 'left' else self.ref_right
         
         if reference_bgr is None or frame is None: 
             self.log(side, "Fehler: Keine Referenz vorhanden!")
             return False
-
+        
+        # ---> NEU: Schutzschild gegen heimliche Crop-Änderungen <---
+        if reference_bgr.shape != frame.shape:
+            self.log(side, "⚠️ Bildgröße hat sich geändert (Crop)! Erneuere Referenz automatisch...", True)
+            self.set_reference_image(frame, side)
+            return False
+        
         current_bgr_blur = cv2.GaussianBlur(frame, (7, 7), 0) 
         current_normalized = self.normalize_brightness(reference_bgr, current_bgr_blur)
         
@@ -183,6 +219,11 @@ class TargetDetector:
 
         # 1. ERST die alten Treffer abziehen (Stanzt den Riss aus)
         if state.cumulative_mask is not None:
+            # ---> NEU: Schutzschild für die Maske <---
+            if thresh_raw.shape != state.cumulative_mask.shape:
+                self.log(side, "⚠️ Maskengröße inkompatibel (Crop)! Setze Maske zurück.", True)
+                state.cumulative_mask = np.zeros_like(thresh_raw)
+                
             thresh_new = cv2.subtract(thresh_raw, state.cumulative_mask)
             # Zerstört alle grauen Reste aus eventuell unsauberen Masken
             _, thresh_new = cv2.threshold(thresh_new, 127, 255, cv2.THRESH_BINARY)
@@ -240,14 +281,14 @@ class TargetDetector:
                 if self.erkennungs_methode == 'C':
                     # 1. Kandidat A: Minimum Enclosing Circle (MEC)
                     (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
-                    score_mec, mec_new, mec_raw = self.calculate_hole_score(circle_x, circle_y, self.caliber_radius, thresh_new, thresh_raw)
+                    score_mec, mec_new, mec_raw = self.calculate_hole_score(circle_x, circle_y, current_caliber_radius, thresh_new, thresh_raw)
                     
                     # 2. Kandidat B: Center of Gravity / Schwerpunkt (CoG)
                     M = cv2.moments(cnt)
                     if M["m00"] != 0:
                         cog_x = M["m10"] / M["m00"]
                         cog_y = M["m01"] / M["m00"]
-                        score_cog, cog_new, cog_raw = self.calculate_hole_score(cog_x, cog_y, self.caliber_radius, thresh_new, thresh_raw)
+                        score_cog, cog_new, cog_raw = self.calculate_hole_score(cog_x, cog_y, current_caliber_radius, thresh_new, thresh_raw)
                     else:
                         score_cog, cog_new, cog_raw = -1.0, 0.0, 0.0
                         cog_x, cog_y = circle_x, circle_y
@@ -268,9 +309,9 @@ class TargetDetector:
                             
                     # ---> AB HIER ARBEITEN WIR MIT base_x, base_y und base_score <---
                     
-                    limit_sichel = self.caliber_radius * self.hybrid_sichel_faktor
-                    limit_riss = self.caliber_radius * self.hybrid_riss_faktor
-                    limit_discard = self.caliber_radius * self.hybrid_discard_faktor
+                    limit_sichel = current_caliber_radius * self.hybrid_sichel_faktor
+                    limit_riss = current_caliber_radius * self.hybrid_riss_faktor
+                    limit_discard = current_caliber_radius * self.hybrid_discard_faktor
                     
                     self.log(side, f"🔍 Check Kontur: Radius={radius:.1f}px | Limits: Sichel<{limit_sichel:.1f}, Normal, Riss>{limit_riss:.1f}, Discard>{limit_discard:.1f}")
                     self.log(side, f"📊 Base-Score (Sieger): {base_score:.1f}")
@@ -299,8 +340,8 @@ class TargetDetector:
                         cv2.drawContours(mask, [cnt], -1, 255, -1)
                         
                         mask_blurred = cv2.GaussianBlur(mask, (9, 9), 0)
-                        min_r = max(2, int(self.caliber_radius * self.hough_min_faktor))
-                        max_r = int(self.caliber_radius * self.hough_max_faktor)
+                        min_r = max(2, int(current_caliber_radius * self.hough_min_faktor))
+                        max_r = int(current_caliber_radius * self.hough_max_faktor)
                         
                         circles = cv2.HoughCircles(mask_blurred, cv2.HOUGH_GRADIENT, dp=1, minDist=2,
                                                    param1=self.hough_param1, param2=self.hough_param2, 
@@ -318,7 +359,7 @@ class TargetDetector:
                             self.log(side, f"🔎 Hough hat {len(found_circles)} Kandidaten. Duell gegen Base-Score ({base_score:.1f})...")
                             
                             for (hx, hy, hr) in found_circles:
-                                total_score, coverage_new, coverage_raw = self.calculate_hole_score(hx, hy, self.caliber_radius, thresh_new, thresh_raw)
+                                total_score, coverage_new, coverage_raw = self.calculate_hole_score(hx, hy, current_caliber_radius, thresh_new, thresh_raw)
                                 if total_score > best_score:
                                     best_score = total_score
                                     best_cx, best_cy = hx, hy
@@ -372,11 +413,11 @@ class TargetDetector:
                                                     ny = dy / dist
                                                     
                                                     # ---> DIE NEUE, INTELLIGENTE ABRISSKANTE <---
-                                                    test_cx = int(cx_int + nx * self.caliber_radius)
-                                                    test_cy = int(cy_int + ny * self.caliber_radius)
+                                                    test_cx = int(cx_int + nx * current_caliber_radius)
+                                                    test_cy = int(cy_int + ny * current_caliber_radius)
                                                     
                                                     # Der Schiedsrichter testet die Vektor-Kante!
-                                                    abriss_score, abriss_new, _ = self.calculate_hole_score(test_cx, test_cy, self.caliber_radius, thresh_new, thresh_raw)
+                                                    abriss_score, abriss_new, _ = self.calculate_hole_score(test_cx, test_cy, current_caliber_radius, thresh_new, thresh_raw)
                                                     self.log(side, f"🧪 TEST-ABRISSKANTE: Theor. Zentrum X:{test_cx} Y:{test_cy} | Score: {abriss_score:.1f}")
                                                     
                                                     if abriss_score > base_score and abriss_new >= 5.0:
@@ -409,14 +450,14 @@ class TargetDetector:
                     if M["m00"] != 0:
                         cx = int(M["m10"] / M["m00"])
                         cy = int(M["m01"] / M["m00"])
-                        final_shot_score, _, _ = self.calculate_hole_score(cx, cy, self.caliber_radius, thresh_new, thresh_raw)                                                                                                       
+                        final_shot_score, _, _ = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw)                                                                                                       
                     else:
                         continue 
                 else:
                     (circle_x, circle_y), _ = cv2.minEnclosingCircle(cnt)
                     cx, cy = int(circle_x), int(circle_y)
                     # HIER FEHLTE DIE ZUWEISUNG:
-                    final_shot_score, _, _ = self.calculate_hole_score(cx, cy, self.caliber_radius, thresh_new, thresh_raw)
+                    final_shot_score, _, _ = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw)
                 
                 # --- FEHLALARM-FILTER: Score < 70 ---
                 if final_shot_score < 70:
@@ -432,7 +473,7 @@ class TargetDetector:
                 for shot in self.sm.shots:
                     if shot['side'] == side:
                         dist = np.hypot(shot['pos'][0] - cx, shot['pos'][1] - cy)
-                        if dist < self.caliber_radius * clipping_factor_history:
+                        if dist < current_caliber_radius * clipping_factor_history:
                             is_new = False
                             self.log(side, f"⚠️ Treffer ignoriert: Zu nah ({dist:.1f}px) an bekanntem alten Schuss aus vorherigen Frames!")
                             break
@@ -444,7 +485,7 @@ class TargetDetector:
                     clipping_factor_current = 0.95
                     for i, existing_shot in enumerate(new_shots_found_this_frame):
                         dist = np.hypot(existing_shot['cx'] - cx, existing_shot['cy'] - cy)
-                        if dist < self.caliber_radius * clipping_factor_current:
+                        if dist < current_caliber_radius * clipping_factor_current:
                             
                             # ---> NEU: Das Sichel-Duell! Wer hat den höheren Weißanteil? <---
                             if final_shot_score > existing_shot['score']:
@@ -473,7 +514,13 @@ class TargetDetector:
 
                 for sd in new_shots_found_this_frame:
                     shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'], cv_score=sd.get('score', 0.0))
-                    self.log(side, f"💥 Treffer gewertet: {shot['score']} Ringe!")
+                    
+                    # ---> NEU: Schuss-Nummer ermitteln, um das Log mit dem GUI-HUD zu synchronisieren <---
+                    shot_num = sum(1 for s in self.sm.shots if s['side'] == side)
+                    
+                    # ---> NEU: Perfekte Log-Ausgabe mit ID, Koordinaten und 3 Nachkommastellen beim Rohwert <---
+                    self.log(side, f"💥 Schuss #{shot_num} | Pos X:{int(sd['cx'])}, Y:{int(sd['cy'])} | {shot['score']:.1f} Ringe (Roh: {shot.get('raw_score', 0.0):.3f})")
+                    
                 self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!", True)
             
             # Maske für BEIDE Fälle (Treffer & Discard-Risse) updaten

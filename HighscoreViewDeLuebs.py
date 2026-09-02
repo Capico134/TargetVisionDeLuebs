@@ -10,6 +10,9 @@ from PIL import Image, ImageTk, ImageDraw, ImageFont
 import configparser  
 
 import LoggerDeLuebs
+from DetectionDeLuebs import TargetDetector
+from DateiManagerDeLuebs import DateiManager
+from DateiManagerDeLuebs import DateiManager
 
 class MatchDetailWindow(tk.Toplevel):
     def __init__(self, parent, match_id, zip_path):
@@ -42,13 +45,34 @@ class MatchDetailWindow(tk.Toplevel):
                 self.timeline = match_data.get("timeline", [])
                 
                 config = configparser.ConfigParser()
+                #try:
+                #    config_str = zipf.read("config.ini").decode('utf-8')
+                #    config.read_string(config_str)
+                #    self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius', fallback=10.5)
+                #except KeyError:
+                #    config.read("config.ini")
+                #    self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius', fallback=10.5)
+                
+                config.optionxform = str
                 try:
                     config_str = zipf.read("config.ini").decode('utf-8')
                     config.read_string(config_str)
-                    self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius', fallback=10.5)
                 except KeyError:
                     config.read("config.ini")
-                    self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius', fallback=10.5)
+                
+                # config wurde aus dem ZIP geladen...
+                d_config = config # ConfigParser kann direkt als Config übergeben werden
+                d_dm = DateiManager() # Nutzt die lokale zielscheiben.json
+                d_sm = None # Wird für den Radius nicht gebraucht
+                
+                # Wir holen uns den echten Detector ins Boot!
+                detector = TargetDetector(d_config, d_dm, d_sm, lambda s, m, sg=False: None)
+                
+                # Die Engine berechnet den perfekten Radius völlig automatisch linsenkorrigiert per ELA:
+                self.radius_left = detector.get_caliber_radius('left')
+                self.radius_right = detector.get_caliber_radius('right')
+                
+                
                 
                 # ---> NEU: Erst PNG versuchen (neue Version), dann Fallback auf JPG (alte Version) <---
                 try:
@@ -202,14 +226,18 @@ class MatchDetailWindow(tk.Toplevel):
 
     def draw_hits(self, draw, side, font):
         idx = 1
+        # Wählt vollautomatisch den linsenkorrigierten Radius für links ('l') oder rechts ('r')
+        base_r = self.radius_left if side == 'l' else self.radius_right
+        
         for hit in self.timeline:
             if hit['s'] == side:
                 cx = hit['x'] * self.zoom_factor
                 cy = hit['y'] * self.zoom_factor
                 score = hit.get('score', 0.0)
                 
-                r = self.caliber_radius * self.zoom_factor 
+                r = base_r * self.zoom_factor 
                 draw.ellipse((cx-r, cy-r, cx+r, cy+r), outline="red", width=4)
+                # ... Rest des Zeichnens ...
                 
                 id_str = str(idx)
                 

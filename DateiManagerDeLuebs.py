@@ -398,7 +398,18 @@ darstellung_ohne_weissabgleich = yes
             print("🔧 Führe Auto-Patch aus: Entferne obsoleten Parameter 'fenster_skalierung'...")
             self.remove_ini_value('Anzeige', 'fenster_skalierung')
             needs_reload = True
-        
+
+        # --- AUTO-PATCH: Veraltete Parameter aufräumen ---
+        if config.has_option('Erkennung', 'caliber_radius'):
+            print("🔧 Führe Auto-Patch aus: Entferne obsoleten Parameter 'caliber_radius'...")
+            self.remove_ini_value('Erkennung', 'caliber_radius')
+            needs_reload = True        
+            
+            
+        if not config.has_option('Erkennung', 'caliber_durchmesser'):
+            print("🔧 Führe Auto-Patch aus: Füge 'caliber_durchmesser = 4.50' hinzu...")
+            self.update_ini_value('Erkennung', 'caliber_durchmesser', '4.50')
+            needs_reload = True            
         
         if not config.has_option('Kameras', 'cam_width_links'):
             print("🔧 Führe Auto-Patch aus: Füge Kamera-Auflösungen hinzu...")
@@ -422,15 +433,15 @@ darstellung_ohne_weissabgleich = yes
                     except ValueError:
                         pass
 
-        if config.has_option('Erkennung', 'caliber_radius'):
-            try:
-                current_radius = config.getfloat('Erkennung', 'caliber_radius')
-                if current_radius < 13.0:  # Fängt alte 480p-Werte (10.0 / 10.5) ab, lässt 720p-Werte in Ruhe
-                    print(f"🔧 Führe Auto-Patch aus: Aktualisiere 'caliber_radius' von {current_radius} auf 20.0 (720p-Anpassung)...")
-                    self.update_ini_value('Erkennung', 'caliber_radius', '20.0')
-                    needs_reload = True
-            except ValueError:
-                pass
+        #if config.has_option('Erkennung', 'caliber_radius'):
+        #    try:
+        #        current_radius = config.getfloat('Erkennung', 'caliber_radius')
+        #        if current_radius < 13.0:  # Fängt alte 480p-Werte (10.0 / 10.5) ab, lässt 720p-Werte in Ruhe
+        #            print(f"🔧 Führe Auto-Patch aus: Aktualisiere 'caliber_radius' von {current_radius} auf 20.0 (720p-Anpassung)...")
+        #            self.update_ini_value('Erkennung', 'caliber_radius', '20.0')
+        #            needs_reload = True
+        #    except ValueError:
+        #        pass
         
         if needs_reload:
             config.read(self.CONFIG_FILE, encoding='utf-8')

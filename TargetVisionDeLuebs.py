@@ -60,7 +60,7 @@ class TargetTracker:
         
         
         # --- Nur noch Variablen, die wir explizit für die GUI/Steuerung brauchen ---
-        self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius')
+        #self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius')
         self.ausloeser_durch_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.poll_ms = config.getint('Timing', 'poll_ms', fallback=33)
         self.vollbild = config.getboolean('Anzeige', 'vollbild', fallback=False)
@@ -200,7 +200,7 @@ class TargetTracker:
         
         # 1. Config.ini NEU in den RAM laden und GUI-Variablen updaten
         self.config.read(self.dm.CONFIG_FILE, encoding='utf-8')
-        self.caliber_radius = self.config.getint('Erkennung', 'caliber_radius')
+        #self.caliber_radius = self.config.getint('Erkennung', 'caliber_radius')
         self.ausloeser_durch_erschuetterung = self.config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         
@@ -232,6 +232,11 @@ class TargetTracker:
         for s in ['left', 'right']:
             state = self.sm.state_left if s == 'left' else self.sm.state_right
             if not state: continue
+            
+            # ---> NEU: Kurzzeitgedächtnis löschen! Verhindert Absturz und macht Crop-Änderungen live-fähig! <---
+            state.prev_gray = None
+            state.is_moving = False
+            state.still_counter = 0
             
             # Das korrigierte Diff-Gesamt aus dem Labor suchen und einpflanzen!
             mask_name = next((f for f in package['images'] if f"diff_gesamt_{s}" in f or f"cumulative_startmask_{s}" in f), None)
@@ -384,10 +389,14 @@ class TargetTracker:
             
         # Den Offset müssen wir im Kopf behalten, da die Skalierung (avg_scale) jetzt proportional ist
         avg_scale = self.scale_x # self.scale_x und _y sind identisch
-        final_radius = max(2, int(self.caliber_radius * avg_scale))
+        #final_radius = max(2, int(self.caliber_radius * avg_scale))
         
         # ---> TREFFER ZEICHNEN (Nach Seite getrennt, Nummer mittig im Kreis) <---
         for side in ['left', 'right']:
+            # ---> NEU: Holt sich den perfekten, linsenkorrigierten Radius aus der Engine! <---
+            cal_r = self.detector.get_caliber_radius(side)
+            final_radius = max(2, int(cal_r * self.scale_x))
+            
             side_shots = self.sm.get_shots_for_side(side)
             for idx, shot in enumerate(side_shots):
                 x, y = shot['pos']

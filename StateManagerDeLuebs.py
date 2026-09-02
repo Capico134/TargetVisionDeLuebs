@@ -157,8 +157,9 @@ class StateManager:
     def calculate_score(self, side, cx, cy):
         """Berechnet den Ringwert für gegebene Koordinaten."""
         score = 0.0
-        nullpunkt = self.nullpunkts.get(side)
+        raw_score = 0.0 # <--- NEU: Die ungerundete Wahrheit
         
+        nullpunkt = self.nullpunkts.get(side)
         if self.ringwertung_aktiv and nullpunkt:
             seite_str = "links" if side == 'left' else "rechts"
             px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
@@ -188,8 +189,8 @@ class StateManager:
                     # Der Schuss ist im 10er Ring! Wir verteilen 10.0 bis 10.9 prozentual bis zur exakten Mitte
                     prozent_zur_mitte = (radius_10_score - dist_mm) / radius_10_score
                     raw_score = 10.0 + (prozent_zur_mitte * 0.99) # 0.99, damit die 10.9 wirklich erreichbar ist
+                # Normale ISSF-Formel für alle Ringe 1 bis 9
                 else:
-                    # Normale ISSF-Formel für alle Ringe 1 bis 9
                     raw_score = 10.0 + ((radius_10_score - dist_mm) / ring_abstand_radius_mm)
                 
                 score = math.floor(raw_score * 10) / 10.0
@@ -197,18 +198,18 @@ class StateManager:
                 if score > 10.9: score = 10.9
                 if score < 1.0: score = 0.0
                 
-        return score
+        return score, raw_score # <--- NEU: Beide Werte zurückgeben!
 
     def add_shot(self, side, cx, cy, area, cv_score=0.0):
         """Speichert einen neuen Schuss und berechnet die Ring-Zehntelwertung!"""
-        # ---> NEU: Ruft einfach unsere saubere Hilfsfunktion auf <---
-        score = self.calculate_score(side, cx, cy)
+        score, raw_score = self.calculate_score(side, cx, cy) # <--- NEU: Beide Werte fangen!
         
         shot_data = {
             'side': side,
             'pos': (cx, cy),
             'area': area,
             'score': score,
+            'raw_score': raw_score, # <--- NEU: Roh-Wert für das Logbuch speichern!
             'cv_score': cv_score,
             'timestamp': time.time(),
             't_mono': time.monotonic() - getattr(self, 'match_start_mono', time.monotonic()), 

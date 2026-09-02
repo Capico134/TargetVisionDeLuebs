@@ -172,7 +172,9 @@ class OfflineLaborApp:
         # TK-Variablen für Slider
         self.hit_tolerance_var = tk.IntVar(value=22)
         self.min_hole_area_var = tk.IntVar(value=25)
-        self.caliber_radius_var = tk.IntVar(value=11)
+        # ---> NEU: Jetzt in Millimetern und mit Float (2 Nachkommastellen) <---
+        self.caliber_durchmesser_var = tk.DoubleVar(value=4.50)
+        #self.caliber_radius_var = tk.IntVar(value=11)
         self.hybrid_riss_faktor_var = tk.DoubleVar(value=1.175)
         self.hybrid_sichel_faktor_var = tk.DoubleVar(value=1.05)
         self.hybrid_discard_faktor_var = tk.DoubleVar(value=2.5)
@@ -347,8 +349,8 @@ class OfflineLaborApp:
         self.rb_cam_right.pack(side=tk.LEFT, expand=True)
         # ==========================================================
         
-        # Schuss-Navigation (Nur noch EINMAL definiert!)
-        nav_frame = tk.LabelFrame(control_frame, text=" Schuss-Navigation ", pady=10, padx=10)
+        # Bild-Navigation (Nur noch EINMAL definiert!)
+        nav_frame = tk.LabelFrame(control_frame, text=" Bild-Navigation ", pady=10, padx=10)
         nav_frame.pack(fill=tk.X, pady=(0, 15))
         
         # ---> 5 Buttons mit fester Breite und ohne Expand <---
@@ -359,7 +361,7 @@ class OfflineLaborApp:
         # ---> NEU: Interaktiver Bereich in der Mitte <---
         self.shot_nav_frame = tk.Frame(nav_frame)
         self.shot_nav_frame.pack(side=tk.LEFT, expand=True)
-        tk.Label(self.shot_nav_frame, text="Schuss ", font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        tk.Label(self.shot_nav_frame, text="Bild ", font=("Arial", 10, "bold")).pack(side=tk.LEFT)
         self.shot_jump_var = tk.StringVar(value="-")
         self.entry_shot_jump = tk.Entry(self.shot_nav_frame, textvariable=self.shot_jump_var, width=4, font=("Arial", 10, "bold"), justify="center")
         self.entry_shot_jump.pack(side=tk.LEFT)
@@ -426,7 +428,8 @@ class OfflineLaborApp:
         # --- Hier kommen die Slider in das neue scrollbare param_frame ---
         self.make_slider(param_frame, "hit_tolerance:", self.hit_tolerance_var, 1, 100, key="hit_tolerance")
         self.make_slider(param_frame, "min_hole_area:", self.min_hole_area_var, 5, 500, key="min_hole_area")
-        self.make_slider(param_frame, "caliber_radius:", self.caliber_radius_var, 5.0, 50.0, res=0.1, key="caliber_radius")
+        #self.make_slider(param_frame, "caliber_radius:", self.caliber_radius_var, 5.0, 50.0, res=0.1, key="caliber_radius")
+        self.make_slider(param_frame, "caliber_durchmesser (mm):", self.caliber_durchmesser_var, 3.00, 10.00, res=0.01, key="caliber_durchmesser")
         tk.Label(param_frame, text="--- Hybrid & Hough Faktoren ---", fg="gray").pack(pady=(10, 5))
         self.make_slider(param_frame, "hybrid_sichel_faktor:", self.hybrid_sichel_faktor_var, 0.1, 1.5, 0.01, key="hybrid_sichel_faktor")
         self.make_slider(param_frame, "hybrid_riss_faktor:", self.hybrid_riss_faktor_var, 1.0, 3.0, 0.001, key="hybrid_riss_faktor")
@@ -497,7 +500,7 @@ class OfflineLaborApp:
         if parser and parser.has_section('Erkennung'):
             self.hit_tolerance_var.set(parser.getint('Erkennung', 'hit_tolerance', fallback=22))
             self.min_hole_area_var.set(parser.getint('Erkennung', 'min_hole_area', fallback=25))
-            self.caliber_radius_var.set(parser.getfloat('Erkennung', 'caliber_radius', fallback=11))
+            #self.caliber_radius_var.set(parser.getfloat('Erkennung', 'caliber_radius', fallback=11))
             self.hybrid_riss_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.175))
             self.hybrid_sichel_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=1.05))
             self.hybrid_discard_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5))
@@ -508,12 +511,24 @@ class OfflineLaborApp:
             self.morph_kernel_var.set(parser.getint('Erkennung', 'morph_kernel_size', fallback=6))
             self.max_aspect_ratio_var.set(parser.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5))
             self.gesamt_anteil_am_200score_var.set(parser.getfloat('Erkennung', 'gesamt_anteil_am_200score', fallback=0.667))
+            # ---> NEU: Den alten Radius ignorieren, wenn ein Durchmesser da ist <---
+            if parser.has_option('Erkennung', 'caliber_durchmesser'):
+                val = parser.get('Erkennung', 'caliber_durchmesser')
+                if val.strip().lower() == 'auto':
+                    self.caliber_durchmesser_var.set(4.50) # Fallback für die GUI
+                else:
+                    self.caliber_durchmesser_var.set(float(val))
+            else:
+                # Falls wir eine uralte Config laden, konvertieren wir den Pixel-Wert grob in mm für den Slider
+                alt_r = parser.getfloat('Erkennung', 'caliber_radius', fallback=15.0)
+                self.caliber_durchmesser_var.set(round((alt_r * 2) / 8.5, 2))
             
             # Reset-Punkte für den Mittelklick auf den Slidern speichern
             self.original_values = {
                 str(self.hit_tolerance_var): self.hit_tolerance_var.get(),
                 str(self.min_hole_area_var): self.min_hole_area_var.get(),
-                str(self.caliber_radius_var): self.caliber_radius_var.get(),
+                #str(self.caliber_radius_var): self.caliber_radius_var.get(),
+                str(self.caliber_durchmesser_var): self.caliber_durchmesser_var.get(),
                 str(self.hybrid_riss_faktor_var): self.hybrid_riss_faktor_var.get(),
                 str(self.hybrid_sichel_faktor_var): self.hybrid_sichel_faktor_var.get(),
                 str(self.hybrid_discard_faktor_var): self.hybrid_discard_faktor_var.get(),
@@ -664,7 +679,8 @@ class OfflineLaborApp:
         temp_img = self.base_combined_img.copy()
         
         # Den aktuellen Radius an den Zoom-Faktor anpassen
-        r = int(self.caliber_radius_var.get() * self.current_scale)
+        base_r = getattr(self, 'current_radius_px', 15) # Holt den perfekten Radius aus Schritt 1
+        r = int(base_r * self.current_scale)
         
         # Neon-Blau / Cyan in BGR-Farbraum
         neon_blue = (255, 255, 0)
@@ -849,7 +865,7 @@ class OfflineLaborApp:
             
             if i == target_idx:
                 self.log_text.insert(tk.END, "\n" + "▼"*70 + "\n")
-                self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR DEN AKTUELLEN SCHUSS ({i+1})  ███\n")
+                self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR BILD-AUFNAHME ({i+1})  ███\n")
                 self.log_text.insert(tk.END, "▼"*70 + "\n\n")
                 
                 d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
@@ -871,10 +887,15 @@ class OfflineLaborApp:
 
         # 4. VISUALISIERUNG DER ENGINE-ERGEBNISSE
         # Hole das Diff-Bild direkt aus dem Dummy-DateiManager der Engine!
-        # ---> NEU: Ringwertung aus dem StateManager in die GUI schreiben <---
-        new_shots = [s for s in d_sm.shots if s.get('is_new', False) and s['side'] == side]
-        if new_shots:
-            lines = [f"🎯 {s['score']:.1f} Ringe" for s in new_shots]
+        # ---> NEU: Ringwertung aus dem StateManager in die GUI schreiben (MIT SCHUSS-NUMMER) <---
+        side_shots = [s for s in d_sm.shots if s['side'] == side]
+        lines = []
+        for i, s in enumerate(side_shots):
+            if s.get('is_new', False):
+                # i ist der Index (0, 1, 2...), also ist i+1 die echte Schuss-Nummer!
+                lines.append(f"🎯 Schuss #{i+1}: {s['score']:.1f} Ringe")
+                
+        if lines:
             self.lbl_current_scores.config(text="\n".join(lines), fg="#27ae60")
         else:
             self.lbl_current_scores.config(text="- keine -", fg="gray")
@@ -889,7 +910,9 @@ class OfflineLaborApp:
             diff_img = cv2.cvtColor(diff_img, cv2.COLOR_GRAY2BGR)
             
         # Kreise auf das Live-Bild zeichnen (aus dem StateManager der Engine!)
-        r = self.caliber_radius_var.get()
+        # ---> NEU: Dynamischen Radius verwenden!
+        r = int(detector.get_caliber_radius(side))
+        self.current_radius_px = r  # <--- NEU: Für das Maus-Fadenkreuz speichern!
         for shot in d_sm.shots:
             if shot['side'] == side:
                 # Grün für alte, Rot für diesen Frame
@@ -905,7 +928,9 @@ class OfflineLaborApp:
             
             orig_shots_side = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
             curr_shots_side = [s for s in d_sm.shots if s.get('side') == side]
-            cal_r = self.caliber_radius_var.get()
+            #cal_r = self.caliber_radius_var.get()
+            # Wir holen uns den perfekten, linsenkorrigierten Pixel-Radius direkt aus der Engine!
+            cal_r = detector.get_caliber_radius(side)
             
             # Wir nutzen das smarte Alignment, um die gelben Kreise an die neuen Treffer zu koppeln!
             aligned = self.align_shots(orig_shots_side, curr_shots_side, cal_r * 2.5)
@@ -1092,6 +1117,7 @@ class OfflineLaborApp:
         
         # Hilfsfunktion zum Zeichnen der Tabellen
         def build_side_comparison(side_name, side_char):
+            cal_r = detector.get_caliber_radius(side_name) # <--- NEU HIER DRIN!
             orig_shots = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
             curr_shots = [s for s in d_sm.shots if s.get('side') == side_name]
             
@@ -1696,7 +1722,13 @@ class OfflineLaborApp:
                 # Der universelle Trace-Spion
                 def make_trace_cmd(s, k, var_obj):
                     def cmd(*args):
-                        v = var_obj.get()
+                        try:
+                            v = var_obj.get()
+                        except tk.TclError:
+                            # Der Nutzer tippt gerade und das Feld ist leer ("") oder hat nur ein Minus ("-").
+                            # Wir ignorieren das einfach und warten auf die nächste Ziffer!
+                            return
+                            
                         # Booleans wieder als yes/no in die Config schreiben
                         if isinstance(v, bool):
                             v_str = "yes" if v else "no"
