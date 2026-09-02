@@ -476,6 +476,9 @@ class TargetDetector:
                         if dist < current_caliber_radius * clipping_factor_history:
                             is_new = False
                             self.log(side, f"⚠️ Treffer ignoriert: Zu nah ({dist:.1f}px) an bekanntem alten Schuss aus vorherigen Frames!")
+                            
+                            # ---> NEU: Maske trotzdem updaten, damit der Riss im nächsten Frame ignoriert wird! <---
+                            update_mask_only = True 
                             break
                             
                 # 2. Prüfung gegen Fragmente aus DIESEM Frame -> Großzügig (0.95), um Sichel-Risse abzuwürgen

@@ -194,10 +194,17 @@ class OfflineLaborApp:
         self.pan_y = 0
         self.view_mode_var = tk.IntVar(value=1)
         
+        # ---> NEU: Dynamische Liste für alle Slider-Keys (inklusive Legacy-Keys!) <---
+        self.registered_slider_keys = {'caliber_radius'}
+        
         self.setup_ui()
         
     def make_slider(self, parent, label_text, tk_var, from_, to_, res=1, section="Erkennung", key=None):
         """Hilfsfunktion für Slider mit direkter Eingabe, Reset und Live-Data-Binding"""
+        # ---> NEU: Jeder Slider meldet seinen Key automatisch beim System an! <---
+        if key:
+            self.registered_slider_keys.add(key)        
+        
         frame = tk.Frame(parent)
         frame.pack(fill=tk.X, pady=2)
         
@@ -1113,7 +1120,7 @@ class OfflineLaborApp:
         txt.insert(tk.END, f"VERGLEICH: KOMPLETTES MATCH (Aktuelle Slider-Werte vs. Original-JSON)\n")
         txt.insert(tk.END, "="*85 + "\n")
 
-        cal_r = self.caliber_radius_var.get()
+        #cal_r = self.caliber_radius_var.get()
         
         # Hilfsfunktion zum Zeichnen der Tabellen
         def build_side_comparison(side_name, side_char):
@@ -1650,13 +1657,16 @@ class OfflineLaborApp:
 
         parser = self.package_data['config']
 
-        # ---> NEU: Diese Keys haben bereits einen Slider in der Haupt-GUI und werden hier versteckt <---
-        ignore_keys = {
-            'hit_tolerance', 'min_hole_area', 'caliber_radius', 
-            'hybrid_sichel_faktor', 'hybrid_riss_faktor', 'hybrid_discard_faktor', 
-            'hough_min_faktor', 'hough_max_faktor', 'hough_param1', 'hough_param2', 
-            'morph_kernel_size', 'max_aspect_ratio', 'gesamt_anteil_am_200score'
-        }
+        ## ---> NEU: Diese Keys haben bereits einen Slider in der Haupt-GUI und werden hier versteckt <---
+        #ignore_keys = {
+        #    'hit_tolerance', 'min_hole_area', 'caliber_radius', 'caliber_durchmesser',
+        #    'hybrid_sichel_faktor', 'hybrid_riss_faktor', 'hybrid_discard_faktor', 
+        #    'hough_min_faktor', 'hough_max_faktor', 'hough_param1', 'hough_param2', 
+        #    'morph_kernel_size', 'max_aspect_ratio', 'gesamt_anteil_am_200score'
+        #}
+        
+        # ---> NEU: Wir holen uns einfach die dynamisch generierte Liste! <---
+        ignore_keys = self.registered_slider_keys
 
         # Neues Fenster erstellen
         dialog = tk.Toplevel(self.root)
