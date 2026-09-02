@@ -16,6 +16,7 @@ from datetime import datetime
 # ---> HIER IMPORTIEREN WIR DEINE ECHTE ENGINE UND DEN MANAGER! <---
 from DetectionDeLuebs import TargetDetector
 from DateiManagerDeLuebs import DateiManager
+from StateManagerDeLuebs import StateManager
 
 import LoggerDeLuebs
 from HandbuchDeLuebs import PARAMETER_LEXIKON
@@ -124,26 +125,6 @@ class DummyConfig:
     def get(self, section, key, fallback=''):
         return self._get_val(section, key, fallback)
 
-class DummyState:
-    def __init__(self, side):
-        self.side = side
-        self.cumulative_mask = None
-        self.target_present = True
-
-class DummyStateManager:
-    def __init__(self):
-        self.state_left = DummyState('left')
-        self.state_right = DummyState('right')
-        self.shots = []
-        
-    def add_shot(self, side, cx, cy, area, cv_score=0.0, **kwargs):
-        # ---> HIER DIE 10.9 durch -1.0 ersetzen <---
-        shot = {'side': side, 'pos': (cx, cy), 'area': area, 'score': -1.0, 'is_new': True, 'cv_score': cv_score}
-        self.shots.append(shot)
-        return shot
-        
-    def set_nullpunkt(self, side, x, y): pass
-
 class DummyDateiManager:
     def __init__(self, app):
         self.app = app
@@ -151,21 +132,22 @@ class DummyDateiManager:
         self.export_folder = "labor_export"
         
     def save_debug_image(self, name, image):
-        # 1. Immer in den RAM für die GUI
         self.debug_images[name] = image.copy()
-        
-        # 2. Optional auf die Festplatte, wenn Checkbox aktiv ist
         if self.app.export_images_var.get():
             import os
             if not os.path.exists(self.export_folder):
                 os.makedirs(self.export_folder)
-            
             ext = ".png" if "diff" in name.lower() or "mask" in name.lower() else ".jpg"
             path = os.path.join(self.export_folder, f"{name}{ext}")
             cv2.imwrite(path, image)
             
     def load_targets(self):
-        return {}
+        # ---> NEU: Holt die echten Zielscheiben-Daten für den StateManager! <---
+        return self.app.dm.load_targets()
+        
+    def write_log(self, msg):
+        # ---> NEU: Stummschaltung für den StateManager <---
+        pass
 
 
 # ==========================================
@@ -396,16 +378,24 @@ class OfflineLaborApp:
         #self.btn_compare = tk.Button(nav_frame, text="📊 Abweichung zum Original messen", command=self.show_comparison, bg="#2c3e50", fg="white")
         #self.btn_compare.pack(side=tk.BOTTOM, fill=tk.X, pady=(10,0))
         
-        # ---> NEU: Ansichts-Steuerung <---
-        view_frame = tk.LabelFrame(control_frame, text=" Rechte Bildhälfte ", pady=10, padx=10)
-        view_frame.pack(fill=tk.X, pady=(0, 15))
+        # ---> NEU: Ansichts-Steuerung UND Ringwertung im Doppel-Layout <---
+        view_outer_frame = tk.Frame(control_frame)
+        view_outer_frame.pack(fill=tk.X, pady=(0, 15))
         
-        tk.Radiobutton(view_frame, text="1) Diff-Bild (Letzter Schuss)", variable=self.view_mode_var, value=1, command=self.update_image_display).pack(anchor=tk.W)
-        tk.Radiobutton(view_frame, text="2) Diff-Gesamt-Bild (Historie)", variable=self.view_mode_var, value=2, command=self.update_image_display).pack(anchor=tk.W)
-        tk.Radiobutton(view_frame, text="3) Überlagerung (Ref + Diff + Gesamt)", variable=self.view_mode_var, value=3, command=self.update_image_display).pack(anchor=tk.W)
-        tk.Radiobutton(view_frame, text="4) Raw-Diff (Grau + Rot > Limit)", variable=self.view_mode_var, value=4, command=self.update_image_display).pack(anchor=tk.W)
-        # ---> NEU: Die 5. Ansicht! <---
-        tk.Radiobutton(view_frame, text="5) Rohes Bild (Ohne Filter/Kreise)", variable=self.view_mode_var, value=5, command=self.update_image_display).pack(anchor=tk.W)
+        view_frame = tk.LabelFrame(view_outer_frame, text=" Rechte Bildhälfte ", pady=10, padx=10)
+        view_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        
+        tk.Radiobutton(view_frame, text="1) Diff-Bild", variable=self.view_mode_var, value=1, command=self.update_image_display).pack(anchor=tk.W)
+        tk.Radiobutton(view_frame, text="2) Diff-Gesamt", variable=self.view_mode_var, value=2, command=self.update_image_display).pack(anchor=tk.W)
+        tk.Radiobutton(view_frame, text="3) Überlagerung", variable=self.view_mode_var, value=3, command=self.update_image_display).pack(anchor=tk.W)
+        tk.Radiobutton(view_frame, text="4) Raw-Diff", variable=self.view_mode_var, value=4, command=self.update_image_display).pack(anchor=tk.W)
+        tk.Radiobutton(view_frame, text="5) Rohes Bild", variable=self.view_mode_var, value=5, command=self.update_image_display).pack(anchor=tk.W)
+
+        self.score_frame = tk.LabelFrame(view_outer_frame, text=" Ringwertung (Live) ", pady=10, padx=10)
+        self.score_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        
+        self.lbl_current_scores = tk.Label(self.score_frame, text="-", justify=tk.LEFT, anchor="nw", font=("Consolas", 12, "bold"), fg="#27ae60")
+        self.lbl_current_scores.pack(fill=tk.BOTH, expand=True)
         
         # ---> NEU: Scrollbarer Bereich für die Parameter <---
         param_outer_frame = tk.LabelFrame(control_frame, text=" Erkennungs-Parameter (Live) ", pady=5, padx=5)
@@ -835,7 +825,7 @@ class OfflineLaborApp:
         # 1. DUMMYS AUFBAUEN
         d_config = DummyConfig(self)
         d_dm = DummyDateiManager(self)
-        d_sm = DummyStateManager()
+        d_sm = StateManager(d_config, d_dm)
         
         # 2. ECHTE ENGINE STARTEN
         detector = TargetDetector(d_config, d_dm, d_sm, self.print_log)
@@ -881,6 +871,15 @@ class OfflineLaborApp:
 
         # 4. VISUALISIERUNG DER ENGINE-ERGEBNISSE
         # Hole das Diff-Bild direkt aus dem Dummy-DateiManager der Engine!
+        # ---> NEU: Ringwertung aus dem StateManager in die GUI schreiben <---
+        new_shots = [s for s in d_sm.shots if s.get('is_new', False) and s['side'] == side]
+        if new_shots:
+            lines = [f"🎯 {s['score']:.1f} Ringe" for s in new_shots]
+            self.lbl_current_scores.config(text="\n".join(lines), fg="#27ae60")
+        else:
+            self.lbl_current_scores.config(text="- keine -", fg="gray")
+            
+            
         diff_img = d_dm.debug_images.get(f"diff_letzter_treffer_{side}")
         if diff_img is None:
             # Fallback falls kein Treffer erkannt wurde
@@ -1057,7 +1056,7 @@ class OfflineLaborApp:
         # 2. Voller Simulations-Durchlauf (Stumm im Hintergrund)
         d_config = DummyConfig(self)
         d_dm = DummyDateiManager(self)
-        d_sm = DummyStateManager()
+        d_sm = StateManager(d_config, d_dm)
         # Stumme Log-Funktion, damit die Konsole nicht überflutet wird
         detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
 
@@ -1217,7 +1216,7 @@ class OfflineLaborApp:
             # Wir machen hier genau das Gleiche wie in show_comparison(), aber STUMM.
             d_config = DummyConfig(self)
             d_dm = DummyDateiManager(self)
-            d_sm = DummyStateManager()
+            d_sm = StateManager(d_config, d_dm)
             detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
 
             #with zipfile.ZipFile(self.current_zip_path, 'r') as zf:
@@ -1398,7 +1397,7 @@ class OfflineLaborApp:
                 # Wir müssen die aktuellen Masken/Diffs berechnen, um sie an TargetVision zu übergeben
                 d_config = DummyConfig(self)
                 d_dm = DummyDateiManager(self)
-                d_sm = DummyStateManager()
+                d_sm = StateManager(d_config, d_dm)
                 detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
 
                 for s in ['left', 'right']:

@@ -172,7 +172,6 @@ class StateManager:
             dist_mm = math.sqrt(dx_mm**2 + dy_mm**2)
             
             aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-            print(f"aktive_scheibe_id {aktive_scheibe_id}")
             targets = self.dm.load_targets()
             
             if aktive_scheibe_id in targets:
@@ -182,13 +181,16 @@ class StateManager:
                 kaliber = target_data.get('kaliber_mm', 4.5)
                 
                 ring_abstand_radius_mm = (d_9 - d_10) / 2.0
-                
-                # Ab welchem Abstand vom Zentrum ist es exakt eine 10.0?
-                # (Halber 10er-Ring + halbes Kaliber)
                 radius_10_score = (d_10 + kaliber) / 2.0
                 
-                # Die universelle, physikalische Formel:
-                raw_score = 10.0 + ((radius_10_score - dist_mm) / ring_abstand_radius_mm)
+                # --- NEU: Faire 10er-Ring Verteilung für Scheiben mit großem Zehner ---
+                if dist_mm <= radius_10_score:
+                    # Der Schuss ist im 10er Ring! Wir verteilen 10.0 bis 10.9 prozentual bis zur exakten Mitte
+                    prozent_zur_mitte = (radius_10_score - dist_mm) / radius_10_score
+                    raw_score = 10.0 + (prozent_zur_mitte * 0.99) # 0.99, damit die 10.9 wirklich erreichbar ist
+                else:
+                    # Normale ISSF-Formel für alle Ringe 1 bis 9
+                    raw_score = 10.0 + ((radius_10_score - dist_mm) / ring_abstand_radius_mm)
                 
                 score = math.floor(raw_score * 10) / 10.0
                 
