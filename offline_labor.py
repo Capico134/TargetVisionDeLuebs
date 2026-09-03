@@ -1036,51 +1036,51 @@ class OfflineLaborApp:
         self.update_image_display()
 
     def align_shots(self, orig_shots, curr_shots, threshold):
-        """Sequenz-Alignment mit Lookahead, um Original-JSON und neu berechnete Treffer zu synchronisieren."""
-        i = 0
-        j = 0
+        """Robustes Greedy-Alignment, das Aussetzer und OpenCV-Reihenfolge-Änderungen verzeiht."""
         aligned = []
-        while i < len(orig_shots) or j < len(curr_shots):
-            if i < len(orig_shots) and j < len(curr_shots):
-                ox, oy = orig_shots[i]['x'], orig_shots[i]['y']
+        used_curr = set()
+        
+        # 1. Wir suchen für jeden Original-Schuss den perfekten, noch freien Partner
+        for i, orig in enumerate(orig_shots):
+            ox, oy = orig['x'], orig['y']
+            
+            best_j = None
+            best_dist = float('inf')
+            
+            # Wir gucken uns die aktuellen Schüsse an (mit einem großzügigen Puffer für vertauschte Reihenfolgen)
+            start_j = max(0, i - 15)
+            end_j = min(len(curr_shots), i + 15)
+            
+            for j in range(start_j, end_j):
+                if j in used_curr: continue
                 cx, cy = int(curr_shots[j]['pos'][0]), int(curr_shots[j]['pos'][1])
                 dist = np.hypot(cx - ox, cy - oy)
                 
-                if dist < threshold:
-                    aligned.append((i, j, dist))
-                    i += 1
-                    j += 1
-                else:
-                    found_match = False
-                    for lookahead in range(1, min(6, len(curr_shots) - j)):
-                        nx, ny = int(curr_shots[j + lookahead]['pos'][0]), int(curr_shots[j + lookahead]['pos'][1])
-                        if np.hypot(nx - ox, ny - oy) < threshold:
-                            found_match = True
-                            for k in range(lookahead):
-                                aligned.append((None, j + k, None))
-                            j += lookahead
-                            break
-                    if found_match: continue
+                # Gierig den absolut nächsten Schuss schnappen, der innerhalb des Limits liegt
+                if dist < threshold and dist < best_dist:
+                    best_dist = dist
+                    best_j = j
                     
-                    for lookahead in range(1, min(6, len(orig_shots) - i)):
-                        nx, ny = orig_shots[i + lookahead]['x'], orig_shots[i + lookahead]['y']
-                        if np.hypot(cx - nx, cy - ny) < threshold:
-                            found_match = True
-                            for k in range(lookahead):
-                                aligned.append((i + k, None, None))
-                            i += lookahead
-                            break
-                    if found_match: continue
-                    
-                    aligned.append((i, j, dist))
-                    i += 1
-                    j += 1
-            elif i < len(orig_shots):
+            if best_j is not None:
+                used_curr.add(best_j)
+                aligned.append((i, best_j, best_dist))
+            else:
+                # Kein passender Partner im Umkreis gefunden -> Schuss fehlt in der Neuberechnung
                 aligned.append((i, None, None))
-                i += 1
-            elif j < len(curr_shots):
+                
+        # 2. Jetzt sammeln wir alle NEUEN Schüsse ein, die bisher keinen Original-Partner gefunden haben
+        for j in range(len(curr_shots)):
+            if j not in used_curr:
                 aligned.append((None, j, None))
-                j += 1
+                
+        # 3. Liste sortieren, damit sie in der Tabelle chronologisch hübsch aussieht
+        def sort_key(item):
+            o_idx, c_idx, d = item
+            if o_idx is not None: return o_idx * 1000
+            if c_idx is not None: return (c_idx * 1000) + 500
+            return 999999
+            
+        aligned.sort(key=sort_key)
         return aligned
 
     def show_comparison(self):
