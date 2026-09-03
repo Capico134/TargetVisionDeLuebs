@@ -351,7 +351,7 @@ class TargetDetector:
                         
                         if circles is not None:
                             best_score = base_score
-                            best_cx, best_cy = int(base_x), int(base_y) # <--- HIER base_x/y nutzen!
+                            best_cx, best_cy = int(base_x), int(base_y) 
                             winner_new = base_new
                             hough_beat_base = False
                             
@@ -366,83 +366,134 @@ class TargetDetector:
                                     winner_new = coverage_new
                                     hough_beat_base = True
 
-                            if winner_new >= 5.0:
+                            # ---> FIX: Das Limit von 5.0 auf 5.0 gesenkt für extreme Mikrorisse! <---
+                            grenzwert_hough = 5.0 # NEU ALS MAGIC-NUMBER
+                            if winner_new >= grenzwert_hough:
                                 cx, cy = best_cx, best_cy
                                 final_shot_score = best_score 
                                 if hough_beat_base:
                                     self.log(side, f"🏆 Hough-Sieger triumphiert (Score {best_score:.1f}) und setzt Zentrum.")
                                 else:
-                                    # ---> NEU: Dynamischer Name <---
                                     self.log(side, f"🛡️ {base_name} verteidigt Titel! (Score {best_score:.1f})")
                                 hough_success = True
                             else:
-                                self.log(side, "⚠️ Sieger hat zu wenig Anteil am neuen Riss (< 5%). Verwerfe Sieger!")
+                                self.log(side, f"⚠️ Sieger hat zu wenig Anteil am neuen Riss (< {grenzwert_hough}%). Verwerfe Sieger!")
                                 
                         if not hough_success:
                             self.log(side, "⚠️ Wechsle zu Abrisskante / Fallback...")
                             erfolg_abriss = False
                             
                             if state.cumulative_mask is not None and cv2.countNonZero(state.cumulative_mask) > 0:
+                                
+                                # 1. Rand um den neuen Riss legen (wir machen ihn etwas dicker, 5x5)
                                 kernel_dilate = np.ones((5, 5), np.uint8)
-                                old_holes = cv2.dilate(state.cumulative_mask, kernel_dilate, iterations=1)
-                                intersection = cv2.bitwise_and(old_holes, mask)
-                                inter_contours, _ = cv2.findContours(intersection, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                                dilated_new = cv2.dilate(mask, kernel_dilate, iterations=1)
+                                
+                                # 2. Den Ring isolieren (Wir ziehen den Riss selbst wieder ab)
+                                ring = cv2.subtract(dilated_new, mask)
+                                
+                                # 3. DIE MAGIE: Schnittmenge mit dem UNVERSEHRTEN Papier!
+                                # cumulative_mask ist weiß bei alten Löchern. Invertiert (bitwise_not) ist es weiß bei intaktem Papier.
+                                intact_paper = cv2.bitwise_not(state.cumulative_mask)
+                                outer_edge = cv2.bitwise_and(ring, intact_paper)
                                 
                                 ts_abriss = datetime.now().strftime('%H%M%S_%f')[:-3]
-                                self.save_debug_image(f"abrisskante_schnittmenge_{side}_{ts_abriss}", intersection)
+                                self.save_debug_image(f"abrisskante_outer_{side}_{ts_abriss}", outer_edge)
+                                
+                                inter_contours, _ = cv2.findContours(outer_edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                                 
                                 if inter_contours:
-                                    largest_inter = max(inter_contours, key=cv2.contourArea)
-                                    if cv2.contourArea(largest_inter) > 3:
+                                    # Die massivste Außenkante finden
+                                    largest_inter = max(inter_contours, key=len)
+                                    
+                                    if len(largest_inter) > 0:
+                                        # 1. Flächenschwerpunkt der Kante berechnen (schwebt in der Luft)
                                         M_int = cv2.moments(largest_inter)
                                         if M_int["m00"] != 0:
-                                            cx_int = int(M_int["m10"] / M_int["m00"])
-                                            cy_int = int(M_int["m01"] / M_int["m00"])
-                                            
-                                            M_new = cv2.moments(cnt)
-                                            if M_new["m00"] != 0:
-                                                cx_new = int(M_new["m10"] / M_new["m00"])
-                                                cy_new = int(M_new["m01"] / M_new["m00"])
-                                                
-                                                dx = cx_new - cx_int
-                                                dy = cy_new - cy_int
-                                                dist = np.hypot(dx, dy)
-                                                
-                                                if dist > 0:
-                                                    nx = dx / dist
-                                                    ny = dy / dist
-                                                    
-                                                    # ---> DIE NEUE, INTELLIGENTE ABRISSKANTE <---
-                                                    test_cx = int(cx_int + nx * current_caliber_radius)
-                                                    test_cy = int(cy_int + ny * current_caliber_radius)
-                                                    
-                                                    # Der Schiedsrichter testet die Vektor-Kante!
-                                                    abriss_score, abriss_new, _ = self.calculate_hole_score(test_cx, test_cy, current_caliber_radius, thresh_new, thresh_raw)
-                                                    self.log(side, f"🧪 TEST-ABRISSKANTE: Theor. Zentrum X:{test_cx} Y:{test_cy} | Score: {abriss_score:.1f}")
-                                                    
-                                                    if abriss_score > base_score and abriss_new >= 5.0:
-                                                        self.log(side, f"🎯 Abrisskante AKTIV! Schlägt Base-Score ({abriss_score:.1f} > {base_score:.1f}). Zentrum gesetzt.")
-                                                        cx, cy = test_cx, test_cy
-                                                        final_shot_score = abriss_score
-                                                        erfolg_abriss = True 
-                                                    else:
-                                                        self.log(side, f"⚠️ Abrisskante verworfen! (Score {abriss_score:.1f} ist schlechter als Base {base_score:.1f})")
-                                                else:
-                                                    self.log(side, "⚠️ Abrisskante gescheitert: Schwerpunkte liegen exakt aufeinander.")
-                                            else:
-                                                self.log(side, "⚠️ Abrisskante gescheitert: Schnittmenge hat keine berechenbare Masse.")
+                                            cx_float = M_int["m10"] / M_int["m00"]
+                                            cy_float = M_int["m01"] / M_int["m00"]
                                         else:
-                                            self.log(side, "⚠️ Abrisskante gescheitert: Schnittmenge ist zu winzig (< 3px).")
+                                            cx_float = np.mean(largest_inter[:, 0, 0])
+                                            cy_float = np.mean(largest_inter[:, 0, 1])
+                                            
+                                        # 2. Den echten Pixel AUF DER KANTE finden, der diesem Schwerpunkt am nächsten ist!
+                                        best_pt = None
+                                        min_dist = float('inf')
+                                        for pt in largest_inter:
+                                            px, py = pt[0]
+                                            d = np.hypot(px - cx_float, py - cy_float)
+                                            if d < min_dist:
+                                                min_dist = d
+                                                best_pt = (px, py)
+                                                
+                                        cx_edge, cy_edge = best_pt
+                                        
+                                        self.log(side, f"📍 Kanten-Mitte (Snap-to-Edge): X:{cx_edge} Y:{cy_edge} (Kantenlänge: {len(largest_inter)}px)")
+                                        
+                                        # 3. Die beiden Zielpunkte des Risses holen
+                                        # CoG (Schwerpunkt) des Risses berechnen
+                                        M_new = cv2.moments(cnt)
+                                        if M_new["m00"] != 0:
+                                            cx_new = int(M_new["m10"] / M_new["m00"])
+                                            cy_new = int(M_new["m01"] / M_new["m00"])
+                                        else:
+                                            # Fallback, falls der Riss unförmig ist
+                                            cx_new, cy_new = int(circle_x), int(circle_y)
+                                            
+                                        # MEC-Zentrum haben wir schon ganz oben in der Engine berechnet
+                                        cx_mec, cy_mec = int(circle_x), int(circle_y)
+                                        
+                                        self.log(side, f"🎯 Vektor-Ziele im Riss -> CoG: ({cx_new},{cy_new}) | MEC: ({cx_mec},{cy_mec})")
+                                        
+                                        # 4. ELA-Hilfsfunktion für den Vektor-Wurf
+                                        def teste_vektor(ziel_x, ziel_y, name):
+                                            dx = ziel_x - cx_edge
+                                            dy = ziel_y - cy_edge
+                                            dist = np.hypot(dx, dy)
+                                            
+                                            if dist > 0:
+                                                nx, ny = dx/dist, dy/dist
+                                                test_cx = int(cx_edge + nx * current_caliber_radius)
+                                                test_cy = int(cy_edge + ny * current_caliber_radius)
+                                                
+                                                score, cov_new, _ = self.calculate_hole_score(test_cx, test_cy, current_caliber_radius, thresh_new, thresh_raw)
+                                                self.log(side, f"   -> Vektor [{name}]: Richtung({nx:.2f},{ny:.2f}) -> Landepunkt({test_cx},{test_cy}) | Score: {score:.1f}")
+                                                return score, cov_new, test_cx, test_cy
+                                            return 0.0, 0.0, 0, 0
+                                            
+                                        # 5. Das Doppel-Duell ausfechten!
+                                        score_cog, cov_cog, tcx_cog, tcy_cog = teste_vektor(cx_new, cy_new, "CoG")
+                                        score_mec, cov_mec, tcx_mec, tcy_mec = teste_vektor(cx_mec, cy_mec, "MEC")
+                                        
+                                        # 6. Den Schiedsrichter entscheiden lassen
+                                        if score_cog > score_mec:
+                                            abriss_score, abriss_new, test_cx, test_cy = score_cog, cov_cog, tcx_cog, tcy_cog
+                                            sieger_name = "CoG-Vektor"
+                                        else:
+                                            abriss_score, abriss_new, test_cx, test_cy = score_mec, cov_mec, tcx_mec, tcy_mec
+                                            sieger_name = "MEC-Vektor"
+                                            
+                                        self.log(side, f"🏆 Abriss-Duell Sieger: {sieger_name} (Score {abriss_score:.1f})")
+                                        
+                                        # Limit für kleine Risse (1.0 %) anwenden
+                                        if abriss_score > base_score and abriss_new >= 1.0:
+                                            self.log(side, f"🎯 Abrisskante AKTIV! Schlägt Base-Score ({abriss_score:.1f} > {base_score:.1f}). Zentrum final gesetzt.")
+                                            cx, cy = test_cx, test_cy
+                                            final_shot_score = abriss_score
+                                            erfolg_abriss = True 
+                                        else:
+                                            self.log(side, f"⚠️ Abrisskante verworfen! (Score {abriss_score:.1f} ist schlechter als Base {base_score:.1f})")
                                     else:
-                                        self.log(side, "⚠️ Abrisskante gescheitert: Keine Überlappung mit alten Löchern gefunden.")
+                                        self.log(side, "⚠️ Abrisskante gescheitert: Keine Konturpunkte gefunden.")
+                                else:
+                                    self.log(side, "⚠️ Abrisskante gescheitert: Keine Konturen auf dem unversehrten Papier.")
                             else:
-                                self.log(side, "⚠️ Abrisskante übersprungen: Noch keine alten Treffer auf der Scheibe vorhanden.")
+                                self.log(side, "⚠️ Abrisskante gescheitert: Riss berührt kein unversehrtes Papier.")
 
                             # FALLBACK FÜR BEIDE MODI
                             if not erfolg_abriss:
                                 cx, cy = int(base_x), int(base_y) 
                                 final_shot_score = base_score 
-                                # ---> NEU: Dynamischer Name <---
                                 self.log(side, f"⚠️ Verwende FALLBACK-Zentrum ({base_name}) für Wertung: X:{cx} Y:{cy} (Score {base_score:.1f})")
                                 
                 elif self.erkennungs_methode == 'B':
