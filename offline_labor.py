@@ -526,9 +526,17 @@ class OfflineLaborApp:
                 else:
                     self.caliber_durchmesser_var.set(float(val))
             else:
-                # Falls wir eine uralte Config laden, konvertieren wir den Pixel-Wert grob in mm für den Slider
+                # Falls wir eine uralte Config laden, konvertieren wir den Pixel-Wert PRÄZISE in mm für den Slider
                 alt_r = parser.getfloat('Erkennung', 'caliber_radius', fallback=15.0)
-                self.caliber_durchmesser_var.set(round((alt_r * 2) / 8.5, 2))
+                
+                # Wir holen uns die echten Linsen-Faktoren der linken Kamera (als Stellvertreter)
+                px_x = parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0) if parser.has_section('Kameras') else 5.0
+                px_y = parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0) if parser.has_section('Kameras') else 5.0
+                avg_px = (px_x + px_y) / 2.0
+                
+                # Echter Durchmesser in mm = (Radius_in_px / pixel_pro_mm) * 2
+                calc_durchmesser = (alt_r / avg_px) * 2.0 if avg_px > 0 else 4.5
+                self.caliber_durchmesser_var.set(round(calc_durchmesser, 2))
             
             # Reset-Punkte für den Mittelklick auf den Slidern speichern
             self.original_values = {
@@ -808,6 +816,10 @@ class OfflineLaborApp:
         if self.current_index == 0:
             self.image_frame.config(text=f" Live-Labor (Referenz & Startmaske)  |  📷 Kamera {side.upper()} ")
             self.print_log("SYSTEM", f"Zeige initialen Zustand für Kamera {side.upper()}.")
+            
+            # ---> NEU: Treffer-Anzeige konsequent zurücksetzen! <---
+            self.lbl_current_scores.config(text="- keine -", fg="gray")
+            self.current_engine_shots = []
             
             # Bilder laden (Mit schwarzem Fallback-Bild, falls nichts existiert)
             dummy_img = self.get_img(side_origs[0]) if side_origs else None
@@ -1521,6 +1533,11 @@ class OfflineLaborApp:
         # Hilfsfunktion, um Graustufen-Bilder sicher in Farbe (3 Kanäle) zu konvertieren
         def to_bgr(img):
             if img is None: return np.zeros((h, w, 3), dtype=np.uint8)
+            
+            # ---> NEU: Defensive Größenanpassung gegen unsaubere alte ZIPs <---
+            if img.shape[:2] != (h, w):
+                img = cv2.resize(img, (w, h), interpolation=cv2.INTER_NEAREST)
+                
             if len(img.shape) == 2: return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
             return img
 
@@ -1617,8 +1634,10 @@ class OfflineLaborApp:
             # Oben: Diff-Gesamt-Bild (Schwarz ausblenden, Weiß zu Grün machen)
             diff_gesamt = self.last_diff_gesamt_img
             if diff_gesamt is not None:
-                ## Maske aus dem Gesamt-Diff generieren (alles Weiße wird zu True)
-                #mask = (cv2.cvtColor(diff_gesamt, cv2.COLOR_BGR2GRAY) > 127) if len(diff_gesamt.shape) == 3 else (diff_gesamt > 127)
+                # ---> NEU: Zwingt auch die alte Maske gnadenlos auf die richtige Bildgröße! <---
+                if diff_gesamt.shape[:2] != (h, w):
+                    diff_gesamt = cv2.resize(diff_gesamt, (w, h), interpolation=cv2.INTER_NEAREST)
+                
                 # ---> KORREKTUR: Alles Schwarze (< 127) wird zu True für die grüne Farbe <---
                 mask = (cv2.cvtColor(diff_gesamt, cv2.COLOR_BGR2GRAY) < 127) if len(diff_gesamt.shape) == 3 else (diff_gesamt < 127)
                 

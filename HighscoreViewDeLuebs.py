@@ -21,9 +21,9 @@ class MatchDetailWindow(tk.Toplevel):
         self.geometry("1400x800")
         self.configure(bg="#2c3e50")
         
-        config = configparser.ConfigParser()
-        config.read("config.ini")
-        self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius', fallback=10.5)
+        #config = configparser.ConfigParser()
+        #config.read("config.ini")
+        #self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius', fallback=10.5)
         
         self.zoom_factor = 1.0
         self.zip_path = zip_path
@@ -300,7 +300,10 @@ class MatchDetailWindow(tk.Toplevel):
         
         cx = hit['x'] * self.zoom_factor
         cy = hit['y'] * self.zoom_factor
-        r = self.caliber_radius * self.zoom_factor
+        
+        # ---> NEU: Holt den perfekten Radius für die jeweilige Seite! <---
+        base_r = self.radius_left if hit['s'] == 'l' else self.radius_right
+        r = base_r * self.zoom_factor
         
         canvas = self.canvas_l if hit['s'] == 'l' else self.canvas_r
         if canvas:
@@ -592,8 +595,15 @@ class HighscoreViewer:
                 
                 if config.has_section('Erkennung'):
                     erk = config['Erkennung']
+                    
+                    # ---> NEU: Smarte Anzeige für alte (px) und neue (mm) Matches <---
+                    if erk.get('caliber_durchmesser'):
+                        cal_str = f"Durchmesser: {erk.get('caliber_durchmesser')} mm"
+                    else:
+                        cal_str = f"Radius: {erk.get('caliber_radius', '?')} px"
+                        
                     info_lines.extend([
-                        f"Methode: {erk.get('erkennungs_methode', 'C')} | Hit-Tolerance: {erk.get('hit_tolerance', '?')} | Min-Area: {erk.get('min_hole_area', '?')} | Caliber-Radius: {erk.get('caliber_radius', '?')}",
+                        f"Methode: {erk.get('erkennungs_methode', 'C')} | Hit-Tolerance: {erk.get('hit_tolerance', '?')} | Min-Area: {erk.get('min_hole_area', '?')} | Kaliber: {cal_str}",
                         f"Hybrid-Sicheln: < {erk.get('hybrid_sichel_faktor', '?')}x | Hybrid-Risse: > {erk.get('hybrid_riss_faktor', '?')}x | Discard: > {erk.get('hybrid_discard_faktor', '?')}x",
                         f"Hough-Min: {erk.get('hough_min_faktor', '?')}x | Hough-Max: {erk.get('hough_max_faktor', '?')}x",
                         f"Morph-Kernel: {erk.get('morph_kernel_size', '?')} | Max-Aspect-Ratio: {erk.get('max_aspect_ratio', '?')}"
