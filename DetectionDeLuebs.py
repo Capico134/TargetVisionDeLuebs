@@ -286,18 +286,18 @@ class TargetDetector:
                     kandidaten = []
                     
                     # --- HILFSFUNKTION FÜR DAS BATTLE ROYALE ---
-                    def add_candidate(name, c_x, c_y, min_coverage=0.0):
+                    def add_candidate(name, c_x, c_y, min_coverage=0.0, bonus=0.0):
                         score, cov_new, _ = self.calculate_hole_score(c_x, c_y, current_caliber_radius, thresh_new, thresh_raw)
+                        final_score = score + bonus # <--- NEU: Die Material-Prämie!
                         valid = cov_new >= min_coverage
-                        
                         kandidaten.append({
                             'name': name, 'cx': int(c_x), 'cy': int(c_y), 
-                            'score': score, 'cov_new': cov_new, 'valid': valid
+                            'score': final_score, 'cov_new': cov_new, 'valid': valid
                         })
-                        
                         valid_str = "✅" if valid else f"❌ (Zu wenig Riss-Anteil: < {min_coverage}%)"
-                        self.log(side, f"   -> Kandidat [{name}]: X:{int(c_x)} Y:{int(c_y)} | Score: {score:.1f} | Riss-Anteil: {cov_new:.1f}% {valid_str}")
-                        return score
+                        bonus_str = f" [+{bonus} Bonus]" if bonus > 0 else ""
+                        self.log(side, f"   -> Kandidat [{name}]: X:{int(c_x)} Y:{int(c_y)} | Score: {final_score:.1f}{bonus_str} | Riss-Anteil: {cov_new:.1f}% {valid_str}")
+                        return final_score
 
                     self.log(side, "🔍 Sammle Kandidaten für das Battle Royale...")
 
@@ -336,9 +336,9 @@ class TargetDetector:
                         # ---> NEU: Zeigt direkt, dass der Radius in der goldenen Mitte lag <---
                         self.log(side, f"✅ Loch ist in der Norm ({limit_sichel:.1f}px <= {radius:.1f}px <= {limit_riss:.1f}px) und gut gefüllt. Überspringe Deep-Analysis!")
                         needs_deep_analysis = False
-                    elif base_score > 195.0:
+                    elif base_score > 196.0:
                         # ---> NEU: Zeigt den makellosen Score und den "geretteten" Radius <---
-                        self.log(side, f"✅ Form ist makellos (Score {base_score:.1f} > 195), trotz Radius {radius:.1f}px. Überspringe Deep-Analysis!")
+                        self.log(side, f"✅ Form ist makellos (Score {base_score:.1f} > 196), trotz Radius {radius:.1f}px. Überspringe Deep-Analysis!")
                         needs_deep_analysis = False
 
                     # 3. DEEP ANALYSIS (Hough & Abrisskante)
@@ -387,30 +387,76 @@ class TargetDetector:
                             
                             inter_contours, _ = cv2.findContours(outer_edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                             if inter_contours:
-                                largest_inter = max(inter_contours, key=len)
-                                if len(largest_inter) > 0:
-                                    M_int = cv2.moments(largest_inter)
-                                    cx_float, cy_float = (M_int["m10"]/M_int["m00"], M_int["m01"]/M_int["m00"]) if M_int["m00"] != 0 else (np.mean(largest_inter[:,0,0]), np.mean(largest_inter[:,0,1]))
-                                        
-                                    best_pt = min(largest_inter, key=lambda pt: np.hypot(pt[0][0] - cx_float, pt[0][1] - cy_float))[0]
-                                    cx_edge, cy_edge = best_pt
-                                    self.log(side, f"📍 Abrisskante gefunden (Snap-to-Edge): X:{cx_edge} Y:{cy_edge}")
-                                    
-                                    grenzwert_abriss = 1.0
-                                    
-                                    d_cog = np.hypot(cog_x - cx_edge, cog_y - cy_edge)
-                                    if d_cog > 0:
-                                        tcx_cog = int(cx_edge + ((cog_x - cx_edge)/d_cog) * current_caliber_radius)
-                                        tcy_cog = int(cy_edge + ((cog_y - cy_edge)/d_cog) * current_caliber_radius)
-                                        add_candidate("Abriss-CoG", tcx_cog, tcy_cog, min_coverage=grenzwert_abriss)
-                                        
-                                    d_mec = np.hypot(circle_x - cx_edge, circle_y - cy_edge)
-                                    if d_mec > 0:
-                                        tcx_mec = int(cx_edge + ((circle_x - cx_edge)/d_mec) * current_caliber_radius)
-                                        tcy_mec = int(cy_edge + ((circle_y - cy_edge)/d_mec) * current_caliber_radius)
-                                        add_candidate("Abriss-MEC", tcx_mec, tcy_mec, min_coverage=grenzwert_abriss)
+                                # ---> NEU: Rauschen filtern (nur Kanten > 3 Pixel) <---
+                                valid_edges = [cnt for cnt in inter_contours if len(cnt) > 3]
+                                
+                                if not valid_edges:
+                                    self.log(side, "⚠️ Abrisskante gescheitert: Kanten-Fragmente zu klein.")
                                 else:
-                                    self.log(side, "⚠️ Abrisskante gescheitert: Keine Konturpunkte gefunden.")
+                                    # Erwarteter Umfang für einen vollen Kreis (2 * Pi * r)
+                                    expected_circ = 2 * np.pi * current_caliber_radius
+                                    
+                                    # Dein Tuning-Parameter für den Bonus!
+                                    max_edge_percent = 0.75 
+                                    limit_len = expected_circ * max_edge_percent
+                                    
+                                    # ---> NEU: Haben wir exakt EINE Kante? <---
+                                    is_single_edge = len(valid_edges) == 1
+                                    
+                                    for e_idx, edge_cnt in enumerate(valid_edges):
+                                        # Durch 2 teilen wegen der Hin-und-Zurück-Kontur!
+                                        edge_len = cv2.arcLength(edge_cnt, True) / 2.0
+                                        
+                                        # ---> NEU: Der Flächen-Check (Donut vs. Wurst) <---
+                                        # Ein geschlossener Ring umspannt das ganze Loch (Area > Radius^2).
+                                        # Eine offene Wurst hat nur eine winzige Area.
+                                        edge_area = cv2.contourArea(edge_cnt)
+                                        is_closed_ring = edge_area > (current_caliber_radius * current_caliber_radius)
+                                        
+                                        # Ist die Kante kürzer als unser Limit UND kein geschlossener Ring?
+                                        is_true_tear = (edge_len < limit_len) and not is_closed_ring
+                                        
+                                        # Bonus gibt es NUR bei exakt einer Kante, die auch noch kurz genug ist!
+                                        gets_bonus = is_single_edge and is_true_tear
+                                        bonus = 7.5 if gets_bonus else 0.0
+                                        
+                                        M_int = cv2.moments(edge_cnt)
+                                        if M_int["m00"] != 0:
+                                            cx_float = M_int["m10"] / M_int["m00"]
+                                            cy_float = M_int["m01"] / M_int["m00"]
+                                        else:
+                                            cx_float, cy_float = np.mean(edge_cnt[:,0,0]), np.mean(edge_cnt[:,0,1])
+                                            
+                                        best_pt = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - cx_float, pt[0][1] - cy_float))[0]
+                                        cx_edge, cy_edge = best_pt
+                                        
+                                        # Das Log zeigt dir exakt, warum ein Bonus vergeben oder verweigert wurde
+                                        pct_str = int(max_edge_percent * 100)
+                                        if gets_bonus:
+                                            bonus_log = f" (+{bonus} Bonus, Einzelkante & L={edge_len:.1f}px < {pct_str}% Limit {limit_len:.1f}px)"
+                                        elif is_closed_ring:
+                                            bonus_log = f" (Kein Bonus, Vollkreis erkannt! Area={edge_area:.0f}px)"
+                                        elif not is_single_edge:
+                                            bonus_log = f" (Kein Bonus, da {len(valid_edges)} Kanten gefunden | L={edge_len:.1f}px)"
+                                        else:
+                                            bonus_log = f" (Kein Bonus, L={edge_len:.1f}px >= {pct_str}% Limit {limit_len:.1f}px)"
+                                            
+                                        self.log(side, f"📍 Abrisskante #{e_idx+1} gefunden (Snap-to-Edge): X:{cx_edge} Y:{cy_edge}{bonus_log}")
+                                        
+                                        grenzwert_abriss = 1.0
+                                        
+                                        # Kandidaten für Kante X ins Rennen schicken
+                                        d_cog = np.hypot(cog_x - cx_edge, cog_y - cy_edge)
+                                        if d_cog > 0:
+                                            tcx_cog = int(cx_edge + ((cog_x - cx_edge)/d_cog) * current_caliber_radius)
+                                            tcy_cog = int(cy_edge + ((cog_y - cy_edge)/d_cog) * current_caliber_radius)
+                                            add_candidate(f"Abriss-{e_idx+1}-CoG", tcx_cog, tcy_cog, min_coverage=grenzwert_abriss, bonus=bonus)
+                                            
+                                        d_mec = np.hypot(circle_x - cx_edge, circle_y - cy_edge)
+                                        if d_mec > 0:
+                                            tcx_mec = int(cx_edge + ((circle_x - cx_edge)/d_mec) * current_caliber_radius)
+                                            tcy_mec = int(cy_edge + ((circle_y - cy_edge)/d_mec) * current_caliber_radius)
+                                            add_candidate(f"Abriss-{e_idx+1}-MEC", tcx_mec, tcy_mec, min_coverage=grenzwert_abriss, bonus=bonus)
                             else:
                                 self.log(side, "⚠️ Abrisskante gescheitert: Berührt kein intaktes Papier.")
 

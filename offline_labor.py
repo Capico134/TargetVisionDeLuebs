@@ -845,6 +845,8 @@ class OfflineLaborApp:
             self.last_raw_diff = np.zeros((h, w), dtype=np.uint8)
             self.last_thresh_raw = np.zeros((h, w), dtype=np.uint8)
             self.last_history_mask = np.zeros((h, w), dtype=np.uint8)
+            # ---> NEU: Geister-Abrisskante beim Zurückspringen löschen! <---
+            self.last_abrisskante = None
             
             self.update_image_display()
             return
@@ -883,6 +885,9 @@ class OfflineLaborApp:
             img = self.get_img(side_origs[i])
             
             if i == target_idx:
+                ## ---> NEU: Echter Logger für das ZIEL-Bild einschalten <---
+                #detector.log = self.print_log
+                
                 self.log_text.insert(tk.END, "\n" + "▼"*70 + "\n")
                 self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR BILD-AUFNAHME ({i+1})  ███\n")
                 self.log_text.insert(tk.END, "▼"*70 + "\n\n")
@@ -898,6 +903,10 @@ class OfflineLaborApp:
                     history_mask = temp_state.cumulative_mask.copy()
                 else:
                     history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+            #else:
+            #    # ---> DER TURBO-BOOST: Stummschaltung für die Historie! <---
+            #    # Wir verhindern hunderte zeitraubende Tkinter-GUI-Updates
+            #    detector.log = lambda side, text, show_gui=False: None
                 
             detector.detect_new_shot(img, side)
 
