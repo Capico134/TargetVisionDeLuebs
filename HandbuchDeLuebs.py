@@ -63,8 +63,17 @@ PARAMETER_LEXIKON = {
     "poll_ms": "Bildwiederholrate (Haupttakt) in Millisekunden. 33 ms entspricht ca. 30 FPS. Niedrigere Werte (schneller) belasten die CPU stärker.",
     "stillness_frames": "Wie viele Frames am Stück absolute Ruhe herrschen muss, damit das Bild nach einer Erschütterung wieder als 'stabil' gilt.",
     "darstellung_ohne_weissabgleich": "Hübscht das Live-Bild für das menschliche Auge auf (mehr Farbe/Kontrast), ohne die eigentliche Erkennung im Hintergrund zu verfälschen.",
-    "debug_alle_bilder_speichern": "Speichert bei JEDEM erkannten Treffer die rohen und gefilterten Bilder im debug_bilder-Ordner ab. Ausschließlich für Entwicklungszwecke!"
+    "debug_alle_bilder_speichern": "Speichert bei JEDEM erkannten Treffer die rohen und gefilterten Bilder im debug_bilder-Ordner ab. Ausschließlich für Entwicklungszwecke!",
+    # ---> NEU: Die ausgelagerten Magic Numbers für die Tooltips <---
+    "abriss_max_edge_percent": "Abrisskanten-Limit: Eine erkannte Papierkante muss kürzer als dieser prozentuale Anteil des Vollkreis-Umfangs sein (z.B. 0.75 = 75%), um als echter Riss und nicht als geschlossenes Loch (Donut) zu gelten.",
+    "abriss_base_bonus": "Basis-Bonus für Abrisskanten. Wird dynamisch mit der Rissfläche multipliziert und auf den Score aufgeschlagen, wenn genau eine echte, abgerissene Papierkante gefunden wird.",
+    "early_exit_min_score": "Mindest-Score für perfekte Löcher. Liegt der Radius in der Norm und der Score über diesem Wert, wird die aufwändige Deep-Analysis übersprungen (spart CPU-Ressourcen).",
+    "early_exit_perfect_score": "Makelloser Score: Liegt die Abdeckung über diesem Wert (z.B. 196.0), wird die Form als so perfekt eingestuft, dass die Deep-Analysis selbst bei leichten Radius-Abweichungen übersprungen wird.",
+    "min_score_valid": "Fehlalarm-Filter. Kandidaten, deren finaler Score unter diesem Wert liegt (z.B. < 70.0), werden strikt ignoriert und nicht als Treffer gewertet.",
+    "clipping_factor_history": "Sperr-Radius für die Historie (Faktor des Kaliber-Radius). Ein neuer Kandidat muss diesen Mindestabstand zu allen ALTEN (bereits bestätigten) Schüssen einhalten, um nicht als Doppelzählung blockiert zu werden.",
+    "clipping_factor_current": "Sichel-Duell-Radius (Faktor des Kaliber-Radius). Wenn zwei Kandidaten im SELBEN Frame zu nah beieinander liegen, tritt dieser Filter in Kraft und nur das Fragment mit dem höheren Score überlebt."
 }
+
 
 DATENSTRUKTUR_TEXT = """Ein Blick unter die Haube: Wo speichert das System was?
 

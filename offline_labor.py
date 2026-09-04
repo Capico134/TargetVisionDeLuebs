@@ -180,7 +180,6 @@ class OfflineLaborApp:
         self.hybrid_discard_faktor_var = tk.DoubleVar(value=2.5)
         self.hough_min_faktor_var = tk.DoubleVar(value=0.85)
         self.hough_max_faktor_var = tk.DoubleVar(value=1.15)
-        
         self.hough_param1_var = tk.IntVar(value=25)
         self.hough_param2_var = tk.IntVar(value=4)
         # ---> NEU <---
@@ -188,22 +187,29 @@ class OfflineLaborApp:
         self.max_aspect_ratio_var = tk.DoubleVar(value=3.5)
         # ---> NEU <---
         self.gesamt_anteil_am_200score_var = tk.DoubleVar(value=0.667)
+        self.abriss_max_edge_percent_var = tk.DoubleVar(value=0.75)
+        self.abriss_base_bonus_var = tk.DoubleVar(value=10.0)
+        self.early_exit_min_score_var = tk.DoubleVar(value=145.0)
+        self.early_exit_perfect_score_var = tk.DoubleVar(value=196.0)
+        self.min_score_valid_var = tk.DoubleVar(value=70.0)
+        self.clipping_factor_history_var = tk.DoubleVar(value=0.15)
+        self.clipping_factor_current_var = tk.DoubleVar(value=0.95)
         
         self.zoom_factor = 1.0
         self.pan_x = 0
         self.pan_y = 0
         self.view_mode_var = tk.IntVar(value=1)
         
-        # ---> NEU: Dynamische Liste für alle Slider-Keys (inklusive Legacy-Keys!) <---
-        self.registered_slider_keys = {'caliber_radius'}
+        # ---> NEU: Dynamisches Dictionary für alle Slider und deren Variablen <---
+        self.registered_sliders = {}
         
         self.setup_ui()
         
     def make_slider(self, parent, label_text, tk_var, from_, to_, res=1, section="Erkennung", key=None):
         """Hilfsfunktion für Slider mit direkter Eingabe, Reset und Live-Data-Binding"""
-        # ---> NEU: Jeder Slider meldet seinen Key automatisch beim System an! <---
+        # ---> NEU: Jeder Slider meldet seine Variable automatisch beim System an! <---
         if key:
-            self.registered_slider_keys.add(key)        
+            self.registered_sliders[key] = tk_var  
         
         frame = tk.Frame(parent)
         frame.pack(fill=tk.X, pady=2)
@@ -450,6 +456,15 @@ class OfflineLaborApp:
         self.make_slider(param_frame, "max_aspect_ratio (Sichel):", self.max_aspect_ratio_var, 1.5, 6.0, 0.1, key="max_aspect_ratio")
         tk.Label(param_frame, text="--- Score-Gewichtung ---", fg="gray").pack(pady=(10, 5))
         self.make_slider(param_frame, "gesamt_anteil (Raw):", self.gesamt_anteil_am_200score_var, 0.1, 0.9, 0.001, key="gesamt_anteil_am_200score")
+        tk.Label(param_frame, text="--- Heuristik & Limits ---", fg="gray").pack(pady=(10, 5))
+        self.make_slider(param_frame, "abriss_max_edge_percent:", self.abriss_max_edge_percent_var, 0.4, 1.5, 0.01, key="abriss_max_edge_percent")
+        self.make_slider(param_frame, "abriss_base_bonus:", self.abriss_base_bonus_var, 0.0, 30.0, 0.5, key="abriss_base_bonus")
+        self.make_slider(param_frame, "early_exit_min_score:", self.early_exit_min_score_var, 100.0, 190.0, 1.0, key="early_exit_min_score")
+        self.make_slider(param_frame, "early_exit_perfect_score:", self.early_exit_perfect_score_var, 150.0, 200.0, 1.0, key="early_exit_perfect_score")
+        self.make_slider(param_frame, "min_score_valid (Discard):", self.min_score_valid_var, 10.0, 150.0, 1.0, key="min_score_valid")
+        tk.Label(param_frame, text="--- Anti-Doppelzählung ---", fg="gray").pack(pady=(10, 5))
+        self.make_slider(param_frame, "clipping_factor_history:", self.clipping_factor_history_var, 0.05, 0.5, 0.01, key="clipping_factor_history")
+        self.make_slider(param_frame, "clipping_factor_current:", self.clipping_factor_current_var, 0.5, 1.5, 0.01, key="clipping_factor_current")
         
         tk.Checkbutton(param_frame, text="💾 Simulations-Bilder exportieren", 
                        variable=self.export_images_var, fg="#00aaff").pack(anchor=tk.W, pady=(15, 0))
@@ -505,56 +520,42 @@ class OfflineLaborApp:
     def apply_config_to_ui(self, parser):
         """Zentrale Methode: Füttert alle UI-Slider mit den Werten eines ConfigParsers."""
         if parser and parser.has_section('Erkennung'):
-            self.hit_tolerance_var.set(parser.getint('Erkennung', 'hit_tolerance', fallback=22))
-            self.min_hole_area_var.set(parser.getint('Erkennung', 'min_hole_area', fallback=25))
-            #self.caliber_radius_var.set(parser.getfloat('Erkennung', 'caliber_radius', fallback=11))
-            self.hybrid_riss_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.175))
-            self.hybrid_sichel_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=1.05))
-            self.hybrid_discard_faktor_var.set(parser.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5))
-            self.hough_min_faktor_var.set(parser.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85))
-            self.hough_max_faktor_var.set(parser.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15))
-            self.hough_param1_var.set(parser.getint('Erkennung', 'hough_param1', fallback=25))
-            self.hough_param2_var.set(parser.getint('Erkennung', 'hough_param2', fallback=4))
-            self.morph_kernel_var.set(parser.getint('Erkennung', 'morph_kernel_size', fallback=6))
-            self.max_aspect_ratio_var.set(parser.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5))
-            self.gesamt_anteil_am_200score_var.set(parser.getfloat('Erkennung', 'gesamt_anteil_am_200score', fallback=0.667))
-            # ---> NEU: Den alten Radius ignorieren, wenn ein Durchmesser da ist <---
+            
+            self.original_values = {}
+            
+            # 1. DIE MAGIE: Automatische Zuweisung ALLER registrierten Slider!
+            for key, tk_var in self.registered_sliders.items():
+                if parser.has_option('Erkennung', key):
+                    # Typ prüfen und passend aus der Config holen
+                    if isinstance(tk_var, tk.IntVar):
+                        tk_var.set(parser.getint('Erkennung', key))
+                    elif isinstance(tk_var, tk.DoubleVar):
+                        tk_var.set(parser.getfloat('Erkennung', key))
+                        
+                # Wenn der Key NICHT in der Config steht, behält tk_var einfach seinen 
+                # Default-Wert aus der __init__, was perfekt als Fallback dient!
+                
+                # Gleichzeitig den Snapshot für den Mittelklick (Reset) speichern
+                self.original_values[str(tk_var)] = tk_var.get()
+
+            # 2. SONDERFALL: Der Kaliber-Durchmesser (Legacy-Migration & 'auto' String)
             if parser.has_option('Erkennung', 'caliber_durchmesser'):
                 val = parser.get('Erkennung', 'caliber_durchmesser')
                 if val.strip().lower() == 'auto':
                     self.caliber_durchmesser_var.set(4.50) # Fallback für die GUI
                 else:
                     self.caliber_durchmesser_var.set(float(val))
-            else:
-                # Falls wir eine uralte Config laden, konvertieren wir den Pixel-Wert PRÄZISE in mm für den Slider
+            elif parser.has_option('Erkennung', 'caliber_radius'):
+                # Uralt-Config (Pixel) präzise in Millimeter umrechnen
                 alt_r = parser.getfloat('Erkennung', 'caliber_radius', fallback=15.0)
-                
-                # Wir holen uns die echten Linsen-Faktoren der linken Kamera (als Stellvertreter)
                 px_x = parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0) if parser.has_section('Kameras') else 5.0
                 px_y = parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0) if parser.has_section('Kameras') else 5.0
                 avg_px = (px_x + px_y) / 2.0
-                
-                # Echter Durchmesser in mm = (Radius_in_px / pixel_pro_mm) * 2
                 calc_durchmesser = (alt_r / avg_px) * 2.0 if avg_px > 0 else 4.5
                 self.caliber_durchmesser_var.set(round(calc_durchmesser, 2))
-            
-            # Reset-Punkte für den Mittelklick auf den Slidern speichern
-            self.original_values = {
-                str(self.hit_tolerance_var): self.hit_tolerance_var.get(),
-                str(self.min_hole_area_var): self.min_hole_area_var.get(),
-                #str(self.caliber_radius_var): self.caliber_radius_var.get(),
-                str(self.caliber_durchmesser_var): self.caliber_durchmesser_var.get(),
-                str(self.hybrid_riss_faktor_var): self.hybrid_riss_faktor_var.get(),
-                str(self.hybrid_sichel_faktor_var): self.hybrid_sichel_faktor_var.get(),
-                str(self.hybrid_discard_faktor_var): self.hybrid_discard_faktor_var.get(),
-                str(self.hough_min_faktor_var): self.hough_min_faktor_var.get(),
-                str(self.hough_max_faktor_var): self.hough_max_faktor_var.get(),
-                str(self.hough_param1_var): self.hough_param1_var.get(),
-                str(self.hough_param2_var): self.hough_param2_var.get(),
-                str(self.morph_kernel_var): self.morph_kernel_var.get(),
-                str(self.max_aspect_ratio_var): self.max_aspect_ratio_var.get(),
-                str(self.gesamt_anteil_am_200score_var): self.gesamt_anteil_am_200score_var.get()
-            }
+                
+            # Den manuell verarbeiteten Sonderfall noch separat für den Reset sichern
+            self.original_values[str(self.caliber_durchmesser_var)] = self.caliber_durchmesser_var.get()
 
     def get_img(self, name):
         """Holt ein Bild blitzschnell aus dem vorbereiteten RAM-Speicher"""
@@ -591,6 +592,22 @@ class OfflineLaborApp:
                 return
                 
             parser = self.package_data.get('config')
+            
+            # ---> NEU: Alte Test-Case-Configs automatisch mit allen aktuellen Slider-Keys vervollständigen! <---
+            if parser:
+                if not parser.has_section('Erkennung'):
+                    parser.add_section('Erkennung')
+                
+                missing_keys_count = 0
+                for key, tk_var in self.registered_sliders.items():
+                    if not parser.has_option('Erkennung', key):
+                        # Key fehlt im alten ZIP -> Injiziere den aktuellen Standardwert als Fallback
+                        parser.set('Erkennung', key, str(tk_var.get()))
+                        missing_keys_count += 1
+                
+                if missing_keys_count > 0:
+                    self.print_log("SYSTEM", f"🔧 Legacy-Migrator: {missing_keys_count} fehlende Parameter im alten Paket ergänzt.")
+            
             self.apply_config_to_ui(parser)
             self.original_match_data = self.package_data.get('match_data')
             
@@ -1708,8 +1725,9 @@ class OfflineLaborApp:
         #    'morph_kernel_size', 'max_aspect_ratio', 'gesamt_anteil_am_200score'
         #}
         
-        # ---> NEU: Wir holen uns einfach die dynamisch generierte Liste! <---
-        ignore_keys = self.registered_slider_keys
+        # ---> NEU: Wir holen uns einfach die Keys aus unserem neuen Dictionary! <---
+        ignore_keys = set(self.registered_sliders.keys())
+        ignore_keys.add('caliber_radius') # Den alten Legacy-Key manuell verstecken
 
         # Neues Fenster erstellen
         dialog = tk.Toplevel(self.root)

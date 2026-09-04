@@ -39,6 +39,14 @@ class TargetDetector:
         self.max_aspect_ratio = config.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5)
         # ---> NEU: Die Gewichtung für den 200-Punkte-Score <---
         self.gesamt_anteil_am_200score = config.getfloat('Erkennung', 'gesamt_anteil_am_200score', fallback=0.667)
+        # ---> NEU: Extrahierte Magic Numbers <---
+        self.abriss_max_edge_percent = config.getfloat('Erkennung', 'abriss_max_edge_percent', fallback=0.75)
+        self.abriss_base_bonus = config.getfloat('Erkennung', 'abriss_base_bonus', fallback=10.0)
+        self.early_exit_min_score = config.getfloat('Erkennung', 'early_exit_min_score', fallback=145.0)
+        self.early_exit_perfect_score = config.getfloat('Erkennung', 'early_exit_perfect_score', fallback=196.0)
+        self.min_score_valid = config.getfloat('Erkennung', 'min_score_valid', fallback=70.0)
+        self.clipping_factor_history = config.getfloat('Erkennung', 'clipping_factor_history', fallback=0.15)
+        self.clipping_factor_current = config.getfloat('Erkennung', 'clipping_factor_current', fallback=0.95)
 
         # Internes Gedächtnis des Detectors
         self.ref_left = None
@@ -335,11 +343,11 @@ class TargetDetector:
 
                     # 2. EARLY EXIT (CPU sparen bei perfekten Löchern)
                     needs_deep_analysis = True
-                    if limit_sichel <= radius <= limit_riss and base_score > 145.0:
+                    if limit_sichel <= radius <= limit_riss and base_score > self.early_exit_min_score:
                         # ---> NEU: Zeigt direkt, dass der Radius in der goldenen Mitte lag <---
                         self.log(side, f"✅ Loch ist in der Norm ({limit_sichel:.1f}px <= {radius:.1f}px <= {limit_riss:.1f}px) und gut gefüllt. Überspringe Deep-Analysis!")
                         needs_deep_analysis = False
-                    elif base_score > 196.0:
+                    elif base_score > self.early_exit_perfect_score:
                         # ---> NEU: Zeigt den makellosen Score und den "geretteten" Radius <---
                         self.log(side, f"✅ Form ist makellos (Score {base_score:.1f} > 196), trotz Radius {radius:.1f}px. Überspringe Deep-Analysis!")
                         needs_deep_analysis = False
@@ -401,14 +409,14 @@ class TargetDetector:
                                     expected_area = np.pi * (current_caliber_radius ** 2)
                                     
                                     # Dein Tuning-Parameter für den Bonus!
-                                    max_edge_percent = 0.75 
+                                    max_edge_percent = self.abriss_max_edge_percent
                                     limit_len = expected_circ * max_edge_percent
                                     
                                     # ---> NEU: Dynamischer Bonus basierend auf der Riss-Größe <---
                                     # Bei einem perfekten Loch ist der Faktor ~1.0 (Bonus bleibt nah an 7.5).
                                     # Bei einem riesigen Riss (z.B. Faktor 1.8) wächst der Bonus linear mit!
                                     area_ratio = area / expected_area if expected_area > 0 else 1.0
-                                    dynamic_bonus = 10.0 * area_ratio #7.5 * area_ratio * 1.3
+                                    dynamic_bonus = self.abriss_base_bonus * area_ratio
                                     
                                     # Haben wir exakt EINE Kante?
                                     is_single_edge = len(valid_edges) == 1
@@ -502,8 +510,8 @@ class TargetDetector:
                     final_shot_score, _, _ = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw)
                 
                 # --- FEHLALARM-FILTER: Score < 70 ---
-                if final_shot_score < 70:
-                    self.log(side, f"🚫 Fehlalarm: Score {final_shot_score:.1f} < 70 -> nicht als Treffer gewertet!")
+                if final_shot_score < self.min_score_valid: 
+                    self.log(side, f"🚫 Fehlalarm: Score {final_shot_score:.1f} < {self.min_score_valid} -> nicht als Treffer gewertet!")
                     update_mask_only = True
                     continue
 
@@ -512,7 +520,7 @@ class TargetDetector:
                 is_new = True
                 
                 # 1. Prüfung gegen Historie (alte Treffer aus vorherigen Frames) -> Sehr streng (0.15)
-                clipping_factor_history = 0.15
+                clipping_factor_history = self.clipping_factor_history
                 for shot in self.sm.shots:
                     if shot['side'] == side:
                         dist = np.hypot(shot['pos'][0] - cx, shot['pos'][1] - cy)
@@ -526,7 +534,7 @@ class TargetDetector:
                             
                 # 2. Prüfung gegen Fragmente aus DIESEM Frame -> Großzügig (0.95), um Sichel-Risse abzuwürgen
                 if is_new:
-                    clipping_factor_current = 0.95
+                    clipping_factor_current = self.clipping_factor_current
                     for i, existing_shot in enumerate(new_shots_found_this_frame):
                         dist = np.hypot(existing_shot['cx'] - cx, existing_shot['cy'] - cy)
                         if dist < current_caliber_radius * clipping_factor_current:

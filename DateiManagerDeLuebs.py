@@ -266,8 +266,6 @@ hough_param1 = 25
 hough_param2 = 4
 # Mindestfläche in Pixeln, die eine Farb/Helligkeitsänderung haben muss, um als Loch zu gelten.
 min_hole_area = 28
-# Sperr-Radius um bestehende Treffer (in Pixeln) gegen Doppelzählungen.
-caliber_radius = 20.0
 # Anzahl veränderter Pixel im Bild, ab der eine Bewegung (Vibration/Fahrt) erkannt wird.
 motion_threshold = 2000
 # Farb/Helligkeits-Toleranz für die Bewegungserkennung.
@@ -280,7 +278,14 @@ max_image_change_percent = 5.0
 gesamt_anteil_am_200score = 0.667
 # Speichert bei JEDEM erkannten Treffer die Bilder separat ab (für Entwicklungszwecke)
 debug_alle_bilder_speichern = yes
-
+caliber_durchmesser = 4.5
+abriss_max_edge_percent = 0.75
+abriss_base_bonus = 10.0
+early_exit_min_score = 145.0
+early_exit_perfect_score = 196.0
+min_score_valid = 70.0
+clipping_factor_history = 0.15
+clipping_factor_current = 0.95
 [Timing]
 # Bildwiederholrate/Haupttakt in Millisekunden (33 ms entspricht ca. 30 FPS).
 poll_ms = 33
@@ -392,47 +397,47 @@ darstellung_ohne_weissabgleich = yes
 #                    needs_reload = True
 #            except ValueError:
 #                pass    
-        
-        # --- AUTO-PATCH: Veraltete Parameter aufräumen ---
-        if config.has_option('Anzeige', 'fenster_skalierung'):
-            print("🔧 Führe Auto-Patch aus: Entferne obsoleten Parameter 'fenster_skalierung'...")
-            self.remove_ini_value('Anzeige', 'fenster_skalierung')
-            needs_reload = True
-
-        # --- AUTO-PATCH: Veraltete Parameter aufräumen ---
-        if config.has_option('Erkennung', 'caliber_radius'):
-            print("🔧 Führe Auto-Patch aus: Entferne obsoleten Parameter 'caliber_radius'...")
-            self.remove_ini_value('Erkennung', 'caliber_radius')
-            needs_reload = True        
-            
-            
-        if not config.has_option('Erkennung', 'caliber_durchmesser'):
-            print("🔧 Führe Auto-Patch aus: Füge 'caliber_durchmesser = 4.50' hinzu...")
-            self.update_ini_value('Erkennung', 'caliber_durchmesser', '4.50')
-            needs_reload = True            
-        
-        if not config.has_option('Kameras', 'cam_width_links'):
-            print("🔧 Führe Auto-Patch aus: Füge Kamera-Auflösungen hinzu...")
-            self.update_ini_value('Kameras', 'cam_width_links', '1280')
-            self.update_ini_value('Kameras', 'cam_height_links', '720')
-            self.update_ini_value('Kameras', 'cam_width_rechts', '1280')
-            self.update_ini_value('Kameras', 'cam_height_rechts', '720')
-            needs_reload = True
-
-        # --- AUTO-PATCH: 720p Migration für Skalierung & Kaliber ---
-        for seite in ['links', 'rechts']:
-            for achse in ['x', 'y']:
-                key = f'px_pro_mm_{achse}_{seite}'
-                if config.has_option('Kameras', key):
-                    try:
-                        current_val = config.getfloat('Kameras', key)
-                        if current_val < 6.0:  # Fängt alte 480p-Werte (z.B. 5.0) ab
-                            print(f"🔧 Führe Auto-Patch aus: Aktualisiere '{key}' von {current_val} auf 9.5 (720p-Anpassung)...")
-                            self.update_ini_value('Kameras', key, '9.5')
-                            needs_reload = True
-                    except ValueError:
-                        pass
-
+#        
+#        # --- AUTO-PATCH: Veraltete Parameter aufräumen ---
+#        if config.has_option('Anzeige', 'fenster_skalierung'):
+#            print("🔧 Führe Auto-Patch aus: Entferne obsoleten Parameter 'fenster_skalierung'...")
+#            self.remove_ini_value('Anzeige', 'fenster_skalierung')
+#            needs_reload = True
+#
+#        # --- AUTO-PATCH: Veraltete Parameter aufräumen ---
+#        if config.has_option('Erkennung', 'caliber_radius'):
+#            print("🔧 Führe Auto-Patch aus: Entferne obsoleten Parameter 'caliber_radius'...")
+#            self.remove_ini_value('Erkennung', 'caliber_radius')
+#            needs_reload = True        
+#            
+#            
+#        if not config.has_option('Erkennung', 'caliber_durchmesser'):
+#            print("🔧 Führe Auto-Patch aus: Füge 'caliber_durchmesser = 4.50' hinzu...")
+#            self.update_ini_value('Erkennung', 'caliber_durchmesser', '4.50')
+#            needs_reload = True            
+#        
+#        if not config.has_option('Kameras', 'cam_width_links'):
+#            print("🔧 Führe Auto-Patch aus: Füge Kamera-Auflösungen hinzu...")
+#            self.update_ini_value('Kameras', 'cam_width_links', '1280')
+#            self.update_ini_value('Kameras', 'cam_height_links', '720')
+#            self.update_ini_value('Kameras', 'cam_width_rechts', '1280')
+#            self.update_ini_value('Kameras', 'cam_height_rechts', '720')
+#            needs_reload = True
+#
+#        # --- AUTO-PATCH: 720p Migration für Skalierung & Kaliber ---
+#        for seite in ['links', 'rechts']:
+#            for achse in ['x', 'y']:
+#                key = f'px_pro_mm_{achse}_{seite}'
+#                if config.has_option('Kameras', key):
+#                    try:
+#                        current_val = config.getfloat('Kameras', key)
+#                        if current_val < 6.0:  # Fängt alte 480p-Werte (z.B. 5.0) ab
+#                            print(f"🔧 Führe Auto-Patch aus: Aktualisiere '{key}' von {current_val} auf 9.5 (720p-Anpassung)...")
+#                            self.update_ini_value('Kameras', key, '9.5')
+#                            needs_reload = True
+#                    except ValueError:
+#                        pass
+#
         #if config.has_option('Erkennung', 'caliber_radius'):
         #    try:
         #        current_radius = config.getfloat('Erkennung', 'caliber_radius')
@@ -442,6 +447,24 @@ darstellung_ohne_weissabgleich = yes
         #            needs_reload = True
         #    except ValueError:
         #        pass
+
+
+        # --- AUTO-PATCH: Magic Numbers (v1.5.3) in die Config migrieren ---
+        neue_parameter = {
+            'abriss_max_edge_percent': '0.75',
+            'abriss_base_bonus': '10.0',
+            'early_exit_min_score': '145.0',
+            'early_exit_perfect_score': '196.0',
+            'min_score_valid': '70.0',
+            'clipping_factor_history': '0.15',
+            'clipping_factor_current': '0.95'
+        }
+        for key, default_val in neue_parameter.items():
+            if not config.has_option('Erkennung', key):
+                print(f"🔧 Führe Auto-Patch aus: Füge '{key} = {default_val}' hinzu...")
+                self.update_ini_value('Erkennung', key, default_val)
+                needs_reload = True
+
         
         if needs_reload:
             config.read(self.CONFIG_FILE, encoding='utf-8')
