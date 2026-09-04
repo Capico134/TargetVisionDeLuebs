@@ -279,224 +279,147 @@ class TargetDetector:
                 cx, cy = 0, 0
                
                 if self.erkennungs_methode == 'C':
-                    # 1. Kandidat A: Minimum Enclosing Circle (MEC)
-                    (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
-                    score_mec, mec_new, mec_raw = self.calculate_hole_score(circle_x, circle_y, current_caliber_radius, thresh_new, thresh_raw)
+                    kandidaten = []
                     
-                    # 2. Kandidat B: Center of Gravity / Schwerpunkt (CoG)
+                    # --- HILFSFUNKTION FÜR DAS BATTLE ROYALE ---
+                    def add_candidate(name, c_x, c_y, min_coverage=0.0):
+                        score, cov_new, _ = self.calculate_hole_score(c_x, c_y, current_caliber_radius, thresh_new, thresh_raw)
+                        valid = cov_new >= min_coverage
+                        
+                        kandidaten.append({
+                            'name': name, 'cx': int(c_x), 'cy': int(c_y), 
+                            'score': score, 'cov_new': cov_new, 'valid': valid
+                        })
+                        
+                        valid_str = "✅" if valid else f"❌ (Zu wenig Riss-Anteil: < {min_coverage}%)"
+                        self.log(side, f"   -> Kandidat [{name}]: X:{int(c_x)} Y:{int(c_y)} | Score: {score:.1f} | Riss-Anteil: {cov_new:.1f}% {valid_str}")
+                        return score
+
+                    self.log(side, "🔍 Sammle Kandidaten für das Battle Royale...")
+
+                    # 1. BASELINE KANDIDATEN (MEC & CoG)
+                    (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
+                    add_candidate("MinCircle (MEC)", circle_x, circle_y)
+
                     M = cv2.moments(cnt)
                     if M["m00"] != 0:
-                        cog_x = M["m10"] / M["m00"]
-                        cog_y = M["m01"] / M["m00"]
-                        score_cog, cog_new, cog_raw = self.calculate_hole_score(cog_x, cog_y, current_caliber_radius, thresh_new, thresh_raw)
+                        cog_x, cog_y = M["m10"] / M["m00"], M["m01"] / M["m00"]
+                        add_candidate("Schwerpunkt (CoG)", cog_x, cog_y)
                     else:
-                        score_cog, cog_new, cog_raw = -1.0, 0.0, 0.0
                         cog_x, cog_y = circle_x, circle_y
-
-                    # 3. Das Baseline-Duell: Wer hat den besseren Fit?
-                    if score_cog > score_mec:
-                        base_score, base_new, base_raw = score_cog, cog_new, cog_raw
-                        base_x, base_y = cog_x, cog_y
-                        base_name = "Schwerpunkt (CoG)" # <--- NEU: Namensschild
-                        self.log(side, f"⚖️ Baseline-Duell: Schwerpunkt gewinnt! (CoG: {score_cog:.1f} > MEC: {score_mec:.1f})")
-                    else:
-                        base_score, base_new, base_raw = score_mec, mec_new, mec_raw
-                        base_x, base_y = circle_x, circle_y
-                        base_name = "MinCircle (MEC)" # <--- NEU: Namensschild
-                        # Nur loggen, wenn der Unterschied relevant ist, um die Konsole sauber zu halten
-                        if score_mec - score_cog > 5.0:
-                            self.log(side, f"⚖️ Baseline-Duell: MinCircle gewinnt! (MEC: {score_mec:.1f} > CoG: {score_cog:.1f})")
-                            
-                    # ---> AB HIER ARBEITEN WIR MIT base_x, base_y und base_score <---
+                        
+                    # Besten Base-Score für Limit-Checks ermitteln
+                    best_base = max(kandidaten, key=lambda x: x['score'])
+                    base_score = best_base['score']
                     
                     limit_sichel = current_caliber_radius * self.hybrid_sichel_faktor
                     limit_riss = current_caliber_radius * self.hybrid_riss_faktor
                     limit_discard = current_caliber_radius * self.hybrid_discard_faktor
-                    
-                    self.log(side, f"🔍 Check Kontur: Radius={radius:.1f}px | Limits: Sichel<{limit_sichel:.1f}, Normal, Riss>{limit_riss:.1f}, Discard>{limit_discard:.1f}")
-                    self.log(side, f"📊 Base-Score (Sieger): {base_score:.1f}")
-                    
+
+                    self.log(side, f"📊 Base-Leader: {best_base['name']} (Score: {base_score:.1f}) | Radius: {radius:.1f}px")
+
+                    # DISCARD CHECK (Mega-Störungen sofort abwürgen)
                     if radius > limit_discard:
-                        self.log(side, f"🚫 Störung ignoriert (Radius {radius:.1f}px > Limit {limit_discard:.1f}px). Wird maskiert, nicht gewertet!")
+                        self.log(side, f"🚫 Störung ignoriert (Radius {radius:.1f}px > Limit {limit_discard:.1f}px). Wird maskiert!")
                         update_mask_only = True
-                        continue 
-                        
-                    # 1. Check: Ist der Radius ohnehin perfekt in der Norm UND gut gefüllt?
-                    elif limit_sichel <= radius <= limit_riss and base_score > 145.0:
-                        self.log(side, f"✅ Loch ist in der Norm und gut gefüllt (Radius {radius:.1f}px | Score {base_score:.1f}). Überspringe Hough!")
-                        cx, cy = int(base_x), int(base_y) # <--- HIER base_x/y nutzen!
-                        final_shot_score = base_score
-                        
-                    # 2. Check: Form ist makellos?
+                        continue
+
+                    # 2. EARLY EXIT (CPU sparen bei perfekten Löchern)
+                    needs_deep_analysis = True
+                    if limit_sichel <= radius <= limit_riss and base_score > 145.0:
+                        self.log(side, "✅ Loch ist in der Norm und gut gefüllt. Überspringe Deep-Analysis!")
+                        needs_deep_analysis = False
                     elif base_score > 185.0:
-                        self.log(side, f"✅ Form ist makellos (Score {base_score:.1f} > 185), trotz Radius {radius:.1f}px. Überspringe Hough!")
-                        cx, cy = int(base_x), int(base_y) # <--- HIER base_x/y nutzen!
-                        final_shot_score = base_score
+                        self.log(side, "✅ Form ist makellos (Score > 185). Überspringe Deep-Analysis!")
+                        needs_deep_analysis = False
+
+                    # 3. DEEP ANALYSIS (Hough & Abrisskante)
+                    if needs_deep_analysis:
+                        self.log(side, "🛠️ Form inperfekt. Aktiviere Deep-Analysis (Hough & Abrisskante)...")
                         
-                    # 3. Check: Wir brauchen Hough!
-                    else:
-                        self.log(side, f"🛠️ Sichel/Riss bestätigt (Score {base_score:.1f}) -> Aktiviere HoughCircles...")
-                        mask = np.zeros_like(thresh_new)
-                        cv2.drawContours(mask, [cnt], -1, 255, -1)
+                        mask_for_deep = np.zeros_like(thresh_new)
+                        cv2.drawContours(mask_for_deep, [cnt], -1, 255, -1)
                         
-                        mask_blurred = cv2.GaussianBlur(mask, (9, 9), 0)
+                        # --- HOUGH KANDIDAT ---
+                        mask_blurred = cv2.GaussianBlur(mask_for_deep, (9, 9), 0)
                         min_r = max(2, int(current_caliber_radius * self.hough_min_faktor))
                         max_r = int(current_caliber_radius * self.hough_max_faktor)
                         
                         circles = cv2.HoughCircles(mask_blurred, cv2.HOUGH_GRADIENT, dp=1, minDist=2,
                                                    param1=self.hough_param1, param2=self.hough_param2, 
                                                    minRadius=min_r, maxRadius=max_r)
-                        
-                        hough_success = False
-                        
+                                                   
                         if circles is not None:
-                            best_score = base_score
-                            best_cx, best_cy = int(base_x), int(base_y) 
-                            winner_new = base_new
-                            hough_beat_base = False
-                            
                             found_circles = np.round(circles[0, :]).astype("int")
-                            self.log(side, f"🔎 Hough hat {len(found_circles)} Kandidaten. Duell gegen Base-Score ({base_score:.1f})...")
+                            self.log(side, f"🔎 Hough hat {len(found_circles)} Kandidaten gefunden. Evaluiere den Besten...")
                             
+                            best_hough_score = -1.0
+                            best_h_cx, best_h_cy = 0, 0
                             for (hx, hy, hr) in found_circles:
-                                total_score, coverage_new, coverage_raw = self.calculate_hole_score(hx, hy, current_caliber_radius, thresh_new, thresh_raw)
-                                if total_score > best_score:
-                                    best_score = total_score
-                                    best_cx, best_cy = hx, hy
-                                    winner_new = coverage_new
-                                    hough_beat_base = True
-
-                            # ---> FIX: Das Limit von 5.0 auf 5.0 gesenkt für extreme Mikrorisse! <---
-                            grenzwert_hough = 5.0 # NEU ALS MAGIC-NUMBER
-                            if winner_new >= grenzwert_hough:
-                                cx, cy = best_cx, best_cy
-                                final_shot_score = best_score 
-                                if hough_beat_base:
-                                    self.log(side, f"🏆 Hough-Sieger triumphiert (Score {best_score:.1f}) und setzt Zentrum.")
-                                else:
-                                    self.log(side, f"🛡️ {base_name} verteidigt Titel! (Score {best_score:.1f})")
-                                hough_success = True
-                            else:
-                                self.log(side, f"⚠️ Sieger hat zu wenig Anteil am neuen Riss (< {grenzwert_hough}%). Verwerfe Sieger!")
-                                
-                        if not hough_success:
-                            self.log(side, "⚠️ Wechsle zu Abrisskante / Fallback...")
-                            erfolg_abriss = False
-                            
-                            if state.cumulative_mask is not None and cv2.countNonZero(state.cumulative_mask) > 0:
-                                
-                                # 1. Rand um den neuen Riss legen (wir machen ihn etwas dicker, 5x5)
-                                kernel_dilate = np.ones((5, 5), np.uint8)
-                                dilated_new = cv2.dilate(mask, kernel_dilate, iterations=1)
-                                
-                                # 2. Den Ring isolieren (Wir ziehen den Riss selbst wieder ab)
-                                ring = cv2.subtract(dilated_new, mask)
-                                
-                                # 3. DIE MAGIE: Schnittmenge mit dem UNVERSEHRTEN Papier!
-                                # cumulative_mask ist weiß bei alten Löchern. Invertiert (bitwise_not) ist es weiß bei intaktem Papier.
-                                intact_paper = cv2.bitwise_not(state.cumulative_mask)
-                                outer_edge = cv2.bitwise_and(ring, intact_paper)
-                                
-                                ts_abriss = datetime.now().strftime('%H%M%S_%f')[:-3]
-                                self.save_debug_image(f"abrisskante_outer_{side}_{ts_abriss}", outer_edge)
-                                
-                                inter_contours, _ = cv2.findContours(outer_edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                                
-                                if inter_contours:
-                                    # Die massivste Außenkante finden
-                                    largest_inter = max(inter_contours, key=len)
+                                h_score, _, _ = self.calculate_hole_score(hx, hy, current_caliber_radius, thresh_new, thresh_raw)
+                                if h_score > best_hough_score:
+                                    best_hough_score, best_h_cx, best_h_cy = h_score, hx, hy
                                     
-                                    if len(largest_inter) > 0:
-                                        # 1. Flächenschwerpunkt der Kante berechnen (schwebt in der Luft)
-                                        M_int = cv2.moments(largest_inter)
-                                        if M_int["m00"] != 0:
-                                            cx_float = M_int["m10"] / M_int["m00"]
-                                            cy_float = M_int["m01"] / M_int["m00"]
-                                        else:
-                                            cx_float = np.mean(largest_inter[:, 0, 0])
-                                            cy_float = np.mean(largest_inter[:, 0, 1])
-                                            
-                                        # 2. Den echten Pixel AUF DER KANTE finden, der diesem Schwerpunkt am nächsten ist!
-                                        best_pt = None
-                                        min_dist = float('inf')
-                                        for pt in largest_inter:
-                                            px, py = pt[0]
-                                            d = np.hypot(px - cx_float, py - cy_float)
-                                            if d < min_dist:
-                                                min_dist = d
-                                                best_pt = (px, py)
-                                                
-                                        cx_edge, cy_edge = best_pt
-                                        
-                                        self.log(side, f"📍 Kanten-Mitte (Snap-to-Edge): X:{cx_edge} Y:{cy_edge} (Kantenlänge: {len(largest_inter)}px)")
-                                        
-                                        # 3. Die beiden Zielpunkte des Risses holen
-                                        # CoG (Schwerpunkt) des Risses berechnen
-                                        M_new = cv2.moments(cnt)
-                                        if M_new["m00"] != 0:
-                                            cx_new = int(M_new["m10"] / M_new["m00"])
-                                            cy_new = int(M_new["m01"] / M_new["m00"])
-                                        else:
-                                            # Fallback, falls der Riss unförmig ist
-                                            cx_new, cy_new = int(circle_x), int(circle_y)
-                                            
-                                        # MEC-Zentrum haben wir schon ganz oben in der Engine berechnet
-                                        cx_mec, cy_mec = int(circle_x), int(circle_y)
-                                        
-                                        self.log(side, f"🎯 Vektor-Ziele im Riss -> CoG: ({cx_new},{cy_new}) | MEC: ({cx_mec},{cy_mec})")
-                                        
-                                        # 4. ELA-Hilfsfunktion für den Vektor-Wurf
-                                        def teste_vektor(ziel_x, ziel_y, name):
-                                            dx = ziel_x - cx_edge
-                                            dy = ziel_y - cy_edge
-                                            dist = np.hypot(dx, dy)
-                                            
-                                            if dist > 0:
-                                                nx, ny = dx/dist, dy/dist
-                                                test_cx = int(cx_edge + nx * current_caliber_radius)
-                                                test_cy = int(cy_edge + ny * current_caliber_radius)
-                                                
-                                                score, cov_new, _ = self.calculate_hole_score(test_cx, test_cy, current_caliber_radius, thresh_new, thresh_raw)
-                                                self.log(side, f"   -> Vektor [{name}]: Richtung({nx:.2f},{ny:.2f}) -> Landepunkt({test_cx},{test_cy}) | Score: {score:.1f}")
-                                                return score, cov_new, test_cx, test_cy
-                                            return 0.0, 0.0, 0, 0
-                                            
-                                        # 5. Das Doppel-Duell ausfechten!
-                                        score_cog, cov_cog, tcx_cog, tcy_cog = teste_vektor(cx_new, cy_new, "CoG")
-                                        score_mec, cov_mec, tcx_mec, tcy_mec = teste_vektor(cx_mec, cy_mec, "MEC")
-                                        
-                                        # 6. Den Schiedsrichter entscheiden lassen
-                                        if score_cog > score_mec:
-                                            abriss_score, abriss_new, test_cx, test_cy = score_cog, cov_cog, tcx_cog, tcy_cog
-                                            sieger_name = "CoG-Vektor"
-                                        else:
-                                            abriss_score, abriss_new, test_cx, test_cy = score_mec, cov_mec, tcx_mec, tcy_mec
-                                            sieger_name = "MEC-Vektor"
-                                            
-                                        self.log(side, f"🏆 Abriss-Duell Sieger: {sieger_name} (Score {abriss_score:.1f})")
-                                        
-                                        # Limit für kleine Risse (1.0 %) anwenden
-                                        if abriss_score > base_score and abriss_new >= 1.0:
-                                            self.log(side, f"🎯 Abrisskante AKTIV! Schlägt Base-Score ({abriss_score:.1f} > {base_score:.1f}). Zentrum final gesetzt.")
-                                            cx, cy = test_cx, test_cy
-                                            final_shot_score = abriss_score
-                                            erfolg_abriss = True 
-                                        else:
-                                            self.log(side, f"⚠️ Abrisskante verworfen! (Score {abriss_score:.1f} ist schlechter als Base {base_score:.1f})")
-                                    else:
-                                        self.log(side, "⚠️ Abrisskante gescheitert: Keine Konturpunkte gefunden.")
-                                else:
-                                    self.log(side, "⚠️ Abrisskante gescheitert: Keine Konturen auf dem unversehrten Papier.")
-                            else:
-                                self.log(side, "⚠️ Abrisskante gescheitert: Riss berührt kein unversehrtes Papier.")
+                            grenzwert_hough = 7.0 
+                            add_candidate("Hough-Sieger", best_h_cx, best_h_cy, min_coverage=grenzwert_hough)
 
-                            # FALLBACK FÜR BEIDE MODI
-                            if not erfolg_abriss:
-                                cx, cy = int(base_x), int(base_y) 
-                                final_shot_score = base_score 
-                                self.log(side, f"⚠️ Verwende FALLBACK-Zentrum ({base_name}) für Wertung: X:{cx} Y:{cy} (Score {base_score:.1f})")
+                        # --- ABRISSKANTEN KANDIDATEN ---
+                        if state.cumulative_mask is not None and cv2.countNonZero(state.cumulative_mask) > 0:
+                            kernel_dilate = np.ones((5, 5), np.uint8)
+                            dilated_new = cv2.dilate(mask_for_deep, kernel_dilate, iterations=1)
+                            ring = cv2.subtract(dilated_new, mask_for_deep)
+                            
+                            intact_paper = cv2.bitwise_not(state.cumulative_mask)
+                            outer_edge = cv2.bitwise_and(ring, intact_paper)
+                            
+                            ts_abriss = datetime.now().strftime('%H%M%S_%f')[:-3]
+                            self.save_debug_image(f"abrisskante_outer_{side}_{ts_abriss}", outer_edge)
+                            
+                            inter_contours, _ = cv2.findContours(outer_edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                            if inter_contours:
+                                largest_inter = max(inter_contours, key=len)
+                                if len(largest_inter) > 0:
+                                    M_int = cv2.moments(largest_inter)
+                                    cx_float, cy_float = (M_int["m10"]/M_int["m00"], M_int["m01"]/M_int["m00"]) if M_int["m00"] != 0 else (np.mean(largest_inter[:,0,0]), np.mean(largest_inter[:,0,1]))
+                                        
+                                    best_pt = min(largest_inter, key=lambda pt: np.hypot(pt[0][0] - cx_float, pt[0][1] - cy_float))[0]
+                                    cx_edge, cy_edge = best_pt
+                                    self.log(side, f"📍 Abrisskante gefunden (Snap-to-Edge): X:{cx_edge} Y:{cy_edge}")
+                                    
+                                    grenzwert_abriss = 1.0
+                                    
+                                    d_cog = np.hypot(cog_x - cx_edge, cog_y - cy_edge)
+                                    if d_cog > 0:
+                                        tcx_cog = int(cx_edge + ((cog_x - cx_edge)/d_cog) * current_caliber_radius)
+                                        tcy_cog = int(cy_edge + ((cog_y - cy_edge)/d_cog) * current_caliber_radius)
+                                        add_candidate("Abriss-CoG", tcx_cog, tcy_cog, min_coverage=grenzwert_abriss)
+                                        
+                                    d_mec = np.hypot(circle_x - cx_edge, circle_y - cy_edge)
+                                    if d_mec > 0:
+                                        tcx_mec = int(cx_edge + ((circle_x - cx_edge)/d_mec) * current_caliber_radius)
+                                        tcy_mec = int(cy_edge + ((circle_y - cy_edge)/d_mec) * current_caliber_radius)
+                                        add_candidate("Abriss-MEC", tcx_mec, tcy_mec, min_coverage=grenzwert_abriss)
+                                else:
+                                    self.log(side, "⚠️ Abrisskante gescheitert: Keine Konturpunkte gefunden.")
+                            else:
+                                self.log(side, "⚠️ Abrisskante gescheitert: Berührt kein intaktes Papier.")
+
+                    # 4. DAS GROSSE BATTLE ROYALE AUSWERTEN
+                    valid_candidates = [c for c in kandidaten if c['valid']]
+                    
+                    if not valid_candidates:
+                        # Fallback (Passiert nur, falls Base aus irgendeinem Grund rausfliegt)
+                        valid_candidates = kandidaten
+
+                    winner = max(valid_candidates, key=lambda x: x['score'])
+                    
+                    self.log(side, f"🏆 BATTLE ROYALE SIEGER: {winner['name']} setzt Zentrum (Score {winner['score']:.1f})")
+                    
+                    cx, cy = winner['cx'], winner['cy']
+                    final_shot_score = winner['score']
                                 
                 elif self.erkennungs_methode == 'B':
+# ... (Ab hier geht der bisherige Code von elif self.erkennungs_methode == 'B': bis zum Ende der Funktion detect_new_shot weiter)
                     M = cv2.moments(cnt)
                     if M["m00"] != 0:
                         cx = int(M["m10"] / M["m00"])
