@@ -295,7 +295,10 @@ class TargetDetector:
                             'score': final_score, 'cov_new': cov_new, 'valid': valid
                         })
                         valid_str = "✅" if valid else f"❌ (Zu wenig Riss-Anteil: < {min_coverage}%)"
-                        bonus_str = f" [+{bonus} Bonus]" if bonus > 0 else ""
+                        # Vorher:
+                        # bonus_str = f" [+{bonus:.1f} Bonus]" if bonus > 0 else ""
+                        # Besser und absolut eindeutig:
+                        bonus_str = f" (inkl. +{bonus:.1f} Bonus)" if bonus > 0 else ""
                         self.log(side, f"   -> Kandidat [{name}]: X:{int(c_x)} Y:{int(c_y)} | Score: {final_score:.1f}{bonus_str} | Riss-Anteil: {cov_new:.1f}% {valid_str}")
                         return final_score
 
@@ -393,23 +396,28 @@ class TargetDetector:
                                 if not valid_edges:
                                     self.log(side, "⚠️ Abrisskante gescheitert: Kanten-Fragmente zu klein.")
                                 else:
-                                    # Erwarteter Umfang für einen vollen Kreis (2 * Pi * r)
+                                    # Erwarteter Umfang und Fläche für einen perfekten Schuss
                                     expected_circ = 2 * np.pi * current_caliber_radius
+                                    expected_area = np.pi * (current_caliber_radius ** 2)
                                     
                                     # Dein Tuning-Parameter für den Bonus!
                                     max_edge_percent = 0.75 
                                     limit_len = expected_circ * max_edge_percent
                                     
-                                    # ---> NEU: Haben wir exakt EINE Kante? <---
+                                    # ---> NEU: Dynamischer Bonus basierend auf der Riss-Größe <---
+                                    # Bei einem perfekten Loch ist der Faktor ~1.0 (Bonus bleibt nah an 7.5).
+                                    # Bei einem riesigen Riss (z.B. Faktor 1.8) wächst der Bonus linear mit!
+                                    area_ratio = area / expected_area if expected_area > 0 else 1.0
+                                    dynamic_bonus = 10.0 * area_ratio #7.5 * area_ratio * 1.3
+                                    
+                                    # Haben wir exakt EINE Kante?
                                     is_single_edge = len(valid_edges) == 1
                                     
                                     for e_idx, edge_cnt in enumerate(valid_edges):
                                         # Durch 2 teilen wegen der Hin-und-Zurück-Kontur!
                                         edge_len = cv2.arcLength(edge_cnt, True) / 2.0
                                         
-                                        # ---> NEU: Der Flächen-Check (Donut vs. Wurst) <---
-                                        # Ein geschlossener Ring umspannt das ganze Loch (Area > Radius^2).
-                                        # Eine offene Wurst hat nur eine winzige Area.
+                                        # Der Flächen-Check (Donut vs. Wurst)
                                         edge_area = cv2.contourArea(edge_cnt)
                                         is_closed_ring = edge_area > (current_caliber_radius * current_caliber_radius)
                                         
@@ -418,7 +426,7 @@ class TargetDetector:
                                         
                                         # Bonus gibt es NUR bei exakt einer Kante, die auch noch kurz genug ist!
                                         gets_bonus = is_single_edge and is_true_tear
-                                        bonus = 7.5 if gets_bonus else 0.0
+                                        bonus = dynamic_bonus if gets_bonus else 0.0
                                         
                                         M_int = cv2.moments(edge_cnt)
                                         if M_int["m00"] != 0:
@@ -433,7 +441,7 @@ class TargetDetector:
                                         # Das Log zeigt dir exakt, warum ein Bonus vergeben oder verweigert wurde
                                         pct_str = int(max_edge_percent * 100)
                                         if gets_bonus:
-                                            bonus_log = f" (+{bonus} Bonus, Einzelkante & L={edge_len:.1f}px < {pct_str}% Limit {limit_len:.1f}px)"
+                                            bonus_log = f" (+{bonus:.1f} Bonus [Faktor {area_ratio:.2f}], Einzelkante & L={edge_len:.1f}px < {pct_str}% Limit {limit_len:.1f}px)"
                                         elif is_closed_ring:
                                             bonus_log = f" (Kein Bonus, Vollkreis erkannt! Area={edge_area:.0f}px)"
                                         elif not is_single_edge:
