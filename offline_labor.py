@@ -1002,6 +1002,9 @@ class OfflineLaborApp:
         self.last_diff_img = diff_img
         self.last_diff_gesamt_img = diff_gesamt_img
         self.last_ref_img = ref_img
+        
+        # ---> NEU: Abrisskante aus dem Dummy-Manager fischen <---
+        self.last_abrisskante = d_dm.debug_images.get(f"letzte_abrisskante_{side}")
 
         
         
@@ -1615,6 +1618,18 @@ class OfflineLaborApp:
             right_img = base_gray.copy()
             right_img[bool_base] = red_overlay[bool_base]
             right_img[bool_morph] = blue_overlay[bool_morph]
+            
+            # ---> NEU: Die Abrisskante in leuchtendem Grün überlagern! <---
+            abriss_mask = getattr(self, 'last_abrisskante', None)
+            if abriss_mask is not None:
+                if abriss_mask.shape[:2] != (h, w):
+                    abriss_mask = cv2.resize(abriss_mask, (w, h), interpolation=cv2.INTER_NEAREST)
+                    
+                bool_abriss = abriss_mask > 0
+                green_overlay = np.zeros_like(base_gray)
+                green_overlay[:,:,1] = 255 # Reines Grün im BGR-Farbraum
+                
+                right_img[bool_abriss] = green_overlay[bool_abriss]
         elif mode == 5:
             # ---> NEU: Das völlig rohe, nackte Bild <---
             if hasattr(self, 'last_clean_live_img'):

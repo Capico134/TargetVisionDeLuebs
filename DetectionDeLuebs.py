@@ -216,6 +216,9 @@ class TargetDetector:
         # Verhindert, dass massive Rot-Änderungen von der Graustufen-Formel verschluckt werden!
         diff_gray = np.max(diff_bgr, axis=2) 
         _, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY)
+        
+        # ---> NEU: Leere Leinwand für die siegreichen Abrisskanten dieses Frames <---
+        frame_abrisskanten = np.zeros_like(thresh_raw)
 
         # 1. ERST die alten Treffer abziehen (Stanzt den Riss aus)
         if state.cumulative_mask is not None:
@@ -277,6 +280,7 @@ class TargetDetector:
                 # Globale Variablen für diesen Treffer initialisieren
                 final_shot_score = 0.0
                 cx, cy = 0, 0
+                current_outer_edge = None # <--- NEU: Platzhalter für diese Iteration
                
                 if self.erkennungs_methode == 'C':
                     kandidaten = []
@@ -317,6 +321,8 @@ class TargetDetector:
                     limit_discard = current_caliber_radius * self.hybrid_discard_faktor
 
                     self.log(side, f"📊 Base-Leader: {best_base['name']} (Score: {base_score:.1f}) | Radius: {radius:.1f}px")
+                    # ---> WIEDER DA: Die detaillierte Grenzwert-Auflistung in Pixeln <---
+                    self.log(side, f"🔍 Check Kontur: Limits -> Sichel < {limit_sichel:.1f}px | Normal | Riss > {limit_riss:.1f}px | Discard > {limit_discard:.1f}px")
 
                     # DISCARD CHECK (Mega-Störungen sofort abwürgen)
                     if radius > limit_discard:
@@ -327,10 +333,12 @@ class TargetDetector:
                     # 2. EARLY EXIT (CPU sparen bei perfekten Löchern)
                     needs_deep_analysis = True
                     if limit_sichel <= radius <= limit_riss and base_score > 145.0:
-                        self.log(side, "✅ Loch ist in der Norm und gut gefüllt. Überspringe Deep-Analysis!")
+                        # ---> NEU: Zeigt direkt, dass der Radius in der goldenen Mitte lag <---
+                        self.log(side, f"✅ Loch ist in der Norm ({limit_sichel:.1f}px <= {radius:.1f}px <= {limit_riss:.1f}px) und gut gefüllt. Überspringe Deep-Analysis!")
                         needs_deep_analysis = False
-                    elif base_score > 185.0:
-                        self.log(side, "✅ Form ist makellos (Score > 185). Überspringe Deep-Analysis!")
+                    elif base_score > 195.0:
+                        # ---> NEU: Zeigt den makellosen Score und den "geretteten" Radius <---
+                        self.log(side, f"✅ Form ist makellos (Score {base_score:.1f} > 195), trotz Radius {radius:.1f}px. Überspringe Deep-Analysis!")
                         needs_deep_analysis = False
 
                     # 3. DEEP ANALYSIS (Hough & Abrisskante)
@@ -371,9 +379,11 @@ class TargetDetector:
                             
                             intact_paper = cv2.bitwise_not(state.cumulative_mask)
                             outer_edge = cv2.bitwise_and(ring, intact_paper)
+                            current_outer_edge = outer_edge # <--- NEU: Für den Sieger-Check merken
                             
                             ts_abriss = datetime.now().strftime('%H%M%S_%f')[:-3]
                             self.save_debug_image(f"abrisskante_outer_{side}_{ts_abriss}", outer_edge)
+                            #self.save_debug_image(f"letzte_abrisskante_{side}", outer_edge) # <--- Unser Schmuggel-Bild für das Labor!
                             
                             inter_contours, _ = cv2.findContours(outer_edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                             if inter_contours:
@@ -417,6 +427,10 @@ class TargetDetector:
                     
                     cx, cy = winner['cx'], winner['cy']
                     final_shot_score = winner['score']
+                    
+                    # ---> NEU: Kante nur auf die Leinwand malen, wenn sie das Duell gewinnt! <---
+                    if "Abriss" in winner['name'] and current_outer_edge is not None:
+                        frame_abrisskanten = cv2.bitwise_or(frame_abrisskanten, current_outer_edge)
                                 
                 elif self.erkennungs_methode == 'B':
 # ... (Ab hier geht der bisherige Code von elif self.erkennungs_methode == 'B': bis zum Ende der Funktion detect_new_shot weiter)
@@ -442,6 +456,7 @@ class TargetDetector:
                 
                 # Doppelzählungs-Schutz (Getrennt nach Historie und aktueller Frame-Schleife)
                 is_new = True
+                
                 # 1. Prüfung gegen Historie (alte Treffer aus vorherigen Frames) -> Sehr streng (0.15)
                 clipping_factor_history = 0.15
                 for shot in self.sm.shots:
@@ -449,7 +464,7 @@ class TargetDetector:
                         dist = np.hypot(shot['pos'][0] - cx, shot['pos'][1] - cy)
                         if dist < current_caliber_radius * clipping_factor_history:
                             is_new = False
-                            self.log(side, f"⚠️ Treffer ignoriert: Zu nah ({dist:.1f}px) an bekanntem alten Schuss aus vorherigen Frames!")
+                            self.log(side, f"⚠️ Treffer ignoriert (Fläche {area:.1f}px): Zu nah ({dist:.1f}px) an bekanntem alten Schuss!")
                             
                             # ---> NEU: Maske trotzdem updaten, damit der Riss im nächsten Frame ignoriert wird! <---
                             update_mask_only = True 
@@ -457,8 +472,6 @@ class TargetDetector:
                             
                 # 2. Prüfung gegen Fragmente aus DIESEM Frame -> Großzügig (0.95), um Sichel-Risse abzuwürgen
                 if is_new:
-                    # ---> DIE FEHLERHAFTE NEUBERECHNUNG WURDE HIER ENTFERNT <---
-                    
                     clipping_factor_current = 0.95
                     for i, existing_shot in enumerate(new_shots_found_this_frame):
                         dist = np.hypot(existing_shot['cx'] - cx, existing_shot['cy'] - cy)
@@ -466,11 +479,11 @@ class TargetDetector:
                             
                             # ---> NEU: Das Sichel-Duell! Wer hat den höheren Weißanteil? <---
                             if final_shot_score > existing_shot['score']:
-                                self.log(side, f"🔄Aussortieren von Dublikaten: Sichel-Duell: Ersetze altes Fragment (Score {final_shot_score:.1f} > {existing_shot['score']:.1f})")
+                                self.log(side, f"🔄 Sichel-Duell: Neues Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) schlägt altes Fragment ({existing_shot['score']:.1f}).")
                                 # Überschreibe den Verlierer mit dem neuen, besseren Kandidaten
                                 new_shots_found_this_frame[i] = {'cx': cx, 'cy': cy, 'area': area, 'score': final_shot_score}
                             else:
-                                self.log(side, f"⚠️ Treffer ignoriert: Verliert Sichel-Duell gegen besseres Fragment (Score {existing_shot['score']:.1f} > {final_shot_score:.1f})!")
+                                self.log(side, f"⚠️ Treffer ignoriert: Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) verliert Sichel-Duell gegen besseres Fragment ({existing_shot['score']:.1f})!")
                             
                             is_new = False
                             break
@@ -478,7 +491,7 @@ class TargetDetector:
                 if is_new:
                     # ---> NEU: Den Score mit abspeichern, damit spätere Fragmente dagegen antreten können!
                     new_shots_found_this_frame.append({'cx': cx, 'cy': cy, 'area': area, 'score': final_shot_score})
-                    self.log(side, f"-> NEUES LOCH GEFUNDEN: Pos ({cx}, {cy}) | Fläche {area:.1f}px | Score {final_shot_score:.1f}")
+                    self.log(side, f"-> NEUES LOCH BESTÄTIGT: Pos ({cx}, {cy}) | Fläche {area:.1f}px | Score {final_shot_score:.1f}")
                     
         # ---> BLOCK FÜR TREFFER UND DISCARD-MASKEN <---
         if new_shots_found_this_frame or update_mask_only:
@@ -505,6 +518,9 @@ class TargetDetector:
             self.save_debug_image(f"diff_gesamt_{side}", state.cumulative_mask)
             self.save_debug_image(f"diff_letzter_treffer_{side}", thresh_new)
             self.save_debug_image(f"letzte_aufnahme_{side}", frame)
+            
+            # ---> NEU: Die gesammelten Sieger-Kanten für das Offline-Labor bereitstellen <--- #######################################################################################################################################################################################################
+            self.save_debug_image(f"letzte_abrisskante_{side}", frame_abrisskanten)
             
             # Bei puren Masken-Updates speichern wir keine separaten Schuss_XX Dateien ab
             if self.debug_alle_bilder_speichern and new_shots_found_this_frame:
