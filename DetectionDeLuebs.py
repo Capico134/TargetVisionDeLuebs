@@ -233,8 +233,22 @@ class TargetDetector:
                 self.log(side, "⚠️ Maskengröße inkompatibel (Crop)! Setze Maske zurück.", True)
                 state.cumulative_mask = np.zeros_like(thresh_raw)
                 
-            thresh_new = cv2.subtract(thresh_raw, state.cumulative_mask)
-            # Zerstört alle grauen Reste aus eventuell unsauberen Masken
+            # =========================================================================
+            # ---> DER FIX: Schutz gegen tanzende Löcher (Kamerawackler) & JPG-Artefakte
+            # =========================================================================
+            # 1. Alte Masken (oft JPGs aus der 480p-Zeit) absolut sauber auf Schwarz/Weiß zwingen
+            _, pure_mask = cv2.threshold(state.cumulative_mask, 127, 255, cv2.THRESH_BINARY)
+            
+            # 2. Den "Schutzrand": Maske aufblähen, um Kameraverschiebungen abzufangen
+            # VORERST AUSKOMMENTIERT: Idee für später, vor dem Derby kein Risiko!
+            # kernel_wobble = np.ones((5, 5), np.uint8)
+            # safe_mask = cv2.dilate(pure_mask, kernel_wobble, iterations=1)
+            safe_mask = pure_mask # <--- Wir nutzen einfach direkt die desinfizierte Maske!
+                
+            # Jetzt stanzen wir mit der massiven, abgedichteten Maske!
+            thresh_new = cv2.subtract(thresh_raw, safe_mask)
+            
+            # Zerstört alle restlichen grauen Schlieren
             _, thresh_new = cv2.threshold(thresh_new, 127, 255, cv2.THRESH_BINARY)
         else:
             thresh_new = thresh_raw.copy()
