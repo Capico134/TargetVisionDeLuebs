@@ -45,6 +45,7 @@ class TargetDetector:
         self.min_score_valid = config.getfloat('Erkennung', 'min_score_valid', fallback=70.0)
         self.clipping_factor_history = config.getfloat('Erkennung', 'clipping_factor_history', fallback=0.15)
         self.clipping_factor_current = config.getfloat('Erkennung', 'clipping_factor_current', fallback=0.95)
+        self.max_treffer_je_frame = config.getint('Erkennung', 'max_treffer_je_frame', fallback=0)
 
         # Internes Gedächtnis des Detectors
         self.ref_left = None
@@ -557,6 +558,22 @@ class TargetDetector:
                     })
                     self.log(side, f"-> NEUES LOCH BESTÄTIGT: Pos ({cx}, {cy}) | Fläche {area:.1f}px | Score {final_shot_score:.1f}")
                     
+        # =========================================================================
+        # ---> NEU: Filter für maximale Trefferanzahl je Frame (nach Fläche) <---
+        # =========================================================================
+        if self.max_treffer_je_frame > 0 and len(new_shots_found_this_frame) > self.max_treffer_je_frame:
+            # Sortiere die validen Treffer absteigend nach ihrer Pixel-Fläche (größte zuerst!)
+            new_shots_found_this_frame.sort(key=lambda x: x['area'], reverse=True)
+            
+            # Trenne die Gewinner von den Verlierern
+            verworfen = new_shots_found_this_frame[self.max_treffer_je_frame:]
+            new_shots_found_this_frame = new_shots_found_this_frame[:self.max_treffer_je_frame]
+            
+            # Logge die verworfenen Treffer sauber aus
+            for v in verworfen:
+                self.log(side, f"✂️ Überzähliger Treffer verworfen (Limit: {self.max_treffer_je_frame}): Pos X:{v['cx']}, Y:{v['cy']} mit Fläche {v['area']:.1f}px")
+
+
         # ---> BLOCK FÜR TREFFER UND DISCARD-MASKEN <---
         if new_shots_found_this_frame or update_mask_only:
             
