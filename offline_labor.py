@@ -194,6 +194,8 @@ class OfflineLaborApp:
         self.min_score_valid_var = tk.DoubleVar(value=70.0)
         self.clipping_factor_history_var = tk.DoubleVar(value=0.15)
         self.clipping_factor_current_var = tk.DoubleVar(value=0.95)
+        # ---> NEU: Variable für den Filter <---
+        self.max_treffer_je_frame_var = tk.IntVar(value=0)
         
         self.zoom_factor = 1.0
         self.pan_x = 0
@@ -465,6 +467,8 @@ class OfflineLaborApp:
         tk.Label(param_frame, text="--- Anti-Doppelzählung ---", fg="gray").pack(pady=(10, 5))
         self.make_slider(param_frame, "clipping_factor_history:", self.clipping_factor_history_var, 0.05, 0.5, 0.01, key="clipping_factor_history")
         self.make_slider(param_frame, "clipping_factor_current:", self.clipping_factor_current_var, 0.5, 1.5, 0.01, key="clipping_factor_current")
+        # ---> NEU: Slider für das Limit <---
+        self.make_slider(param_frame, "max_treffer_je_frame:", self.max_treffer_je_frame_var, 0, 10, key="max_treffer_je_frame")
         
         tk.Checkbutton(param_frame, text="💾 Simulations-Bilder exportieren", 
                        variable=self.export_images_var, fg="#00aaff").pack(anchor=tk.W, pady=(15, 0))
