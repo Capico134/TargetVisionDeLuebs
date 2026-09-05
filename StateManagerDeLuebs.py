@@ -351,6 +351,7 @@ class StateManager:
                 "a": round(float(s['area']), 1),
                 "score": float(s.get('score', 0.0)),
                 "cv_score": round(float(s.get('cv_score', 0.0)), 1),
+                "winner_method": str(s.get('winner_method', 'Unbekannt')), # <--- NEU: Ab in die JSON!
                 "edited": bool(s.get('is_edited', False))
             })
 

@@ -289,6 +289,7 @@ class TargetDetector:
                 final_shot_score = 0.0
                 cx, cy = 0, 0
                 current_outer_edge = None # <--- NEU: Platzhalter für diese Iteration
+                winning_method = "Unbekannt" # <--- NEU: Sicherheits-Fallback
                
                 if self.erkennungs_methode == 'C':
                     kandidaten = []
@@ -489,18 +490,19 @@ class TargetDetector:
                     
                     cx, cy = winner['cx'], winner['cy']
                     final_shot_score = winner['score']
+                    winning_method = winner['name'] # <--- NEU
                     
                     # ---> NEU: Kante nur auf die Leinwand malen, wenn sie das Duell gewinnt! <---
                     if "Abriss" in winner['name'] and current_outer_edge is not None:
                         frame_abrisskanten = cv2.bitwise_or(frame_abrisskanten, current_outer_edge)
                                 
                 elif self.erkennungs_methode == 'B':
-# ... (Ab hier geht der bisherige Code von elif self.erkennungs_methode == 'B': bis zum Ende der Funktion detect_new_shot weiter)
                     M = cv2.moments(cnt)
                     if M["m00"] != 0:
                         cx = int(M["m10"] / M["m00"])
                         cy = int(M["m01"] / M["m00"])
-                        final_shot_score, _, _ = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw)                                                                                                       
+                        final_shot_score, _, _ = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw)     
+                        winning_method = "Schwerpunkt (Mode B)" # <--- HIER EINFÜGEN
                     else:
                         continue 
                 else:
@@ -508,6 +510,7 @@ class TargetDetector:
                     cx, cy = int(circle_x), int(circle_y)
                     # HIER FEHLTE DIE ZUWEISUNG:
                     final_shot_score, _, _ = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw)
+                    winning_method = "MinCircle (Mode A)" # <--- UND HIER EINFÜGEN
                 
                 # --- FEHLALARM-FILTER: Score < 70 ---
                 if final_shot_score < self.min_score_valid: 
@@ -551,8 +554,10 @@ class TargetDetector:
                             break
 
                 if is_new:
-                    # ---> NEU: Den Score mit abspeichern, damit spätere Fragmente dagegen antreten können!
-                    new_shots_found_this_frame.append({'cx': cx, 'cy': cy, 'area': area, 'score': final_shot_score})
+                    new_shots_found_this_frame.append({
+                        'cx': cx, 'cy': cy, 'area': area, 'score': final_shot_score,
+                        'winner_method': winning_method # <--- NEU
+                    })
                     self.log(side, f"-> NEUES LOCH BESTÄTIGT: Pos ({cx}, {cy}) | Fläche {area:.1f}px | Score {final_shot_score:.1f}")
                     
         # ---> BLOCK FÜR TREFFER UND DISCARD-MASKEN <---
@@ -566,6 +571,7 @@ class TargetDetector:
 
                 for sd in new_shots_found_this_frame:
                     shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'], cv_score=sd.get('score', 0.0))
+                    shot['winner_method'] = sd.get('winner_method', 'Unbekannt') # <--- NEU: Direkt an den Schuss heften!
                     
                     # ---> NEU: Schuss-Nummer ermitteln, um das Log mit dem GUI-HUD zu synchronisieren <---
                     shot_num = sum(1 for s in self.sm.shots if s['side'] == side)

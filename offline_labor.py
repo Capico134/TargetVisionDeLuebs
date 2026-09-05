@@ -593,21 +593,6 @@ class OfflineLaborApp:
                 
             parser = self.package_data.get('config')
             
-            # ---> NEU: Alte Test-Case-Configs automatisch mit allen aktuellen Slider-Keys vervollständigen! <---
-            if parser:
-                if not parser.has_section('Erkennung'):
-                    parser.add_section('Erkennung')
-                
-                missing_keys_count = 0
-                for key, tk_var in self.registered_sliders.items():
-                    if not parser.has_option('Erkennung', key):
-                        # Key fehlt im alten ZIP -> Injiziere den aktuellen Standardwert als Fallback
-                        parser.set('Erkennung', key, str(tk_var.get()))
-                        missing_keys_count += 1
-                
-                if missing_keys_count > 0:
-                    self.print_log("SYSTEM", f"🔧 Legacy-Migrator: {missing_keys_count} fehlende Parameter im alten Paket ergänzt.")
-            
             self.apply_config_to_ui(parser)
             self.original_match_data = self.package_data.get('match_data')
             
@@ -630,7 +615,24 @@ class OfflineLaborApp:
             self.btn_next.config(state=tk.NORMAL)
             self.btn_first.config(state=tk.NORMAL)
             self.btn_last.config(state=tk.NORMAL)
+            # 1. ZUERST BILD LADEN UND LOG LÖSCHEN
             self.process_and_display()
+
+            # 2. DANN DEN MIGRATOR-LOG SCHREIBEN (Damit er sichtbar bleibt!)
+            # ---> NEU: Alte Test-Case-Configs automatisch mit allen aktuellen Slider-Keys vervollständigen! <---
+            if parser:
+                if not parser.has_section('Erkennung'):
+                    parser.add_section('Erkennung')
+                added_keys = []
+                for key, tk_var in self.registered_sliders.items():
+                    if not parser.has_option('Erkennung', key):
+                        # Key fehlt in der geladenen Config -> Virtuell im RAM mit aktuellem GUI-Wert ergänzen
+                        parser.set('Erkennung', key, str(tk_var.get()))
+                        added_keys.append(key)
+                if added_keys:
+                    keys_str = ", ".join(added_keys)
+                    self.print_log("SYSTEM", f"🔧 Legacy-Migrator: {len(added_keys)} fehlende Parameter für diese Analyse-Sitzung ergänzt (nur im RAM):")
+                    self.print_log("SYSTEM", f"   -> {keys_str}")
 
     def prev_shot(self):
         if self.current_index > 0:
@@ -1119,7 +1121,7 @@ class OfflineLaborApp:
         # 1. Info-Fenster öffnen
         comp_win = tk.Toplevel(self.root)
         comp_win.title(f"📊 Integrations-Check: Live-Parameter vs. Original-Match")
-        comp_win.geometry("950x750")
+        comp_win.geometry("1100x750")
 
         txt = tk.Text(comp_win, font=("Consolas", 12), bg="#1e1e1e", fg="#00ff00", padx=10, pady=10)
         txt.pack(fill=tk.BOTH, expand=True)
@@ -1148,13 +1150,22 @@ class OfflineLaborApp:
                 state = d_sm.state_left if s == 'left' else d_sm.state_right
                 state.cumulative_mask = startmask_gray
 
-        # Alle orig-Bilder durchjagen
+        # Alle orig-Bilder durchjagen und Frame-Nummern pro Kamera mitzählen
+        frame_counts = {'left': 0, 'right': 0}
         for orig_name in self.orig_files:
-            img = self.get_img( orig_name)
+            img = self.get_img(orig_name)
             s = 'left' if 'left' in orig_name else 'right'
+            frame_counts[s] += 1
+            curr_frame_num = frame_counts[s]
+            
+            shots_before = len(d_sm.shots)
             detector.detect_new_shot(img, s)
+            shots_after = len(d_sm.shots)
+            
+            # Die neu erkannten Schüsse mit ihrer Frame-Nummer taggen!
+            for idx in range(shots_before, shots_after):
+                d_sm.shots[idx]['frame_num'] = curr_frame_num
 
-        ### ENDE WEG 
 
         # 3. Ausgabe aufbereiten
         txt.delete(1.0, tk.END)
@@ -1165,7 +1176,7 @@ class OfflineLaborApp:
         
         # Hilfsfunktion zum Zeichnen der Tabellen
         def build_side_comparison(side_name, side_char):
-            cal_r = detector.get_caliber_radius(side_name) # <--- NEU HIER DRIN!
+            cal_r = detector.get_caliber_radius(side_name) 
             orig_shots = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
             curr_shots = [s for s in d_sm.shots if s.get('side') == side_name]
             
@@ -1173,18 +1184,17 @@ class OfflineLaborApp:
             
             txt.insert(tk.END, f"\n--- KAMERA {side_name.upper()} ---\n")
             txt.insert(tk.END, f"Original Treffer: {len(orig_shots)} | Neu berechnet: {len(curr_shots)}\n")
-            txt.insert(tk.END, "Legende: 'E' markiert manuell editierte Original-Treffer\n") # <--- NEU
+            # ---> NEU: Legende für das Sternchen erweitert <---
+            txt.insert(tk.END, "Legende: 'E' = Manuell editiert | '*' = Methode hat sich zum Original geändert\n")
             
-            # Exakte Breiten: dX(4), dY(4), Distanz(8), Orig-CV(7), Neu-CV(7), % Kaliber(13)
-            header = f"{'Nr':>3} | {'Orig (Idx X,Y)':<16} | {'Neu (Idx X,Y)':<16} | {'dX':>4} | {'dY':>4} | {'Distanz':>8} | {'Orig-CV':>7} | {'Neu-CV':>7} | {'% Kaliber':<13}\n"
+            # ---> NEU: Breiten optimiert für perfekten Tabellen-Look <---
+            header = f"{'Nr':>3} | {'Bild':>4} | {'Methode / Sieger':<22} | {'Orig (X,Y)':<14} | {'Neu (X,Y)':<14} | {'Dist':>6} | {'O-CV':>6} | {'N-CV':>6} | {'% Kal':<10}\n"
             txt.insert(tk.END, header)
-            txt.insert(tk.END, "-"*99 + "\n")
+            txt.insert(tk.END, "-"*105 + "\n")
             
-            # ---> NEUER ALGORITHMUS: Sequenz-Alignment mit Lookahead (ausgelagert) <---
             threshold = cal_r * 2.5  
             aligned = self.align_shots(orig_shots, curr_shots, threshold)
                     
-            # ---> AUSGABE DER ALIGNIERTEN LISTE (NEU FORMATIERT) <---
             total_dist = 0.0
             match_count = 0
             
@@ -1206,46 +1216,52 @@ class OfflineLaborApp:
                     
                     warn = "⚠️" if pct > 25.0 else ""
                     
-                    # ---> NEU: Wir checken, ob der Treffer editiert wurde <---
                     is_edited = orig.get('edited', False)
                     edit_marker = "E" if is_edited else " "
                     
-                    # Das 'E' oder Leerzeichen wird direkt an die Nummer gehängt
                     orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>3},{oy:>3}"
                     curr_str = f"N:{curr_idx+1:02d}  {cx:>3},{cy:>3}"
                     
-                    # ---> NEU: Wir laden beide Scores! <---
+                    f_num = curr.get('frame_num', 0)
+                    curr_method = curr.get('winner_method', 'Std')
+                    orig_method = orig.get('winner_method', 'Unbekannt')
+                    
+                    # ---> NEU: Die Sternchen-Logik! <---
+                    if orig_method != 'Unbekannt' and orig_method != curr_method:
+                        display_method = f"{curr_method}*"
+                    else:
+                        display_method = curr_method
+                    
                     orig_cv = orig.get('cv_score', 0.0)
                     curr_cv = curr.get('cv_score', 0.0)
-                    
-                    # Der Trick: Wir packen pct und warn in EINEN String und richten diesen linksbündig auf 13 Zeichen aus
                     pct_str = f"{pct:.1f}% {warn}"
                     
-                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {curr_str:<16} | {dx:+4d} | {dy:+4d} | {dist:7.1f}p | {orig_cv:7.1f} | {curr_cv:7.1f} | {pct_str:<13}\n")
+                    # ---> NEU: Angepasste Format-Breiten <---
+                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {display_method:<22} | {orig_str:<14} | {curr_str:<14} | {dist:6.1f}p | {orig_cv:6.1f} | {curr_cv:6.1f} | {pct_str:<10}\n")
                     
                 elif orig_idx is not None:
                     orig = orig_shots[orig_idx]
-                    
-                    # ---> NEU: Auch hier den Marker prüfen <---
                     is_edited = orig.get('edited', False)
                     edit_marker = "E" if is_edited else " "
-                    
                     orig_str = f"O:{orig_idx+1:02d}{edit_marker} {orig['x']:>3},{orig['y']:>3}"
                     orig_cv = orig.get('cv_score', 0.0)
-                    txt.insert(tk.END, f"{idx+1:3d} | {orig_str:<16} | {'--- FEHLT ---':<16} |   -- |   -- |       -- | {orig_cv:7.1f} |      -- |         -- ❌\n")
+                    # ---> NEU: Dynamische Formatierung für Fehlende (Orig) <---
+                    txt.insert(tk.END, f"{idx+1:3d} | {'--':>4} | {'--- FEHLT ---':<22} | {orig_str:<14} | {'--- FEHLT ---':<14} | {'--':>6} | {orig_cv:6.1f} | {'--':>6} | {'-- ❌':<10}\n")
                     
                 elif curr_idx is not None:
                     curr = curr_shots[curr_idx]
                     cx, cy = int(curr['pos'][0]), int(curr['pos'][1])
                     curr_str = f"N:{curr_idx+1:02d}  {cx:>3},{cy:>3}"
                     curr_cv = curr.get('cv_score', 0.0)
-                    txt.insert(tk.END, f"{idx+1:3d} | {'--- FEHLT ---':<16} | {curr_str:<16} |   -- |   -- |       -- |      -- | {curr_cv:7.1f} |         -- 🆕\n")
+                    f_num = curr.get('frame_num', 0)
+                    display_method = curr.get('winner_method', 'Std')
+                    # ---> NEU: Dynamische Formatierung für Fehlende (Neu) <---
+                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {display_method:<22} | {'--- FEHLT ---':<14} | {curr_str:<14} | {'--':>6} | {'--':>6} | {curr_cv:6.1f} | {'-- 🆕':<10}\n")
 
             if match_count > 0:
                 avg_dist = total_dist / match_count
-                txt.insert(tk.END, "-"*99 + "\n")
+                txt.insert(tk.END, "-"*113 + "\n")
                 txt.insert(tk.END, f"Ø Abweichung {side_name.upper()} (nur gematchte Treffer): {avg_dist:.2f} Pixel\n")
-
         # Tabellen ausgeben
         build_side_comparison('left', 'l')
         build_side_comparison('right', 'r')
@@ -1351,19 +1367,20 @@ class OfflineLaborApp:
                 
                 # Für den Moment: Einfach als neuen, perfekten Schuss in die Timeline schreiben.
                 new_match_data["timeline"].append({
-                    "t": float(len(new_match_data["timeline"]) + 1.0), # Chronologischer Dummy-Zeitstempel
+                    "t": float(len(new_match_data["timeline"]) + 1.0), 
                     "s": side_char,
                     "x": int(s['pos'][0]),
                     "y": int(s['pos'][1]),
                     "a": round(float(s['area']), 1),
                     "score": float(s.get('score', 0.0)),
                     "cv_score": round(float(s.get('cv_score', 0.0)), 1),
-                    "edited": False # Ein neu vom CV-Skript berechneter Schuss ist niemals "edited"
+                    "winner_method": str(s.get('winner_method', 'Unbekannt')), # <--- NEU
+                    "edited": False 
                 })
 
 
             # =========================================================================
-            # NEU: 6. ELA Export (Einfach den RAM-String ziehen!)
+            # NEU: 6. ELA Export mit Overwrite-Schutz (.tmp Tausch)
             # =========================================================================
             parser = self.package_data.get('config')
             if parser:
@@ -1373,8 +1390,12 @@ class OfflineLaborApp:
             else:
                 new_ini_str = None
                 
+            # Prüfen, ob wir das Original-ZIP überschreiben wollen
+            is_overwrite = (os.path.abspath(save_path) == os.path.abspath(self.current_zip_path))
+            actual_save_path = save_path + ".tmp" if is_overwrite else save_path
+                
             success = self.dm.export_match_package(
-                filepath=save_path,
+                filepath=actual_save_path,
                 match_data=new_match_data,
                 config_string=new_ini_str,
                 source_zip=self.current_zip_path,
@@ -1382,7 +1403,12 @@ class OfflineLaborApp:
             )
             
             if success:
-                messagebox.showinfo("Erfolg", f"Test-Case erfolgreich erstellt:\n{os.path.basename(save_path)}\n\n(Match.json und config.ini wurden basierend auf der aktuellen Auswertung generiert!)")
+                # Heimlicher Tausch, falls wir überschrieben haben
+                if is_overwrite:
+                    os.remove(self.current_zip_path) # Altes Original löschen
+                    os.rename(actual_save_path, self.current_zip_path) # Temp-Datei umbenennen
+                    
+                messagebox.showinfo("Erfolg", f"Test-Case erfolgreich aktualisiert:\n{os.path.basename(save_path)}")
             else:
                 messagebox.showerror("Fehler", "Beim Exportieren ist ein Fehler aufgetreten.")
             
@@ -1522,6 +1548,7 @@ class OfflineLaborApp:
                         "a": round(float(s['area']), 1),
                         "score": float(s.get('score', 0.0)),
                         "cv_score": round(float(s.get('cv_score', 0.0)), 1),
+                        "winner_method": str(s.get('winner_method', 'Unbekannt')), # <--- NEU
                         "edited": False
                     })
                 

@@ -551,7 +551,12 @@ darstellung_ohne_weissabgleich = yes
         oder kopiert sie aus einem bestehenden ZIP (Offline-Labor Zeitmaschine).
         """
         try:
-            with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_DEFLATED) as zf_out:
+            #ALT:
+            #with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_DEFLATED) as zf_out:
+            
+            # Wir nutzen ZIP_STORED statt ZIP_DEFLATED. Das packt die Dateien nur in 
+            # den Container ohne Kompression -> Perfekt für Git Delta-Matching von PNGs!
+            with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_STORED) as zf_out:
                 
                 # 1. Frische JSON (überschreibt alte Versionen)
                 if match_data is not None:
