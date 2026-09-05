@@ -459,8 +459,8 @@ class OfflineLaborApp:
         tk.Label(param_frame, text="--- Heuristik & Limits ---", fg="gray").pack(pady=(10, 5))
         self.make_slider(param_frame, "abriss_max_edge_percent:", self.abriss_max_edge_percent_var, 0.4, 1.5, 0.01, key="abriss_max_edge_percent")
         self.make_slider(param_frame, "abriss_base_bonus:", self.abriss_base_bonus_var, 0.0, 30.0, 0.5, key="abriss_base_bonus")
-        self.make_slider(param_frame, "early_exit_min_score:", self.early_exit_min_score_var, 100.0, 190.0, 1.0, key="early_exit_min_score")
-        self.make_slider(param_frame, "early_exit_perfect_score:", self.early_exit_perfect_score_var, 150.0, 200.0, 1.0, key="early_exit_perfect_score")
+        self.make_slider(param_frame, "early_exit_min_score:", self.early_exit_min_score_var, 100.0, 201.0, 1.0, key="early_exit_min_score")
+        self.make_slider(param_frame, "early_exit_perfect_score:", self.early_exit_perfect_score_var, 150.0, 201.0, 1.0, key="early_exit_perfect_score")
         self.make_slider(param_frame, "min_score_valid (Discard):", self.min_score_valid_var, 10.0, 150.0, 1.0, key="min_score_valid")
         tk.Label(param_frame, text="--- Anti-Doppelzählung ---", fg="gray").pack(pady=(10, 5))
         self.make_slider(param_frame, "clipping_factor_history:", self.clipping_factor_history_var, 0.05, 0.5, 0.01, key="clipping_factor_history")
@@ -964,7 +964,7 @@ class OfflineLaborApp:
             if shot['side'] == side:
                 # Grün für alte, Rot für diesen Frame
                 color = (0, 0, 255) if shot.get('is_new', False) else (0, 255, 0)
-                cv2.circle(live_img, shot['pos'], r, color, 2)
+                cv2.circle(live_img, shot['pos'], r, color, 1)
                 
                 
         # ====================================================================
