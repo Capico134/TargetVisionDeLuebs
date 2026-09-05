@@ -1893,6 +1893,10 @@ if __name__ == "__main__":
     # Wurde uns vom Live-System ein ZIP-Pfad in die Hand gedrückt?
     if len(sys.argv) > 1:
         zip_path = sys.argv[1]
+        
+        # ---> NEU: Labor zwingend im Vordergrund halten (Always-On-Top) <---
+        root.attributes('-topmost', True)
+        
         # Wir warten 100ms, damit die GUI erst kurz aufploppt, bevor sie rechnet
         root.after(100, lambda: app.load_zip(zip_path))
     else:

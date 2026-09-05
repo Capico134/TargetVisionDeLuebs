@@ -81,6 +81,10 @@ class TargetTracker:
         self.last_frame_l = None
         self.last_frame_r = None
         
+        # ---> NEU: Das Kurzzeitgedächtnis gehört in die GUI! <---
+        self.calib_feedback_left = None
+        self.calib_feedback_right = None
+        
         self.msg_left = "System gestartet. Warte..."
         self.msg_right = "System gestartet. Warte..."
         
@@ -151,8 +155,13 @@ class TargetTracker:
             else:
                 self.log(state.side, "Status: Scheibe direkt im Bild erkannt! Speichere Initial-Referenz.", True)
                 state.target_present = True
-                self.detector.set_reference_image(frame, state.side)
-                self.log(state.side, "-" * 60) # <--- NEU: Trenner für Initial-Referenz
+                
+                # ---> NEU: Rückgabewert fangen und speichern <---
+                feedback = self.detector.set_reference_image(frame, state.side)
+                if state.side == 'left': self.calib_feedback_left = feedback
+                else: self.calib_feedback_right = feedback
+                
+                self.log(state.side, "-" * 60)
             state.is_initialized = True
             return
 
@@ -205,8 +214,11 @@ class TargetTracker:
         self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         
         # 2. Alte Referenzbilder aus dem RAM retten (Die Scheibe hat sich ja nicht bewegt)
-        old_ref_l = getattr(self.detector, 'ref_left', None)
-        old_ref_r = getattr(self.detector, 'ref_right', None)
+        # Referenzen wieder einpflanzen und Feedback aktualisieren
+        if old_ref_l is not None:
+            self.calib_feedback_left = self.detector.set_reference_image(old_ref_l, 'left')
+        if old_ref_r is not None:
+            self.calib_feedback_right = self.detector.set_reference_image(old_ref_r, 'right')
         
         # 3. Engine neu starten, damit sie die neuen Config-Werte frisst
         self.detector = TargetDetector(self.config, self.dm, self.sm, self.log)
@@ -259,7 +271,9 @@ class TargetTracker:
         state.is_fortsetzung = False 
         
         if frame is not None:
-            self.detector.set_reference_image(frame, side) 
+            feedback = self.detector.set_reference_image(frame, side) 
+            if side == 'left': self.calib_feedback_left = feedback
+            else: self.calib_feedback_right = feedback
             state.target_present = True
             
         self.log(side, "MANUELLER RESET: Referenz gelockt (Pausenerkennung bleibt AKTIV).", True)
@@ -445,8 +459,9 @@ class TargetTracker:
         
         # --- VISUELLES FEEDBACK ---
         current_time = time.time()
-        for s, feedback in [('left', getattr(self.detector, 'calib_feedback_left', None)), 
-                            ('right', getattr(self.detector, 'calib_feedback_right', None))]:
+        # ---> NEU: Wir lesen unsere EIGENEN Variablen! <---
+        for s, feedback in [('left', self.calib_feedback_left), 
+                            ('right', self.calib_feedback_right)]:
             if feedback and (current_time - feedback['time'] < 8.0):
                 use_cam = self.nutze_kamera_links if s == 'left' else self.nutze_kamera_rechts
                 if use_cam:
@@ -845,24 +860,31 @@ class TargetTracker:
                 lx1, ly1, lx2, ly2 = self.btn_labor_coords
                 if lx1 <= x <= lx2 and ly1 <= y <= ly2:
                     
+                    # 1. DOPPELKLICK-SCHUTZ: Ignoriere weitere Klicks, solange das Labor lädt
+                    if getattr(self, 'labor_is_opening', False): 
+                        return
+                    self.labor_is_opening = True
+                    
                     ref_l = self.sm.state_left and self.sm.state_left.is_initialized
                     ref_r = self.sm.state_right and self.sm.state_right.is_initialized
                     
                     if not ref_l and not ref_r:
                         self.log("SYSTEM", "Labor startet leer (Noch keine Scheibe erkannt).", True)
                         subprocess.Popen(["python", "offline_labor.py"])
+                        self.labor_is_opening = False
                         return
                     
+                    # 2. LOG SETZEN UND SOFORTIGES NEUZEICHNEN ERZWINGEN!
                     self.log("SYSTEM", "Generiere Live-Snapshot und pausiere System...", True)
+                    self.update_gui(self.last_frame_l, self.last_frame_r, True)
+                    cv2.waitKey(50) # Gibt OpenCV Zeit, das Bild wirklich auf den Monitor zu schieben
                     
                     if self.nutze_kamera_links and self.last_frame_l is not None:
                         self.dm.save_debug_image("ZZZ_Live_Snapshot_left_orig", self.last_frame_l)
                     if self.nutze_kamera_rechts and self.last_frame_r is not None:
                         self.dm.save_debug_image("ZZZ_Live_Snapshot_right_orig", self.last_frame_r)
                     
-                    # ---> NEU: Warten, damit der Snapshot auch wirklich da ist! <---
                     self.dm.flush_image_queue()
-                    # ---> ELA: Wir rufen einfach die neue, zentrale Funktion auf! <---
                     match_data = self.sm.get_match_data("Live-Tuning", "Live-Tuning")
                     export_dir = "labor_export"
                     os.makedirs(export_dir, exist_ok=True)
@@ -877,8 +899,15 @@ class TargetTracker:
                     
                     if success:
                         self.log("SYSTEM", f"Labor gestartet. TargetVision pausiert!", True)
-                        # ---> ELA: .run() friert TargetVision ein, bis das Labor geschlossen wird!
-                        subprocess.run(["python", "offline_labor.py", zip_filepath])
+                        self.update_gui(self.last_frame_l, self.last_frame_r, True)
+                        cv2.waitKey(50)
+                        
+                        # 3. DER HERZSCHLAG-TRICK: Parallel starten und Fenster am Leben halten
+                        proc = subprocess.Popen(["python", "offline_labor.py", zip_filepath])
+                        
+                        while proc.poll() is None:
+                            # Hält die GUI reaktionsfähig für Windows (verhindert den "Absturz")
+                            cv2.waitKey(100) 
                         
                         # =========================================================
                         # ---> DAS AUFWACHEN (Staffelstab greifen) <---
@@ -900,6 +929,9 @@ class TargetTracker:
                     else:
                         self.log("SYSTEM", "Fehler beim ZIP-Export. Starte Labor leer.", True)
                         subprocess.Popen(["python", "offline_labor.py"])
+                        
+                    # 4. DOPPELKLICK-SCHUTZ AUFHEBEN
+                    self.labor_is_opening = False
                     return
             
             # ---> NEU: Handbuch Button <---

@@ -280,7 +280,7 @@ gesamt_anteil_am_200score = 0.667
 debug_alle_bilder_speichern = yes
 caliber_durchmesser = 4.5
 abriss_max_edge_percent = 0.75
-abriss_base_bonus = 10.0
+abriss_base_bonus = 17.0
 early_exit_min_score = 145.0
 early_exit_perfect_score = 196.0
 min_score_valid = 70.0
@@ -452,7 +452,7 @@ darstellung_ohne_weissabgleich = yes
         # --- AUTO-PATCH: Magic Numbers (v1.5.3) in die Config migrieren ---
         neue_parameter = {
             'abriss_max_edge_percent': '0.75',
-            'abriss_base_bonus': '10.0',
+            'abriss_base_bonus': '17.0',
             'early_exit_min_score': '145.0',
             'early_exit_perfect_score': '196.0',
             'min_score_valid': '70.0',
@@ -464,6 +464,16 @@ darstellung_ohne_weissabgleich = yes
                 print(f"🔧 Führe Auto-Patch aus: Füge '{key} = {default_val}' hinzu...")
                 self.update_ini_value('Erkennung', key, default_val)
                 needs_reload = True
+
+        if config.has_option('Erkennung', 'abriss_base_bonus'):
+            try:
+                current_value = config.getfloat('Erkennung', 'abriss_base_bonus')
+                if current_value < 11.0:  
+                    print(f"🔧 Führe Auto-Patch aus: Aktualisiere 'abriss_base_bonus' von {current_value} auf 17.0...")
+                    self.update_ini_value('Erkennung', 'abriss_base_bonus', '17.0')
+                    needs_reload = True
+            except ValueError:
+                pass
 
         
         if needs_reload:

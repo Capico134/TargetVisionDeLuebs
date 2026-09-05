@@ -20,10 +20,10 @@ class TargetDetector:
         self.min_hole_area = config.getint('Erkennung', 'min_hole_area')
         #self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius')
         #self.caliber_durchmesser = config.getfloat('Erkennung', 'caliber_durchmesser') #NICHT NOTWENDIG
-        self.hit_tolerance = config.getint('Erkennung', 'hit_tolerance', fallback=15)
+        self.hit_tolerance = config.getint('Erkennung', 'hit_tolerance', fallback=25)
         self.erkennungs_methode = config.get('Erkennung', 'erkennungs_methode', fallback='C').upper()
         self.hybrid_riss_faktor = config.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.175)
-        self.hybrid_sichel_faktor = config.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=0.95)
+        self.hybrid_sichel_faktor = config.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=1.05)
         self.hybrid_discard_faktor = config.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5)
         self.hough_min_faktor = config.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85)
         self.hough_max_faktor = config.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15)
@@ -31,11 +31,9 @@ class TargetDetector:
         self.max_image_change_percent = config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
         self.debug_alle_bilder_speichern = config.getboolean('Erkennung', 'debug_alle_bilder_speichern', fallback=False)
         self.ringwertung_aktiv = config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
-        
-        # Neue Parameter
         self.hough_param1 = config.getint('Erkennung', 'hough_param1', fallback=25)
         self.hough_param2 = config.getint('Erkennung', 'hough_param2', fallback=4)
-        self.morph_kernel_size = config.getint('Erkennung', 'morph_kernel_size', fallback=6)
+        self.morph_kernel_size = config.getint('Erkennung', 'morph_kernel_size', fallback=5)
         self.max_aspect_ratio = config.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5)
         # ---> NEU: Die Gewichtung für den 200-Punkte-Score <---
         self.gesamt_anteil_am_200score = config.getfloat('Erkennung', 'gesamt_anteil_am_200score', fallback=0.667)
@@ -51,8 +49,8 @@ class TargetDetector:
         # Internes Gedächtnis des Detectors
         self.ref_left = None
         self.ref_right = None
-        self.calib_feedback_left = None
-        self.calib_feedback_right = None
+        #self.calib_feedback_left = None #JETZT IN DER GUI
+        #self.calib_feedback_right = None #JETZT IN DER GUI
 
     def save_debug_image(self, name, image):
         self.dm.save_debug_image(name, image)
@@ -149,23 +147,22 @@ class TargetDetector:
             'time': time.time()
         }
         
-        if side == 'left': self.calib_feedback_left = feedback_data
-        else: self.calib_feedback_right = feedback_data
-
-        return (cx, cy)
+        # ---> NEU: Wir geben das ganze Paket sauber zurück! <---
+        return feedback_data
 
     def set_reference_image(self, frame, side):
         bgr_blur = cv2.GaussianBlur(frame, (7, 7), 0)
         if side == 'left': self.ref_left = bgr_blur
         else: self.ref_right = bgr_blur
-            
         self.save_debug_image(f"referenz_{side}", frame)
-        
+        feedback = None
         if self.ringwertung_aktiv:
-            mitte = self.ninja_kalibrierungs_check(bgr_blur, side)
-            if mitte:
-                self.sm.set_nullpunkt(side, mitte[0], mitte[1]) 
-                self.log("SYSTEM", f"🎯 Nullpunkt {side.upper()} gesetzt auf X:{int(mitte[0])} Y:{int(mitte[1])}", True)
+            feedback = self.ninja_kalibrierungs_check(bgr_blur, side)
+            if feedback:
+                self.sm.set_nullpunkt(side, feedback['cx'], feedback['cy']) 
+                self.log("SYSTEM", f"🎯 Nullpunkt {side.upper()} gesetzt auf X:{int(feedback['cx'])} Y:{int(feedback['cy'])}", True)
+        # ---> NEU: Daten an den Aufrufer (die GUI) weitergeben <---
+        return feedback
 
     def get_caliber_radius(self, side):
         """Berechnet den dynamischen Pixel-Radius anhand der optischen Linsen-Kalibrierung."""
