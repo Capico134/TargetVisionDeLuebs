@@ -597,6 +597,12 @@ class TargetDetector:
             
             # Maske für BEIDE Fälle (Treffer & Discard-Risse) updaten
             state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, thresh_new)
+            # =========================================================================
+            # ---> NEU: Nähte verschweißen! (Morph auf die fertige Gesamtmaske anwenden) <---
+            # =========================================================================
+            if self.morph_kernel_size > 0:
+                kernel_weld = np.ones((self.morph_kernel_size, self.morph_kernel_size), np.uint8)
+                state.cumulative_mask = cv2.morphologyEx(state.cumulative_mask, cv2.MORPH_CLOSE, kernel_weld)
             self.save_debug_image(f"diff_gesamt_{side}", state.cumulative_mask)
             self.save_debug_image(f"diff_letzter_treffer_{side}", thresh_new)
             self.save_debug_image(f"letzte_aufnahme_{side}", frame)
