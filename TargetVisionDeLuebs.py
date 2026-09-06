@@ -230,6 +230,11 @@ class TargetTracker:
         # 4. Alle Bilder aus dem Labor physisch auf die Festplatte legen
         for img_name, img_data in package['images'].items():
             base_name = os.path.basename(img_name)
+            
+            # ---> NEU: ZZZ-Snapshots beim Re-Import ignorieren! <---
+            if base_name.startswith("ZZZ_Live_Snapshot"):
+                continue
+                
             clean_name = base_name.replace('.png', '').replace('.jpg', '')
             self.dm.save_debug_image(clean_name, img_data)
             
@@ -918,6 +923,18 @@ class TargetTracker:
                             self.log("SYSTEM", "Live-System erfolgreich aktualisiert!", True)
                         else:
                             self.log("SYSTEM", "Labor ohne Übernahme geschlossen.", True)
+                            
+                        # =========================================================
+                        # ---> NEU: MÜLLABFUHR FÜR DIE ZZZ-SNAPSHOTS <---
+                        # =========================================================
+                        self.dm.flush_image_queue() # Erst sicherstellen, dass alles auf der Platte ist
+                        try:
+                            if hasattr(self.dm, 'DEBUG_FOLDER') and os.path.exists(self.dm.DEBUG_FOLDER):
+                                for f in os.listdir(self.dm.DEBUG_FOLDER):
+                                    if f.startswith("ZZZ_Live_Snapshot"):
+                                        os.remove(os.path.join(self.dm.DEBUG_FOLDER, f))
+                        except Exception:
+                            pass
                             
                         # Kleine Pause für die Kameras, um Puffer-Müll (Standbilder) zu leeren
                         for _ in range(10): 

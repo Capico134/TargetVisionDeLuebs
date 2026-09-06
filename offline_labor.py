@@ -649,7 +649,8 @@ class OfflineLaborApp:
             self.original_match_data = self.package_data.get('match_data')
             
             self.all_files = list(self.package_data['images'].keys())
-            self.orig_files = sorted([f for f in self.all_files if "_orig" in f])
+            # ---> DER FIX: Wir nutzen os.path.basename, um den Pfad zu ignorieren! <---
+            self.orig_files = sorted([f for f in self.all_files if "_orig" in f and not os.path.basename(f).startswith("cumulative_") and not os.path.basename(f).startswith("ZZZ_")])
             
             # ---> NEU: Prüfen, welche Kameras überhaupt Daten im Paket haben <---
             has_left = any("left" in f for f in self.all_files)
