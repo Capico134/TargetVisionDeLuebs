@@ -1812,7 +1812,13 @@ class OfflineLaborApp:
         dialog = tk.Toplevel(self.root)
         dialog.title("Erweiterte Einstellungen (Live Data-Binding)")
         dialog.geometry("550x800")
+        
+        # =========================================================================
+        # ---> DER FIX: Die Hierarchie für Windows & Tkinter klarstellen <---
+        # =========================================================================
+        dialog.transient(self.root)  # Zwingt das Unterfenster über das Labor-Hauptfenster
         dialog.attributes('-topmost', True)
+        dialog.focus_force()         # Holt den Cursor aktiv in das neue Fenster
 
         # =========================================================================
         # ---> NEU: Der universelle, wartungsfreie Hinweis-Banner <---

@@ -207,27 +207,25 @@ class TargetTracker:
         package = self.dm.import_match_package(zip_path)
         if not package: return
         
+        # =========================================================================
+        # ---> DER FIX: Wir müssen die alten Bilder ERST retten! <---
+        # =========================================================================
+        old_ref_l = self.detector.ref_left if self.detector else None
+        old_ref_r = self.detector.ref_right if self.detector else None
+        
         # 1. Config.ini NEU in den RAM laden und GUI-Variablen updaten
         self.config.read(self.dm.CONFIG_FILE, encoding='utf-8')
-        #self.caliber_radius = self.config.getint('Erkennung', 'caliber_radius')
         self.ausloeser_durch_erschuetterung = self.config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         
-        # 2. Alte Referenzbilder aus dem RAM retten (Die Scheibe hat sich ja nicht bewegt)
-        # Referenzen wieder einpflanzen und Feedback aktualisieren
+        # 2. Engine neu starten, damit sie die neuen Config-Werte frisst
+        self.detector = TargetDetector(self.config, self.dm, self.sm, self.log)
+        
+        # 3. Referenzen wieder einpflanzen und Feedback für die GUI aktualisieren
         if old_ref_l is not None:
             self.calib_feedback_left = self.detector.set_reference_image(old_ref_l, 'left')
         if old_ref_r is not None:
             self.calib_feedback_right = self.detector.set_reference_image(old_ref_r, 'right')
-        
-        # 3. Engine neu starten, damit sie die neuen Config-Werte frisst
-        self.detector = TargetDetector(self.config, self.dm, self.sm, self.log)
-        
-        # Referenzen wieder einpflanzen
-        if old_ref_l is not None:
-            self.detector.set_reference_image(old_ref_l, 'left')
-        if old_ref_r is not None:
-            self.detector.set_reference_image(old_ref_r, 'right')
 
         # 4. Alle Bilder aus dem Labor physisch auf die Festplatte legen
         for img_name, img_data in package['images'].items():
