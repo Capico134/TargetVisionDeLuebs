@@ -430,8 +430,19 @@ class TargetDetector:
                                     # ---> NEU: Dynamischer Bonus basierend auf der Riss-Größe <---
                                     # Bei einem perfekten Loch ist der Faktor ~1.0 (Bonus bleibt nah an 7.5).
                                     # Bei einem riesigen Riss (z.B. Faktor 1.8) wächst der Bonus linear mit!
+                                    
+                                    #LINEAR
+                                    #area_ratio = area / expected_area if expected_area > 0 else 1.0
+                                    #dynamic_bonus = self.abriss_base_bonus * area_ratio
+                                    
+                                    #Quadratisch
                                     area_ratio = area / expected_area if expected_area > 0 else 1.0
-                                    dynamic_bonus = self.abriss_base_bonus * area_ratio
+                                    # Nur der Bereich über 0.9 wird gewertet (verhindert negative Werte)
+                                    # Ein perfektes Loch (1.0) liefert: (1.0 - 0.9)^2 = 0.01 (Fast 0 Bonus!)
+                                    # Ein großer Riss (2.0) liefert:   (2.0 - 0.9)^2 = 1.21 (Voller Bonus)
+                                    # Ein Riesen-Riss (3.0) liefert:   (3.0 - 0.9)^2 = 4.41 (Extremer Bonus!)
+                                    faktor = max(0.0, area_ratio + 0.0) ** 2
+                                    dynamic_bonus = self.abriss_base_bonus * faktor
                                     
                                     # Haben wir exakt EINE Kante?
                                     is_single_edge = len(valid_edges) == 1
