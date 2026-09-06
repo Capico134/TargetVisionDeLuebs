@@ -1175,6 +1175,10 @@ class OfflineLaborApp:
         comp_win = tk.Toplevel(self.root)
         comp_win.title(f"📊 Integrations-Check: Live-Parameter vs. Original-Match")
         comp_win.geometry("1100x750")
+        
+        comp_win.transient(self.root)  # Zwingt das Unterfenster über das Labor-Hauptfenster
+        comp_win.attributes('-topmost', True)
+        comp_win.focus_force()         # Holt den Cursor aktiv in das neue Fenster
 
         txt = tk.Text(comp_win, font=("Consolas", 12), bg="#1e1e1e", fg="#00ff00", padx=10, pady=10)
         txt.pack(fill=tk.BOTH, expand=True)
@@ -1366,17 +1370,19 @@ class OfflineLaborApp:
             ### Start WEG
             # Setze Referenzen und Startmasken
             for s in ['left', 'right']:
-                ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
-                if ref_name:
-                    ref_img = self.get_img( ref_name)
-                    detector.set_reference_image(ref_img, s)
-                
-                startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
-                if startmask_name:
-                    startmask_bgr = self.get_img( startmask_name)
-                    startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
+                    # ---> DER FIX: Prüfen, ob die Kamera für diese Seite überhaupt noch aktiv ist! <---
                     state = d_sm.state_left if s == 'left' else d_sm.state_right
-                    state.cumulative_mask = startmask_gray
+                    if not state:
+                        continue # Kamera ist abgeschaltet -> alte Bilder im ZIP ignorieren
+                        
+                    ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
+                    if ref_name:
+                        detector.set_reference_image(self.get_img(ref_name), s)
+                    
+                    startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
+                    if startmask_name:
+                        startmask_gray = cv2.cvtColor(self.get_img(startmask_name), cv2.COLOR_BGR2GRAY)
+                        state.cumulative_mask = startmask_gray
 
             # Alle orig-Bilder durch die NEUEN Parameter jagen
             for orig_name in self.orig_files:
@@ -1553,10 +1559,15 @@ class OfflineLaborApp:
                 d_sm = StateManager(d_config, d_dm)
                 detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
 
-                for s in ['left', 'right']:
-                    ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
-                    if ref_name:
-                        detector.set_reference_image(self.get_img(ref_name), s)
+                for orig_name in self.orig_files:
+                    s = 'left' if 'left' in orig_name else 'right'
+                    
+                    # ---> DER ZWEITE FIX: Verhindert, dass alte Bilder in die tote Kamera fließen <---
+                    temp_state = d_sm.state_left if s == 'left' else d_sm.state_right
+                    if not temp_state: 
+                        continue
+                        
+                    detector.detect_new_shot(self.get_img(orig_name), s)
                     
                     startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
                     if startmask_name:

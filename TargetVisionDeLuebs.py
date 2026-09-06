@@ -215,6 +215,27 @@ class TargetTracker:
         
         # 1. Config.ini NEU in den RAM laden und GUI-Variablen updaten
         self.config.read(self.dm.CONFIG_FILE, encoding='utf-8')
+        
+        # =========================================================================
+        # ---> NEU: Hardware-Check (Muss TargetVision neu starten?) <---
+        # =========================================================================
+        neu_links = self.config.getboolean('Kameras', 'nutze_kamera_links', fallback=True)
+        neu_rechts = self.config.getboolean('Kameras', 'nutze_kamera_rechts', fallback=True)
+        
+        if neu_links != self.nutze_kamera_links or neu_rechts != self.nutze_kamera_rechts:
+            self.log("SYSTEM", "⚠️ Kamera-Änderung erkannt. Neustart erforderlich!", True)
+            
+            # Die Puffer leeren und das saubere Schließen vorbereiten
+            self.dm.flush_image_queue()
+            
+            # Deine nette Hinweis-Box
+            messagebox.showinfo("Neustart erforderlich", "Du hast die Kamera-Aktivierung in den Einstellungen geändert.\n\nDas System wird nun sicher beendet, um die Hardware-Verbindung neu aufzubauen.\nBitte starte TargetVision danach einfach neu!")
+            
+            # Setzt den Exit-Befehl für die Main-Loop und bricht das Handover ab
+            self.trigger_exit = True
+            return
+            
+        # Wenn sich an den Kameras nichts geändert hat, geht es hier ganz normal weiter:
         self.ausloeser_durch_erschuetterung = self.config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         
@@ -465,7 +486,8 @@ class TargetTracker:
         # ---> NEU: Wir lesen unsere EIGENEN Variablen! <---
         for s, feedback in [('left', self.calib_feedback_left), 
                             ('right', self.calib_feedback_right)]:
-            if feedback and (current_time - feedback['time'] < 8.0):
+            # HIER STECKT DER TIMER (15.0 Sekunden)
+            if feedback and (current_time - feedback['time'] < 15.0):
                 use_cam = self.nutze_kamera_links if s == 'left' else self.nutze_kamera_rechts
                 if use_cam:
                     offset_x = 0 if s == 'left' else scaled_w_left
@@ -487,7 +509,7 @@ class TargetTracker:
                     if feedback['show_red']:
                         cv2.ellipse(combined_view, (fb_red_cx, fb_red_cy), (fb_red_rx, fb_red_ry), 0, 0, 360, (0, 0, 255), 1, cv2.LINE_AA)
                     
-                    cv2.ellipse(combined_view, (fb_cx, fb_cy), (fb_ideal_rx, fb_ideal_ry), 0, 0, 360, (0, 255, 0), 2, cv2.LINE_AA)
+                    cv2.ellipse(combined_view, (fb_cx, fb_cy), (fb_ideal_rx, fb_ideal_ry), 0, 0, 360, (0, 255, 0), 1, cv2.LINE_AA)
         
         # --- BUTTON-LEISTE OBEN RECHTS ---
         gap = 10     # Abstand zwischen den Buttons
@@ -822,15 +844,22 @@ class TargetTracker:
                         backup_mask_l = self.sm.state_left.cumulative_mask.copy() if (self.nutze_kamera_links and self.sm.state_left and self.sm.state_left.cumulative_mask is not None) else None
                         backup_mask_r = self.sm.state_right.cumulative_mask.copy() if (self.nutze_kamera_rechts and self.sm.state_right and self.sm.state_right.cumulative_mask is not None) else None
                         
-                        # =========================================================
-                        # ---> DER FIX: Wir holen uns das letzte PERFEKTE Bild! <---
-                        # =========================================================
-                        # Wir schauen, ob die Engine ein sauberes Schuss-Bild hat. Wenn nicht, nehmen wir die Referenz.
-                        best_orig_l = self.dm.debug_images.get("letzte_aufnahme_left", self.dm.debug_images.get("referenz_left"))
-                        best_orig_r = self.dm.debug_images.get("letzte_aufnahme_right", self.dm.debug_images.get("referenz_right"))
-                        
-                        # ---> NEU: Warten bis alle Bilder sicher auf der Platte sind <---
+                        # ---> NEU: Erst warten, bis der Koch alle Bilder sicher auf der Platte hat <---
                         self.dm.flush_image_queue()
+                        
+                        # =========================================================
+                        # ---> DER FIX: Wir holen uns das letzte PERFEKTE Bild von der Festplatte! <---
+                        # =========================================================
+                        # Links
+                        path_l = os.path.join(self.dm.DEBUG_FOLDER, "letzte_aufnahme_left.png")
+                        if not os.path.exists(path_l): path_l = os.path.join(self.dm.DEBUG_FOLDER, "referenz_left.png")
+                        best_orig_l = cv2.imread(path_l) if os.path.exists(path_l) else None
+
+                        # Rechts
+                        path_r = os.path.join(self.dm.DEBUG_FOLDER, "letzte_aufnahme_right.png")
+                        if not os.path.exists(path_r): path_r = os.path.join(self.dm.DEBUG_FOLDER, "referenz_right.png")
+                        best_orig_r = cv2.imread(path_r) if os.path.exists(path_r) else None
+                        
                         if self.sm.save_current_match(player_name_l, player_name_r):
                             self.log("SYSTEM", "Match erfolgreich gespeichert!", True)
                             
