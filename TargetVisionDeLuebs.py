@@ -822,6 +822,13 @@ class TargetTracker:
                         backup_mask_l = self.sm.state_left.cumulative_mask.copy() if (self.nutze_kamera_links and self.sm.state_left and self.sm.state_left.cumulative_mask is not None) else None
                         backup_mask_r = self.sm.state_right.cumulative_mask.copy() if (self.nutze_kamera_rechts and self.sm.state_right and self.sm.state_right.cumulative_mask is not None) else None
                         
+                        # =========================================================
+                        # ---> DER FIX: Wir holen uns das letzte PERFEKTE Bild! <---
+                        # =========================================================
+                        # Wir schauen, ob die Engine ein sauberes Schuss-Bild hat. Wenn nicht, nehmen wir die Referenz.
+                        best_orig_l = self.dm.debug_images.get("letzte_aufnahme_left", self.dm.debug_images.get("referenz_left"))
+                        best_orig_r = self.dm.debug_images.get("letzte_aufnahme_right", self.dm.debug_images.get("referenz_right"))
+                        
                         # ---> NEU: Warten bis alle Bilder sicher auf der Platte sind <---
                         self.dm.flush_image_queue()
                         if self.sm.save_current_match(player_name_l, player_name_r):
@@ -836,18 +843,18 @@ class TargetTracker:
                                 self.sm.state_left.cumulative_mask = backup_mask_l
                                 if backup_mask_l is not None:
                                     self.dm.save_debug_image("cumulative_startmask_left", backup_mask_l)
-                                    # ---> NEU: Das echte Kamerabild als Optik-Referenz mitspeichern <---
-                                    if self.last_frame_l is not None:
-                                        self.dm.save_debug_image("cumulative_orig_left", self.last_frame_l)
+                                    # ---> NEU: Das garantiert saubere Bild als Optik-Referenz mitspeichern <---
+                                    if best_orig_l is not None:
+                                        self.dm.save_debug_image("cumulative_orig_left", best_orig_l)
                                     self.sm.state_left.is_fortsetzung = True  # Flag für JSON setzen
                                     
                             if self.nutze_kamera_rechts and self.sm.state_right:
                                 self.sm.state_right.cumulative_mask = backup_mask_r
                                 if backup_mask_r is not None:
                                     self.dm.save_debug_image("cumulative_startmask_right", backup_mask_r)
-                                    # ---> NEU: Das echte Kamerabild als Optik-Referenz mitspeichern <---
-                                    if self.last_frame_r is not None:
-                                        self.dm.save_debug_image("cumulative_orig_right", self.last_frame_r)
+                                    # ---> NEU: Das garantiert saubere Bild als Optik-Referenz mitspeichern <---
+                                    if best_orig_r is not None:
+                                        self.dm.save_debug_image("cumulative_orig_right", best_orig_r)
                                     self.sm.state_right.is_fortsetzung = True
                             
                             self.log("SYSTEM", "Leere Kamera-Puffer nach Pause...")
