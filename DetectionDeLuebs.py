@@ -46,6 +46,7 @@ class TargetDetector:
         self.clipping_factor_history = config.getfloat('Erkennung', 'clipping_factor_history', fallback=0.15)
         self.clipping_factor_current = config.getfloat('Erkennung', 'clipping_factor_current', fallback=0.95)
         self.max_treffer_je_frame = config.getint('Erkennung', 'max_treffer_je_frame', fallback=0)
+        self.randaufschlag_cumulative = config.getint('Erkennung', 'randaufschlag_cumulative', fallback=0)
 
         # Internes Gedächtnis des Detectors
         self.ref_left = None
@@ -368,7 +369,7 @@ class TargetDetector:
 
                     # 3. DEEP ANALYSIS (Hough & Abrisskante)
                     if needs_deep_analysis:
-                        self.log(side, "🛠️ Form inperfekt. Aktiviere Deep-Analysis (Hough & Abrisskante)...")
+                        self.log(side, "🔬 >>> DEEP-ANALYSIS AKTIV <<< (Form inperfekt: Hough & Abrisskante starten...)")
                         
                         mask_for_deep = np.zeros_like(thresh_new)
                         cv2.drawContours(mask_for_deep, [cnt], -1, 255, -1)
@@ -572,6 +573,7 @@ class TargetDetector:
                         'winner_method': winning_method # <--- NEU
                     })
                     self.log(side, f"-> NEUES LOCH BESTÄTIGT: Pos ({cx}, {cy}) | Fläche {area:.1f}px | Score {final_shot_score:.1f}")
+                    self.log(side, "------------------------------------------------------------")
                     
         # =========================================================================
         # ---> NEU: Filter für maximale Trefferanzahl je Frame (nach Fläche) <---
@@ -605,8 +607,8 @@ class TargetDetector:
                     # ---> NEU: Schuss-Nummer ermitteln, um das Log mit dem GUI-HUD zu synchronisieren <---
                     shot_num = sum(1 for s in self.sm.shots if s['side'] == side)
                     
-                    # ---> NEU: Perfekte Log-Ausgabe mit ID, Koordinaten und 3 Nachkommastellen beim Rohwert <---
-                    self.log(side, f"💥 Schuss #{shot_num} | Pos X:{int(sd['cx'])}, Y:{int(sd['cy'])} | {shot['score']:.1f} Ringe (Roh: {shot.get('raw_score', 0.0):.3f})")
+                    # ---> NEU: Fette Log-Ausgabe inkl. CV-Score und Fläche! <---
+                    self.log(side, f"█ 💥 SCHUSS #{shot_num} 💥 █ Pos X:{int(sd['cx'])}, Y:{int(sd['cy'])} | {shot['score']:.1f} Ringe (Roh: {shot.get('raw_score', 0.0):.3f}) | CV-Score: {sd.get('score', 0.0):.1f} | Fläche: {sd.get('area', 0.0):.1f}px")
                     
                 self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!", True)
             
@@ -618,11 +620,28 @@ class TargetDetector:
             #if self.morph_kernel_size > 0:
             #    kernel_weld = np.ones((self.morph_kernel_size, self.morph_kernel_size), np.uint8)
             #    state.cumulative_mask = cv2.morphologyEx(state.cumulative_mask, cv2.MORPH_CLOSE, kernel_weld)
+            
+            
+            
+            # =========================================================================
+            # ---> NEU: Der "Panzer-Sticker" (randaufschlag_cumulative als PIXEL) <---
+            # =========================================================================
+            if self.randaufschlag_cumulative > 0:
+                # Magische Umrechnung: 1 Pixel = 3x3 Kernel, 2 Pixel = 5x5 Kernel, etc.
+                k_size = (self.randaufschlag_cumulative * 2) + 1
+                kernel_sticker = np.ones((k_size, k_size), np.uint8)
+                sticker_to_add = cv2.dilate(thresh_new, kernel_sticker, iterations=1)
+            else:
+                sticker_to_add = thresh_new
+                
+            # Maske für BEIDE Fälle (Treffer & Discard-Risse) updaten
+            state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, sticker_to_add)
+            
             self.save_debug_image(f"diff_gesamt_{side}", state.cumulative_mask)
             self.save_debug_image(f"diff_letzter_treffer_{side}", thresh_new)
             self.save_debug_image(f"letzte_aufnahme_{side}", frame)
             
-            # ---> NEU: Die gesammelten Sieger-Kanten für das Offline-Labor bereitstellen <--- #######################################################################################################################################################################################################
+            # ---> WIEDER DA: Die gesammelten Sieger-Kanten für das Offline-Labor bereitstellen <---
             self.save_debug_image(f"letzte_abrisskante_{side}", frame_abrisskanten)
             
             # Bei puren Masken-Updates speichern wir keine separaten Schuss_XX Dateien ab
@@ -634,6 +653,7 @@ class TargetDetector:
                 self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff_gesamt", state.cumulative_mask)
 
             return True if new_shots_found_this_frame else False
+            #return True if new_shots_found_this_frame else False
         else:
             if self.ausloeser_durch_erschuetterung:
                 self.log(side, "Keine validen neuen Treffer im Bild gefunden.")

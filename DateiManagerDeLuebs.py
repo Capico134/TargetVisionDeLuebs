@@ -288,6 +288,7 @@ clipping_factor_history = 0.15
 clipping_factor_current = 0.95
 # 0 = alle Treffer; alle anderen Zahlenwerte = nur die ersten x Treffer mit der größten Fläche werden gewertet
 max_treffer_je_frame = 0
+randaufschlag_cumulative = 0
 
 [Timing]
 # Bildwiederholrate/Haupttakt in Millisekunden (33 ms entspricht ca. 30 FPS).
@@ -481,6 +482,11 @@ darstellung_ohne_weissabgleich = yes
         if not config.has_option('Erkennung', 'max_treffer_je_frame'):
             print("🔧 Führe Auto-Patch aus: Füge 'max_treffer_je_frame = 0' hinzu...")
             self.update_ini_value('Erkennung', 'max_treffer_je_frame', '0')
+            needs_reload = True
+
+        if not config.has_option('Erkennung', 'randaufschlag_cumulative'):
+            print("🔧 Führe Auto-Patch aus: Füge 'randaufschlag_cumulative = 0' hinzu...")
+            self.update_ini_value('Erkennung', 'randaufschlag_cumulative', '0')
             needs_reload = True
 
 

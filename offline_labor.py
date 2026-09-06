@@ -184,6 +184,7 @@ class OfflineLaborApp:
         self.hough_param2_var = tk.IntVar(value=4)
         # ---> NEU <---
         self.morph_kernel_var = tk.IntVar(value=5)
+        self.randaufschlag_cumulative_var = tk.IntVar(value=0) # <--- NEU: Default 0
         self.max_aspect_ratio_var = tk.DoubleVar(value=3.5)
         # ---> NEU <---
         self.gesamt_anteil_am_200score_var = tk.DoubleVar(value=0.667)
@@ -355,7 +356,16 @@ class OfflineLaborApp:
         self.image_frame = tk.LabelFrame(main_frame, text=" Live-Labor (Mausrad = Zoom | Linksklick = Bewegen | Rechtsklick = Reset) ", bg="#222222", fg="white")
         self.image_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
         
-        self.lbl_image = tk.Label(self.image_frame, text="Warte auf ZIP-Datei...", bg="#222222", fg="gray", font=("Arial", 14))
+        # =========================================================================
+        # ---> NEU: Das PanedWindow für den flexiblen Trennstrich (Doppelpfeil) <---
+        # =========================================================================
+        self.paned_window = tk.PanedWindow(self.image_frame, orient=tk.VERTICAL, sashwidth=9, sashrelief=tk.RAISED, bg="#555555")
+        self.paned_window.pack(fill=tk.BOTH, expand=True)
+
+        # Ein extra Container für das Bild, damit unser freies Verschieben (place) weiterhin klappt
+        self.img_container = tk.Frame(self.paned_window, bg="#222222")
+        
+        self.lbl_image = tk.Label(self.img_container, text="Warte auf ZIP-Datei...", bg="#222222", fg="gray", font=("Arial", 14))
         self.lbl_image.place(x=0, y=0, anchor=tk.NW)
         
         # ---> NEU: Maus-Events binden <---
@@ -371,8 +381,13 @@ class OfflineLaborApp:
         self.lbl_image.bind('<ButtonPress-1>', self.on_drag_start)
         self.lbl_image.bind('<B1-Motion>', self.on_drag_motion)
         self.lbl_image.bind('<Button-3>', self.reset_view) # Rechtsklick = Reset
-        self.log_text = tk.Text(self.image_frame, height=18, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
-        self.log_text.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Das Log-Fenster (Standard-Höhe etwas kleiner, da man es ja nun größer ziehen kann)
+        self.log_text = tk.Text(self.paned_window, height=12, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
+        
+        # ---> Beide Elemente in den Splitter werfen <---
+        self.paned_window.add(self.img_container, stretch="always") # Das Bild bekommt den restlichen Platz
+        self.paned_window.add(self.log_text, stretch="never")       # Das Textfeld hält seine Form, kann aber gezogen werden
         # -------------------------------------------
         
         # RECHTS: Steuerpult (Nur noch EINMAL definiert!)
@@ -484,6 +499,8 @@ class OfflineLaborApp:
         self.make_slider(param_frame, "hough_param1 (Kanten):", self.hough_param1_var, 10, 100, key="hough_param1")
         self.make_slider(param_frame, "hough_param2 (Strenge):", self.hough_param2_var, 1, 20, key="hough_param2")
         tk.Label(param_frame, text="--- Bild-Filterung ---", fg="gray").pack(pady=(10, 5))
+        # ---> NEU: Der Panzer-Sticker Slider (echte Pixel, ohne odd_only-Zwang!) <---
+        self.make_slider(param_frame, "randaufschlag_cumulative:", self.randaufschlag_cumulative_var, 0, 10, key="randaufschlag_cumulative")
         # ---> NEU: odd_only=True aktiviert die Sperre! <---
         self.make_slider(param_frame, "morph_kernel_size:", self.morph_kernel_var, 0, 15, key="morph_kernel_size", odd_only=True)
         self.make_slider(param_frame, "max_aspect_ratio (Sichel):", self.max_aspect_ratio_var, 1.5, 6.0, 0.1, key="max_aspect_ratio")
