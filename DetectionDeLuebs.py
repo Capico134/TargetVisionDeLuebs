@@ -570,8 +570,16 @@ class TargetDetector:
                             # ---> NEU: Das Sichel-Duell! Wer hat den höheren Weißanteil? <---
                             if final_shot_score > existing_shot['score']:
                                 self.log(side, f"🔄 Sichel-Duell: Neues Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) schlägt altes Fragment ({existing_shot['score']:.1f}).")
-                                # Überschreibe den Verlierer mit dem neuen, besseren Kandidaten
-                                new_shots_found_this_frame[i] = {'cx': cx, 'cy': cy, 'area': area, 'score': final_shot_score}
+                                
+                                # ---> DER FIX: MEC-Radius für den neuen Duell-Sieger berechnen und anhängen! <---
+                                _, new_mec_radius = cv2.minEnclosingCircle(cnt)
+                                
+                                # Überschreibe den Verlierer mit dem neuen, besseren Kandidaten inkl. Radius!
+                                new_shots_found_this_frame[i] = {
+                                    'cx': cx, 'cy': cy, 'area': area, 'score': final_shot_score,
+                                    'winner_method': winning_method,
+                                    'mec_radius': new_mec_radius
+                                }
                             else:
                                 self.log(side, f"⚠️ Treffer ignoriert: Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) verliert Sichel-Duell gegen besseres Fragment ({existing_shot['score']:.1f})!")
                             
@@ -579,9 +587,12 @@ class TargetDetector:
                             break
 
                 if is_new:
+                    # ---> DER FIX: Wir ermitteln den echten MEC-Radius für das Log <---
+                    _, mec_radius = cv2.minEnclosingCircle(cnt)
                     new_shots_found_this_frame.append({
                         'cx': cx, 'cy': cy, 'area': area, 'score': final_shot_score,
-                        'winner_method': winning_method # <--- NEU
+                        'winner_method': winning_method,
+                        'mec_radius': mec_radius # <--- Zettel mit dem Radius anheften!
                     })
                     self.log(side, f"-> NEUES LOCH BESTÄTIGT: Pos ({cx}, {cy}) | Fläche {area:.1f}px | Score {final_shot_score:.1f}")
                     self.log(side, "------------------------------------------------------------")
@@ -613,13 +624,20 @@ class TargetDetector:
 
                 for sd in new_shots_found_this_frame:
                     shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'], cv_score=sd.get('score', 0.0))
-                    shot['winner_method'] = sd.get('winner_method', 'Unbekannt') # <--- NEU: Direkt an den Schuss heften!
+                    shot['winner_method'] = sd.get('winner_method', 'Unbekannt') 
                     
-                    # ---> NEU: Schuss-Nummer ermitteln, um das Log mit dem GUI-HUD zu synchronisieren <---
                     shot_num = sum(1 for s in self.sm.shots if s['side'] == side)
                     
-                    # ---> NEU: Fette Log-Ausgabe inkl. CV-Score und Fläche! <---
-                    self.log(side, f"█ 💥 SCHUSS #{shot_num} 💥 █ Pos X:{int(sd['cx'])}, Y:{int(sd['cy'])} | {shot['score']:.1f} Ringe (Roh: {shot.get('raw_score', 0.0):.3f}) | CV-Score: {sd.get('score', 0.0):.1f} | Fläche: {sd.get('area', 0.0):.1f}px")
+                    seite_de = "links" if side == 'left' else "rechts"
+                    px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_de}')
+                    px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_de}')
+                    avg_px_pro_mm = (px_x + px_y) / 2.0
+                    
+                    # ---> DER FIX: Wir greifen uns unseren Zettel mit dem MEC-Radius! <---
+                    mec_radius = sd.get('mec_radius', 0.0)
+                    durchmesser_mm = (mec_radius * 2) / avg_px_pro_mm if avg_px_pro_mm > 0 else 0
+                    
+                    self.log(side, f"█ 💥 SCHUSS #{shot_num} 💥 █ Pos X:{int(sd['cx'])}, Y:{int(sd['cy'])} | {shot['score']:.1f} Ringe (Roh: {shot.get('raw_score', 0.0):.3f}) | CV-Score: {sd.get('score', 0.0):.1f} | Fläche: {sd.get('area', 0.0):.1f}px | MEC-Ø: {durchmesser_mm:.2f}mm")
                     
                 self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!", True)
             
