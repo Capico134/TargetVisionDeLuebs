@@ -649,8 +649,8 @@ class OfflineLaborApp:
             self.original_match_data = self.package_data.get('match_data')
             
             self.all_files = list(self.package_data['images'].keys())
-            # ---> DER FIX: Wir nutzen os.path.basename, um den Pfad zu ignorieren! <---
-            self.orig_files = sorted([f for f in self.all_files if "_orig" in f and not os.path.basename(f).startswith("cumulative_") and not os.path.basename(f).startswith("ZZZ_")])
+            # ---> DER FIX: Nur cumulative_orig filtern! ZZZ_ wird für die Live-Tuning Bridge zwingend gebraucht! <---
+            self.orig_files = sorted([f for f in self.all_files if "_orig" in f and not os.path.basename(f).startswith("cumulative_")])
             
             # ---> NEU: Prüfen, welche Kameras überhaupt Daten im Paket haben <---
             has_left = any("left" in f for f in self.all_files)
