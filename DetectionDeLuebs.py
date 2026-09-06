@@ -257,6 +257,7 @@ class TargetDetector:
         # 2. DANN den Morph-Filter auf die rohen NEUEN Fragmente anwenden!
         k_size = self.morph_kernel_size
         if k_size > 0:
+            #print(f"k_size {k_size}")
             kernel = np.ones((k_size, k_size), np.uint8)
             thresh_new = cv2.morphologyEx(thresh_new, cv2.MORPH_CLOSE, kernel)
 
@@ -614,9 +615,9 @@ class TargetDetector:
             # =========================================================================
             # ---> NEU: Nähte verschweißen! (Morph auf die fertige Gesamtmaske anwenden) <---
             # =========================================================================
-            if self.morph_kernel_size > 0:
-                kernel_weld = np.ones((self.morph_kernel_size, self.morph_kernel_size), np.uint8)
-                state.cumulative_mask = cv2.morphologyEx(state.cumulative_mask, cv2.MORPH_CLOSE, kernel_weld)
+            #if self.morph_kernel_size > 0:
+            #    kernel_weld = np.ones((self.morph_kernel_size, self.morph_kernel_size), np.uint8)
+            #    state.cumulative_mask = cv2.morphologyEx(state.cumulative_mask, cv2.MORPH_CLOSE, kernel_weld)
             self.save_debug_image(f"diff_gesamt_{side}", state.cumulative_mask)
             self.save_debug_image(f"diff_letzter_treffer_{side}", thresh_new)
             self.save_debug_image(f"letzte_aufnahme_{side}", frame)

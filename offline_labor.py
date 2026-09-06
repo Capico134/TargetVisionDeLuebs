@@ -183,7 +183,7 @@ class OfflineLaborApp:
         self.hough_param1_var = tk.IntVar(value=25)
         self.hough_param2_var = tk.IntVar(value=4)
         # ---> NEU <---
-        self.morph_kernel_var = tk.IntVar(value=6)
+        self.morph_kernel_var = tk.IntVar(value=5)
         self.max_aspect_ratio_var = tk.DoubleVar(value=3.5)
         # ---> NEU <---
         self.gesamt_anteil_am_200score_var = tk.DoubleVar(value=0.667)
@@ -207,12 +207,16 @@ class OfflineLaborApp:
         
         self.setup_ui()
         
-    def make_slider(self, parent, label_text, tk_var, from_, to_, res=1, section="Erkennung", key=None):
+    # ---> NEU: Parameter 'odd_only' hinzugefügt <---
+    def make_slider(self, parent, label_text, tk_var, from_, to_, res=1, section="Erkennung", key=None, odd_only=False):
         """Hilfsfunktion für Slider mit direkter Eingabe, Reset und Live-Data-Binding"""
-        # ---> NEU: Jeder Slider meldet seine Variable automatisch beim System an! <---
+        # Jeder Slider meldet seine Variable automatisch beim System an!
         if key:
             self.registered_sliders[key] = tk_var  
-        
+            
+        if odd_only:
+            tk_var._last_val = tk_var.get() # Den Startwert als Basis merken
+            
         frame = tk.Frame(parent)
         frame.pack(fill=tk.X, pady=2)
         
@@ -227,8 +231,29 @@ class OfflineLaborApp:
         entry.pack(side=tk.RIGHT, padx=(5, 0))
         entry.insert(0, str(tk_var.get()))
         
+        # =====================================================================
+        # ---> DER FIX: Slider-Logik komplett vom Trace entkoppelt! <---
+        # =====================================================================
+        def scale_cmd(val_str):
+            if odd_only:
+                try:
+                    v = int(float(val_str))
+                    if v > 0 and v % 2 == 0:
+                        # Rausfinden, in welche Richtung der Slider bewegt wurde!
+                        last = getattr(tk_var, '_last_val', v)
+                        if v < last:
+                            new_v = v - 1 # Nach links gezogen
+                        else:
+                            new_v = v + 1 # Nach rechts gezogen
+                        tk_var.set(new_v)
+                        
+                    tk_var._last_val = tk_var.get()
+                except ValueError:
+                    pass
+            self.on_param_change()
+            
         scale = tk.Scale(frame, from_=from_, to_=to_, resolution=res, orient=tk.HORIZONTAL, 
-                         variable=tk_var, command=self.on_param_change)
+                         variable=tk_var, command=scale_cmd)
         scale.pack(side=tk.RIGHT, fill=tk.X, expand=True)
         
         # ---> NEU: Wert erst bei Enter oder Klick woanders übernehmen <---
@@ -240,9 +265,16 @@ class OfflineLaborApp:
                 else:
                     val = float(entry.get())
                     
+                # Auch bei manueller Eingabe die geraden Zahlen verbieten!
+                if odd_only and isinstance(tk_var, tk.IntVar):
+                    if val > 0 and val % 2 == 0:
+                        val += 1 # Eingetippte gerade Zahlen einfach aufrunden
+                        
                 # Nur neu berechnen, wenn sich die Zahl WIRKLICH geändert hat!
                 if val != tk_var.get():
                     tk_var.set(val)
+                    if odd_only:
+                        tk_var._last_val = val
                     self.on_param_change(force=True)
                     
             except ValueError:
@@ -251,10 +283,6 @@ class OfflineLaborApp:
             # Nach der Übernahme formatieren wir das Feld wieder sauber 
             entry.delete(0, tk.END)
             entry.insert(0, str(tk_var.get()))
-            
-            # ---> DER FIX: Fokus nur bei 'Enter' klauen, nicht bei Mausklicks! <---
-            #if event and getattr(event, 'keysym', '') == 'Return':
-            #    self.root.focus()
 
         # Löst aus, wenn Enter gedrückt wird oder das Textfeld den Fokus verliert
         entry.bind('<Return>', apply_entry_val)
@@ -284,6 +312,8 @@ class OfflineLaborApp:
             var_key = str(tk_var)
             if hasattr(self, 'original_values') and var_key in self.original_values:
                 tk_var.set(self.original_values[var_key])
+                if odd_only:
+                    tk_var._last_val = tk_var.get()
                 self.on_param_change(force=True)
             return "break" 
                 
@@ -454,7 +484,8 @@ class OfflineLaborApp:
         self.make_slider(param_frame, "hough_param1 (Kanten):", self.hough_param1_var, 10, 100, key="hough_param1")
         self.make_slider(param_frame, "hough_param2 (Strenge):", self.hough_param2_var, 1, 20, key="hough_param2")
         tk.Label(param_frame, text="--- Bild-Filterung ---", fg="gray").pack(pady=(10, 5))
-        self.make_slider(param_frame, "morph_kernel_size:", self.morph_kernel_var, 0, 15, key="morph_kernel_size")
+        # ---> NEU: odd_only=True aktiviert die Sperre! <---
+        self.make_slider(param_frame, "morph_kernel_size:", self.morph_kernel_var, 0, 15, key="morph_kernel_size", odd_only=True)
         self.make_slider(param_frame, "max_aspect_ratio (Sichel):", self.max_aspect_ratio_var, 1.5, 6.0, 0.1, key="max_aspect_ratio")
         tk.Label(param_frame, text="--- Score-Gewichtung ---", fg="gray").pack(pady=(10, 5))
         self.make_slider(param_frame, "gesamt_anteil (Raw):", self.gesamt_anteil_am_200score_var, 0.1, 0.9, 0.001, key="gesamt_anteil_am_200score")
