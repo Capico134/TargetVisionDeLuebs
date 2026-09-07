@@ -633,7 +633,6 @@ class TargetDetector:
                     px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_de}')
                     avg_px_pro_mm = (px_x + px_y) / 2.0
                     
-                    # ---> DER FIX: Wir greifen uns unseren Zettel mit dem MEC-Radius! <---
                     mec_radius = sd.get('mec_radius', 0.0)
                     durchmesser_mm = (mec_radius * 2) / avg_px_pro_mm if avg_px_pro_mm > 0 else 0
                     
@@ -641,22 +640,18 @@ class TargetDetector:
                     
                 self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!", True)
             
+            # =========================================================================
+            # ---> NEU: Aussagekräftige Log-Ausgabe für stille Masken-Updates <---
+            # =========================================================================
+            elif update_mask_only:
+                pixels_added = cv2.countNonZero(thresh_new)
+                self.log(side, f"🛡️ Masken-Update (Ohne Treffer): {len(contours)} Kontur(en) / {pixels_added} Pixel in die Basismaske integriert.")
+            
             # Maske für BEIDE Fälle (Treffer & Discard-Risse) updaten
             state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, thresh_new)
-            # =========================================================================
-            # ---> NEU: Nähte verschweißen! (Morph auf die fertige Gesamtmaske anwenden) <---
-            # =========================================================================
-            #if self.morph_kernel_size > 0:
-            #    kernel_weld = np.ones((self.morph_kernel_size, self.morph_kernel_size), np.uint8)
-            #    state.cumulative_mask = cv2.morphologyEx(state.cumulative_mask, cv2.MORPH_CLOSE, kernel_weld)
             
-            
-            
-            # =========================================================================
-            # ---> NEU: Der "Panzer-Sticker" (randaufschlag_cumulative als PIXEL) <---
-            # =========================================================================
+            # Der "Panzer-Sticker" (randaufschlag_cumulative als PIXEL)
             if self.randaufschlag_cumulative > 0:
-                # Magische Umrechnung: 1 Pixel = 3x3 Kernel, 2 Pixel = 5x5 Kernel, etc.
                 k_size = (self.randaufschlag_cumulative * 2) + 1
                 kernel_sticker = np.ones((k_size, k_size), np.uint8)
                 sticker_to_add = cv2.dilate(thresh_new, kernel_sticker, iterations=1)
@@ -670,19 +665,28 @@ class TargetDetector:
             self.save_debug_image(f"diff_letzter_treffer_{side}", thresh_new)
             self.save_debug_image(f"letzte_aufnahme_{side}", frame)
             
-            # ---> WIEDER DA: Die gesammelten Sieger-Kanten für das Offline-Labor bereitstellen <---
+            # Die gesammelten Sieger-Kanten für das Offline-Labor bereitstellen
             self.save_debug_image(f"letzte_abrisskante_{side}", frame_abrisskanten)
             
-            # Bei puren Masken-Updates speichern wir keine separaten Schuss_XX Dateien ab
-            if self.debug_alle_bilder_speichern and new_shots_found_this_frame:
+            # =========================================================================
+            # ---> NEU: Bilder intelligent abspeichern (Diät für Discards) <---
+            # =========================================================================
+            if self.debug_alle_bilder_speichern:
                 ts = datetime.now().strftime('%H%M%S_%f')[:-3]
-                shot_idx = sum(1 for s in self.sm.shots if s['side'] == side) 
-                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff", thresh_new)
-                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_orig", frame)
-                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff_gesamt", state.cumulative_mask)
+                
+                if new_shots_found_this_frame:
+                    # Bei echten Treffern speichern wir das volle Paket für das Labor
+                    shot_idx = sum(1 for s in self.sm.shots if s['side'] == side) 
+                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff", thresh_new)
+                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_orig", frame)
+                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff_gesamt", state.cumulative_mask)
+                    
+                elif update_mask_only:
+                    # Bei Fehlalarmen speichern wir NUR das winzige S/W-Diff-Bild als Info
+                    self.save_debug_image(f"Info_Discard_{side}_{ts}_diff", thresh_new)
 
             return True if new_shots_found_this_frame else False
-            #return True if new_shots_found_this_frame else False
+            
         else:
             if self.ausloeser_durch_erschuetterung:
                 self.log(side, "Keine validen neuen Treffer im Bild gefunden.")
