@@ -199,8 +199,6 @@ class OfflineLaborApp:
         self.max_treffer_je_frame_var = tk.IntVar(value=0)
         # ---> NEU: Farb-Bonus System <---
         self.farb_bonus_aktiv_var = tk.BooleanVar(value=True)
-        self.farb_bonus_max_var = tk.DoubleVar(value=1.5)
-        self.farb_bonus_min_var = tk.DoubleVar(value=0.5)
         self.farb_bonus_limit_var = tk.DoubleVar(value=150.0)
         self.farb_bonus_kurve_var = tk.DoubleVar(value=2.00)
         
@@ -334,6 +332,11 @@ class OfflineLaborApp:
         top_frame.pack(fill=tk.X)
         
         tk.Button(top_frame, text="📦 ZIP-Paket laden", command=self.load_zip, font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        
+        # ---> NEU: Der Pipetten-Button <---
+        self.color_picker_active = False
+        self.btn_pick_color = tk.Button(top_frame, text="🎨 Wandfarbe picken", command=self.toggle_color_picker, bg="#f39c12", fg="white", font=("Arial", 10, "bold"))
+        self.btn_pick_color.pack(side=tk.LEFT, padx=(20, 0))
         
         # ---> lbl_file wurde hier komplett gelöscht! <---
         
@@ -538,10 +541,7 @@ class OfflineLaborApp:
                 parser.set('Erkennung', "farb_bonus_aktiv", val_str)
                 self.on_param_change()
         self.farb_bonus_aktiv_var.trace_add("write", sync_farb_config)
-        
-        self.make_slider(param_frame, "farb_bonus_max (Boost):", self.farb_bonus_max_var, 1.0, 3.0, 0.1, key="farb_bonus_max")
-        self.make_slider(param_frame, "farb_bonus_min (Strafe):", self.farb_bonus_min_var, 0.1, 1.0, 0.05, key="farb_bonus_min")
-        self.make_slider(param_frame, "farb_bonus_limit (Distanz):", self.farb_bonus_limit_var, 50.0, 300.0, 5.0, key="farb_bonus_limit")
+        self.make_slider(param_frame, "farb_bonus_limit (Distanz):", self.farb_bonus_limit_var, 50.0, 500.0, 5.0, key="farb_bonus_limit")
         self.make_slider(param_frame, "farb_bonus_kurve (Exponent):", self.farb_bonus_kurve_var, 1.0, 5.0, 0.1, key="farb_bonus_kurve")
         
         
@@ -861,13 +861,69 @@ class OfflineLaborApp:
             self.lbl_image.config(image=self.tk_image)
 
     def on_drag_start(self, event):
-        """Merkt sich die Startkoordinaten beim Klicken"""
-        # Wir nutzen x_root/y_root, weil das die absoluten Bildschirmkoordinaten sind.
-        # So zittert das Bild nicht, wenn sich das Label unter der Maus wegbewegt.
+        """Merkt sich die Startkoordinaten beim Klicken ODER pickt die Wandfarbe"""
+        # ---> NEU: Wenn die Pipette aktiv ist, fangen wir den Klick ab! <---
+        if getattr(self, 'color_picker_active', False):
+            self.pick_color_from_event(event)
+            self.toggle_color_picker() # Nach dem Klick sofort wieder deaktivieren
+            return
+
+        # Normales Verhalten (Bild verschieben)
         self.drag_start_x = event.x_root
         self.drag_start_y = event.y_root
         self.start_pan_x = self.pan_x
         self.start_pan_y = self.pan_y
+
+    def toggle_color_picker(self):
+        """Schaltet den Modus um und ändert das Aussehen des Buttons/Mauszeigers"""
+        self.color_picker_active = not getattr(self, 'color_picker_active', False)
+        if self.color_picker_active:
+            self.btn_pick_color.config(bg="#e74c3c", text="🔴 Klick ins Bild...")
+            self.lbl_image.config(cursor="crosshair")
+        else:
+            self.btn_pick_color.config(bg="#f39c12", text="🎨 Wandfarbe picken")
+            self.lbl_image.config(cursor="")
+
+    def pick_color_from_event(self, event):
+        """Holt den Farbwert unter der Maus und schreibt ihn in die Config"""
+        if getattr(self, 'base_combined_img', None) is None or not hasattr(self, 'current_scale'):
+            return
+            
+        x, y = event.x, event.y
+        img_h, img_w = self.base_combined_img.shape[:2]
+        if x < 0 or y < 0 or x >= img_w or y >= img_h: return
+
+        # Koordinaten exakt wie beim Maus-Hover ausrechnen
+        is_left = (x < self.current_img_w)
+        raw_x = x if is_left else (x - self.current_img_w)
+        real_x = int(raw_x / self.current_scale)
+        real_y = int(y / self.current_scale)
+
+        if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
+            orig_h, orig_w = self.last_clean_live_img.shape[:2]
+            real_x = max(0, min(real_x, orig_w - 1))
+            real_y = max(0, min(real_y, orig_h - 1))
+            
+            # Farbe auslesen (BGR)
+            b_val, g_val, r_val = self.last_clean_live_img[real_y, real_x]
+            
+            # In die Konfiguration der AKTUELLEN Kamera schreiben
+            if getattr(self, 'package_data', None) and self.package_data.get('config'):
+                parser = self.package_data['config']
+                side_str = "Hintergrund_Links" if self.current_side == 'left' else "Hintergrund_Rechts"
+                
+                if not parser.has_section(side_str):
+                    parser.add_section(side_str)
+                
+                parser.set(side_str, 'rgb_r', str(r_val))
+                parser.set(side_str, 'rgb_g', str(g_val))
+                parser.set(side_str, 'rgb_b', str(b_val))
+                
+                self.print_log("SYSTEM", f"🎨 WANDFARBE GEUPDATET ({side_str}): RGB({r_val}, {g_val}, {b_val}) gepickt an Position X:{real_x}, Y:{real_y}")
+                
+                # Engine sofort mit den neuen Farben zwingen neuzustarten!
+                self.on_param_change(force=True)
+
 
     def on_drag_motion(self, event):
         """Verschiebt das Bild während des Ziehens"""
@@ -1171,22 +1227,19 @@ class OfflineLaborApp:
                 
                 dist_matrix = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
                 
-                self.last_color_dist = dist_matrix # <--- NEU: Distanz für die Maus retten!
+                self.last_color_dist = dist_matrix # Distanz für die Maus retten!
                 
-                f_max = self.farb_bonus_max_var.get()
-                f_min = self.farb_bonus_min_var.get()
+                # =========================================================================
+                # ---> NEU: ELA-konforme Multiplikator-Logik (Nur Strafe, kein Boost) <---
+                # =========================================================================
                 limit = self.farb_bonus_limit_var.get()
+                multiplier = 1.0 - (dist_matrix / limit)
+                multiplier = np.clip(multiplier, 0.0, 1.0)
                 
-                range_faktor = f_max - f_min
-                multiplier = f_max - ((dist_matrix / limit) * range_faktor)
-                multiplier = np.clip(multiplier, f_min, f_max)
-                
-                # ---> NEU: Die Potenz-Kurve im Labor anwenden <---
                 kurve = self.farb_bonus_kurve_var.get()
                 if kurve != 1.0:
                     multiplier = multiplier ** kurve
                 
-                self.last_color_dist = dist_matrix # Distanz für die Maus retten!
                 self.last_color_multiplier = multiplier 
                 
                 raw_diff = np.clip(raw_diff.astype(np.float32) * multiplier, 0, 255).astype(np.uint8)
@@ -1769,7 +1822,18 @@ class OfflineLaborApp:
             raw_display = raw.copy()
             if hist_mask is not None and cv2.countNonZero(hist_mask) > 0:
                 raw_display[hist_mask > 0] = 0
-            base_gray = cv2.cvtColor(raw_display, cv2.COLOR_GRAY2BGR)
+                
+            # ====================================================================
+            # ---> NEU: Der statische visuelle Boost (ELA-Gradationskurve) <---
+            # Wir ziehen nur die rohen Differenzwerte für das Auge künstlich hoch.
+            # Ein konstanter Faktor (2.5) sorgt für 100% Vergleichbarkeit über alle ZIPs!
+            # ====================================================================
+            optischer_boost = 2.5 
+            # Multiplizieren und bei 255 (Weiß) abriegeln
+            raw_boosted = np.clip(raw_display.astype(np.float32) * optischer_boost, 0, 255).astype(np.uint8)
+            
+            # Aus dem helleren Graubild machen wir nun das farbige Basis-Bild
+            base_gray = cv2.cvtColor(raw_boosted, cv2.COLOR_GRAY2BGR)
             
             # 1. ERST die Historie abziehen! (Wir erhalten isolierte, nackte Risse)
             if hist_mask is not None and cv2.countNonZero(hist_mask) > 0:
@@ -1787,28 +1851,6 @@ class OfflineLaborApp:
                 new_fragments_morphed = cv2.morphologyEx(new_fragments_raw, cv2.MORPH_CLOSE, kernel)
             else:
                 new_fragments_morphed = new_fragments_raw.copy()
-                
-            ## ====================================================================
-            ## ---> DEIN DEBUG-EXPORT-BLOCK <---
-            ## ====================================================================
-            #import os
-            #export_dir = "labor_export"
-            #os.makedirs(export_dir, exist_ok=True)
-            #
-            #cv2.imwrite(os.path.join(export_dir, "debug_00_final_morphed_gesamt.png"), new_fragments_morphed)
-            #contours, _ = cv2.findContours(new_fragments_morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            #
-            #for i, cnt in enumerate(contours):
-            #    area = cv2.contourArea(cnt)
-            #    single_contour_mask = np.zeros_like(new_fragments_morphed)
-            #    cv2.drawContours(single_contour_mask, [cnt], -1, 255, -1)
-            #    
-            #    x, y, cw, ch = cv2.boundingRect(cnt)
-            #    if cw > 0 and ch > 0:
-            #        cropped_contour = single_contour_mask[y:y+ch, x:x+cw]
-            #        filename = f"debug_contour_{i:03d}_area_{area:.1f}.png"
-            #        cv2.imwrite(os.path.join(export_dir, filename), cropped_contour)
-            ## ====================================================================
 
             # 3. Differenz bilden: Was genau hat der Morph-Filter hinzugefügt?
             added_by_morph = cv2.subtract(new_fragments_morphed, new_fragments_raw)
@@ -1818,7 +1860,8 @@ class OfflineLaborApp:
             bool_morph = added_by_morph > 0
             
             red_overlay = np.zeros_like(base_gray)
-            red_overlay[:,:,2] = np.maximum(raw_display, 100) 
+            # ---> KORREKTUR: Wir nutzen auch hier das hellere Bild für die rote Sättigung <---
+            red_overlay[:,:,2] = np.maximum(raw_boosted, 100) 
             
             blue_overlay = np.zeros_like(base_gray)
             blue_overlay[:,:,0] = 255 

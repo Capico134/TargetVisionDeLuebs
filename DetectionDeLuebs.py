@@ -49,8 +49,6 @@ class TargetDetector:
         self.randaufschlag_cumulative = config.getint('Erkennung', 'randaufschlag_cumulative', fallback=0)
         # ---> NEU: Farb-Bonus System (Anti-Weiß Filter) <---
         self.farb_bonus_aktiv = config.getboolean('Erkennung', 'farb_bonus_aktiv', fallback=True)
-        self.farb_bonus_max = config.getfloat('Erkennung', 'farb_bonus_max', fallback=1.5)
-        self.farb_bonus_min = config.getfloat('Erkennung', 'farb_bonus_min', fallback=0.5)
         self.farb_bonus_limit = config.getfloat('Erkennung', 'farb_bonus_limit', fallback=150.0)
         self.farb_bonus_kurve = self.config.getfloat('Erkennung', 'farb_bonus_kurve', fallback=2.0)
 
@@ -232,20 +230,19 @@ class TargetDetector:
         # =========================================================================
         # ---> NEU: Der smoothe Farb-Bonus (NORMALIZED RGB / CHROMINANCE) <---
         # =========================================================================
-        # Wir fragen die Config direkt pro Frame ab, damit die Labor-GUI live durchschlägt!
-        farb_bonus_aktiv = self.config.getboolean('Erkennung', 'farb_bonus_aktiv', fallback=False)
+
+
         
-        if farb_bonus_aktiv:
-            farb_bonus_max = self.config.getfloat('Erkennung', 'farb_bonus_max', fallback=1.5)
-            farb_bonus_min = self.config.getfloat('Erkennung', 'farb_bonus_min', fallback=0.5)
+        if self.farb_bonus_aktiv:
             farb_bonus_limit = self.config.getfloat('Erkennung', 'farb_bonus_limit', fallback=150.0)
+            farb_bonus_kurve = self.config.getfloat('Erkennung', 'farb_bonus_kurve', fallback=2.0)
             
             bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
             r_tgt = self.config.getint(bg_sec, 'rgb_r')
             g_tgt = self.config.getint(bg_sec, 'rgb_g')
             b_tgt = self.config.getint(bg_sec, 'rgb_b')
             
-            # 1. Ziel-Farbe normalisieren (Prozentuale Anteile berechnen)
+            # 1. Ziel-Farbe normalisieren
             sum_tgt = float(r_tgt + g_tgt + b_tgt)
             if sum_tgt == 0: sum_tgt = 1.0
             target_norm = np.array([b_tgt/sum_tgt, g_tgt/sum_tgt, r_tgt/sum_tgt], dtype=np.float32)
@@ -253,26 +250,22 @@ class TargetDetector:
             # 2. Live-Bild normalisieren
             live_float = current_normalized.astype(np.float32)
             live_sum = np.sum(live_float, axis=2, keepdims=True)
-            live_sum[live_sum == 0] = 1.0 # Division durch 0 verhindern
+            live_sum[live_sum == 0] = 1.0 
             live_norm = live_float / live_sum
             
-            # 3. Distanz berechnen und für den Slider hochskalieren (Faktor 1000)
-            # Perfektes Match = 0, Graues Papier vs Rot = ca. 140
+            # 3. Distanz berechnen (Faktor 1000 für schöne Werte)
             dist_matrix = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
             
-            # Multiplikator berechnen (smooth)
-            range_faktor = farb_bonus_max - farb_bonus_min
-            multiplier = farb_bonus_max - ((dist_matrix / farb_bonus_limit) * range_faktor)
-            multiplier = np.clip(multiplier, farb_bonus_min, farb_bonus_max)
-            
             # =========================================================================
-            # ---> NEU: Die Potenz-Kurve (Der Hammer für den Kontrast!) <---
+            # ---> NEU: ELA-konforme Multiplikator-Logik (Nur Strafe, kein Boost) <---
             # =========================================================================
+            multiplier = 1.0 - (dist_matrix / farb_bonus_limit)
+            multiplier = np.clip(multiplier, 0.0, 1.0)
             
-            if self.farb_bonus_kurve != 1.0:
-                multiplier = multiplier ** self.farb_bonus_kurve
+            if farb_bonus_kurve != 1.0:
+                multiplier = multiplier ** farb_bonus_kurve
             
-            # Diff-Werte mit unserer neuen, potenzierten "Farb-Heatmap" multiplizieren
+            # Diff-Werte bestrafen (abdunkeln)
             diff_gray = np.clip(diff_gray.astype(np.float32) * multiplier, 0, 255).astype(np.uint8)
 
         _, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY)
