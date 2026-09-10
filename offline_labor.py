@@ -197,6 +197,12 @@ class OfflineLaborApp:
         self.clipping_factor_current_var = tk.DoubleVar(value=0.95)
         # ---> NEU: Variable für den Filter <---
         self.max_treffer_je_frame_var = tk.IntVar(value=0)
+        # ---> NEU: Farb-Bonus System <---
+        self.farb_bonus_aktiv_var = tk.BooleanVar(value=True)
+        self.farb_bonus_max_var = tk.DoubleVar(value=1.5)
+        self.farb_bonus_min_var = tk.DoubleVar(value=0.5)
+        self.farb_bonus_limit_var = tk.DoubleVar(value=150.0)
+        self.farb_bonus_kurve_var = tk.DoubleVar(value=2.00)
         
         self.zoom_factor = 1.0
         self.pan_x = 0
@@ -517,6 +523,27 @@ class OfflineLaborApp:
         self.make_slider(param_frame, "clipping_factor_current:", self.clipping_factor_current_var, 0.5, 1.5, 0.01, key="clipping_factor_current")
         # ---> NEU: Slider für das Limit <---
         self.make_slider(param_frame, "max_treffer_je_frame:", self.max_treffer_je_frame_var, 0, 10, key="max_treffer_je_frame")
+        tk.Label(param_frame, text="--- Anti-Weiß Filter (Farb-Bonus) ---", fg="gray").pack(pady=(10, 5))
+        
+        # Checkbutton (registriert sich selbst über trace)
+        chk_farb = tk.Checkbutton(param_frame, text="🟢 Farb-Bonus aktiv (HSV-Richtung)", variable=self.farb_bonus_aktiv_var)
+        chk_farb.pack(anchor=tk.W)
+        self.registered_sliders["farb_bonus_aktiv"] = self.farb_bonus_aktiv_var
+        
+        def sync_farb_config(*args):
+            if getattr(self, 'package_data', None) and self.package_data.get('config'):
+                parser = self.package_data['config']
+                if not parser.has_section('Erkennung'): parser.add_section('Erkennung')
+                val_str = "yes" if self.farb_bonus_aktiv_var.get() else "no"
+                parser.set('Erkennung', "farb_bonus_aktiv", val_str)
+                self.on_param_change()
+        self.farb_bonus_aktiv_var.trace_add("write", sync_farb_config)
+        
+        self.make_slider(param_frame, "farb_bonus_max (Boost):", self.farb_bonus_max_var, 1.0, 3.0, 0.1, key="farb_bonus_max")
+        self.make_slider(param_frame, "farb_bonus_min (Strafe):", self.farb_bonus_min_var, 0.1, 1.0, 0.05, key="farb_bonus_min")
+        self.make_slider(param_frame, "farb_bonus_limit (Distanz):", self.farb_bonus_limit_var, 50.0, 300.0, 5.0, key="farb_bonus_limit")
+        self.make_slider(param_frame, "farb_bonus_kurve (Exponent):", self.farb_bonus_kurve_var, 1.0, 5.0, 0.1, key="farb_bonus_kurve")
+        
         
         tk.Checkbutton(param_frame, text="💾 Simulations-Bilder exportieren", 
                        variable=self.export_images_var, fg="#00aaff").pack(anchor=tk.W, pady=(15, 0))
@@ -766,38 +793,58 @@ class OfflineLaborApp:
         temp_img = self.base_combined_img.copy()
         
         # Den aktuellen Radius an den Zoom-Faktor anpassen
-        base_r = getattr(self, 'current_radius_px', 15) # Holt den perfekten Radius aus Schritt 1
-        r = int(base_r * self.current_scale)
-        
-        # Neon-Blau / Cyan in BGR-Farbraum
+        base_r = getattr(self, 'current_radius_px', 15) 
+        kreis_radius = int(base_r * self.current_scale) 
         neon_blue = (255, 255, 0)
         
-        # Prüfen, ob wir im linken oder rechten Bild sind
-        if x < self.current_img_w:
-            real_x = int(x / self.current_scale)
-            real_y = int(y / self.current_scale)
+        # 1. Ermitteln, in welcher Bildhälfte wir sind und die Basis-Koordinaten rechnen
+        is_left = (x < self.current_img_w)
+        raw_x = x if is_left else (x - self.current_img_w)
+        
+        real_x = int(raw_x / self.current_scale)
+        real_y = int(y / self.current_scale)
+        
+        # ---> DER FIX: Schutzplanken gegen Out-of-Bounds <---
+        if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
+            orig_h, orig_w = self.last_clean_live_img.shape[:2]
+            real_x = max(0, min(real_x, orig_w - 1))
+            real_y = max(0, min(real_y, orig_h - 1))
             
-            # ---> NEU: Diff-Wert auslesen <---
-            diff_val = self.last_raw_diff[real_y, real_x] if hasattr(self, 'last_raw_diff') else 0
-            self.lbl_coords.config(text=f"Live-Bild -> X:{real_x:04d} | Y:{real_y:04d} | DIFF:{diff_val:03d}")
-            
-            # ---> NEU: Fadenkreuz im RECHTEN Bild einzeichnen <---
-            mirror_x = x + self.current_img_w
-            cv2.circle(temp_img, (mirror_x, y), r, neon_blue, 2)
-            cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) 
-            
+        # ---> RGB-Werte aus dem Referenzbild holen <---
+        if hasattr(self, 'last_ref_img') and self.last_ref_img is not None:
+            ref_h, ref_w = self.last_ref_img.shape[:2]
+            safe_ref_x = max(0, min(real_x, ref_w - 1))
+            safe_ref_y = max(0, min(real_y, ref_h - 1))
+            ref_b, ref_g, ref_r = self.last_ref_img[safe_ref_y, safe_ref_x]
+            ref_str = f"Ref({ref_r},{ref_g},{ref_b})"
         else:
-            real_x = int((x - self.current_img_w) / self.current_scale)
-            real_y = int(y / self.current_scale)
+            ref_str = "Ref(-,-,-)"
+
+        # RGB-Werte aus dem nackten Live-Bild holen
+        if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
+            b_val, g_val, r_val = self.last_clean_live_img[real_y, real_x]
+            live_str = f"Live({r_val},{g_val},{b_val})"
+        else:
+            live_str = "Live(-,-,-)"
+
+        diff_val = self.last_raw_diff[real_y, real_x] if hasattr(self, 'last_raw_diff') else 0
+        
+        # Faktor und Farb-Distanz auslesen
+        if hasattr(self, 'last_color_multiplier') and self.last_color_multiplier is not None:
+            factor = self.last_color_multiplier[real_y, real_x]
+            dist_c = self.last_color_dist[real_y, real_x] if hasattr(self, 'last_color_dist') else 0
+            bonus_str = f" | Dist: {dist_c:.0f} | F: {factor:.2f}"
+        else:
+            bonus_str = " | Filter Aus"
             
-            # ---> NEU: Diff-Wert auslesen <---
-            diff_val = self.last_raw_diff[real_y, real_x] if hasattr(self, 'last_raw_diff') else 0
-            self.lbl_coords.config(text=f"Rechtes Bild -> X:{real_x:04d} | Y:{real_y:04d} | DIFF:{diff_val:03d}")
-            
-            # ---> NEU: Fadenkreuz im LINKEN Bild einzeichnen <---
-            mirror_x = x - self.current_img_w
-            cv2.circle(temp_img, (mirror_x, y), r, neon_blue, 2)
-            cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) 
+        # UI Update mit Anzeige der Seite
+        side_name = "Live" if is_left else "Rechts"
+        self.lbl_coords.config(text=f"{side_name} X:{real_x:04d} Y:{real_y:04d} | D:{diff_val:03d} | {ref_str} -> {live_str}{bonus_str}")
+        
+        # Fadenkreuz zeichnen (mit Spiegel-Logik für die jeweils andere Seite)
+        mirror_x = (x + self.current_img_w) if is_left else (x - self.current_img_w)
+        cv2.circle(temp_img, (mirror_x, y), kreis_radius, neon_blue, 2)
+        cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) 
 
         # Das temporäre Bild mit dem Overlay blitzschnell ins Tkinter-Label werfen
         img_pil = Image.fromarray(cv2.cvtColor(temp_img, cv2.COLOR_BGR2RGB))
@@ -1104,7 +1151,51 @@ class OfflineLaborApp:
             diff_bgr = cv2.absdiff(ref_blur, norm_live)
             raw_diff = np.max(diff_bgr, axis=2) # Unser Farb-Hack!
             
+            # =========================================================================
+            # ---> NEU: Matrix-Simulation für das Labor (Ansicht 4 synchron halten!) <---
+            # =========================================================================
+            if self.farb_bonus_aktiv_var.get():
+                bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
+                r_tgt = d_config.getint(bg_sec, 'rgb_r')
+                g_tgt = d_config.getint(bg_sec, 'rgb_g')
+                b_tgt = d_config.getint(bg_sec, 'rgb_b')
+                
+                sum_tgt = float(r_tgt + g_tgt + b_tgt)
+                if sum_tgt == 0: sum_tgt = 1.0
+                target_norm = np.array([b_tgt/sum_tgt, g_tgt/sum_tgt, r_tgt/sum_tgt], dtype=np.float32)
+                
+                live_float = norm_live.astype(np.float32)
+                live_sum = np.sum(live_float, axis=2, keepdims=True)
+                live_sum[live_sum == 0] = 1.0
+                live_norm = live_float / live_sum
+                
+                dist_matrix = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
+                
+                self.last_color_dist = dist_matrix # <--- NEU: Distanz für die Maus retten!
+                
+                f_max = self.farb_bonus_max_var.get()
+                f_min = self.farb_bonus_min_var.get()
+                limit = self.farb_bonus_limit_var.get()
+                
+                range_faktor = f_max - f_min
+                multiplier = f_max - ((dist_matrix / limit) * range_faktor)
+                multiplier = np.clip(multiplier, f_min, f_max)
+                
+                # ---> NEU: Die Potenz-Kurve im Labor anwenden <---
+                kurve = self.farb_bonus_kurve_var.get()
+                if kurve != 1.0:
+                    multiplier = multiplier ** kurve
+                
+                self.last_color_dist = dist_matrix # Distanz für die Maus retten!
+                self.last_color_multiplier = multiplier 
+                
+                raw_diff = np.clip(raw_diff.astype(np.float32) * multiplier, 0, 255).astype(np.uint8)
+            else:
+                self.last_color_multiplier = None
+
             # ---> NEU: Wir führen den Threshold VORHER aus, genau wie die Engine! <---
+
+
             hit_tol = self.hit_tolerance_var.get()
             _, thresh_raw = cv2.threshold(raw_diff, hit_tol, 255, cv2.THRESH_BINARY)
             self.last_thresh_raw = thresh_raw.copy()

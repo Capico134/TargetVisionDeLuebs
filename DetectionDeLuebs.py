@@ -47,6 +47,12 @@ class TargetDetector:
         self.clipping_factor_current = config.getfloat('Erkennung', 'clipping_factor_current', fallback=0.95)
         self.max_treffer_je_frame = config.getint('Erkennung', 'max_treffer_je_frame', fallback=0)
         self.randaufschlag_cumulative = config.getint('Erkennung', 'randaufschlag_cumulative', fallback=0)
+        # ---> NEU: Farb-Bonus System (Anti-Weiß Filter) <---
+        self.farb_bonus_aktiv = config.getboolean('Erkennung', 'farb_bonus_aktiv', fallback=True)
+        self.farb_bonus_max = config.getfloat('Erkennung', 'farb_bonus_max', fallback=1.5)
+        self.farb_bonus_min = config.getfloat('Erkennung', 'farb_bonus_min', fallback=0.5)
+        self.farb_bonus_limit = config.getfloat('Erkennung', 'farb_bonus_limit', fallback=150.0)
+        self.farb_bonus_kurve = self.config.getfloat('Erkennung', 'farb_bonus_kurve', fallback=2.0)
 
         # Internes Gedächtnis des Detectors
         self.ref_left = None
@@ -222,6 +228,53 @@ class TargetDetector:
         # ---> DER COLOR-HACK: Wir nehmen einfach den maximalen Ausschlag aus B, G oder R <---
         # Verhindert, dass massive Rot-Änderungen von der Graustufen-Formel verschluckt werden!
         diff_gray = np.max(diff_bgr, axis=2) 
+        
+        # =========================================================================
+        # ---> NEU: Der smoothe Farb-Bonus (NORMALIZED RGB / CHROMINANCE) <---
+        # =========================================================================
+        # Wir fragen die Config direkt pro Frame ab, damit die Labor-GUI live durchschlägt!
+        farb_bonus_aktiv = self.config.getboolean('Erkennung', 'farb_bonus_aktiv', fallback=False)
+        
+        if farb_bonus_aktiv:
+            farb_bonus_max = self.config.getfloat('Erkennung', 'farb_bonus_max', fallback=1.5)
+            farb_bonus_min = self.config.getfloat('Erkennung', 'farb_bonus_min', fallback=0.5)
+            farb_bonus_limit = self.config.getfloat('Erkennung', 'farb_bonus_limit', fallback=150.0)
+            
+            bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
+            r_tgt = self.config.getint(bg_sec, 'rgb_r')
+            g_tgt = self.config.getint(bg_sec, 'rgb_g')
+            b_tgt = self.config.getint(bg_sec, 'rgb_b')
+            
+            # 1. Ziel-Farbe normalisieren (Prozentuale Anteile berechnen)
+            sum_tgt = float(r_tgt + g_tgt + b_tgt)
+            if sum_tgt == 0: sum_tgt = 1.0
+            target_norm = np.array([b_tgt/sum_tgt, g_tgt/sum_tgt, r_tgt/sum_tgt], dtype=np.float32)
+            
+            # 2. Live-Bild normalisieren
+            live_float = current_normalized.astype(np.float32)
+            live_sum = np.sum(live_float, axis=2, keepdims=True)
+            live_sum[live_sum == 0] = 1.0 # Division durch 0 verhindern
+            live_norm = live_float / live_sum
+            
+            # 3. Distanz berechnen und für den Slider hochskalieren (Faktor 1000)
+            # Perfektes Match = 0, Graues Papier vs Rot = ca. 140
+            dist_matrix = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
+            
+            # Multiplikator berechnen (smooth)
+            range_faktor = farb_bonus_max - farb_bonus_min
+            multiplier = farb_bonus_max - ((dist_matrix / farb_bonus_limit) * range_faktor)
+            multiplier = np.clip(multiplier, farb_bonus_min, farb_bonus_max)
+            
+            # =========================================================================
+            # ---> NEU: Die Potenz-Kurve (Der Hammer für den Kontrast!) <---
+            # =========================================================================
+            
+            if self.farb_bonus_kurve != 1.0:
+                multiplier = multiplier ** self.farb_bonus_kurve
+            
+            # Diff-Werte mit unserer neuen, potenzierten "Farb-Heatmap" multiplizieren
+            diff_gray = np.clip(diff_gray.astype(np.float32) * multiplier, 0, 255).astype(np.uint8)
+
         _, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY)
         
         # ---> NEU: Leere Leinwand für die siegreichen Abrisskanten dieses Frames <---
@@ -667,6 +720,8 @@ class TargetDetector:
             
             # Die gesammelten Sieger-Kanten für das Offline-Labor bereitstellen
             self.save_debug_image(f"letzte_abrisskante_{side}", frame_abrisskanten)
+            # ---> NEU: Das normalisierte Bild für Paint-Analysen speichern! <---
+            self.save_debug_image(f"letzte_aufnahme_normalized_{side}", current_normalized)
             
             # =========================================================================
             # ---> NEU: Bilder intelligent abspeichern (Diät für Discards) <---
