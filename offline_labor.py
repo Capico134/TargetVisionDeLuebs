@@ -862,17 +862,18 @@ class OfflineLaborApp:
 
     def on_drag_start(self, event):
         """Merkt sich die Startkoordinaten beim Klicken ODER pickt die Wandfarbe"""
-        # ---> NEU: Wenn die Pipette aktiv ist, fangen wir den Klick ab! <---
-        if getattr(self, 'color_picker_active', False):
-            self.pick_color_from_event(event)
-            self.toggle_color_picker() # Nach dem Klick sofort wieder deaktivieren
-            return
-
-        # Normales Verhalten (Bild verschieben)
+        # ---> DER FIX: Wir merken uns IMMER die Mauskoordinaten, egal in welchem Modus.
+        # Das verhindert den "Teleport-Bug", falls man beim Klicken die Maus minimal bewegt!
         self.drag_start_x = event.x_root
         self.drag_start_y = event.y_root
         self.start_pan_x = self.pan_x
         self.start_pan_y = self.pan_y
+
+        # ---> Wenn die Pipette aktiv ist, fangen wir den Klick ab! <---
+        if getattr(self, 'color_picker_active', False):
+            self.pick_color_from_event(event)
+            self.toggle_color_picker() # Nach dem Klick sofort wieder deaktivieren
+            return
 
     def toggle_color_picker(self):
         """Schaltet den Modus um und ändert das Aussehen des Buttons/Mauszeigers"""

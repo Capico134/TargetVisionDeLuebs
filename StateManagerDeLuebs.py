@@ -179,10 +179,17 @@ class StateManager:
                 target_data = targets[aktive_scheibe_id]
                 d_10 = target_data['ringe_durchmesser_mm']['10']
                 d_9 = target_data['ringe_durchmesser_mm']['9']
-                kaliber = target_data.get('kaliber_mm', 4.5)
+                
+                # =========================================================================
+                # ---> NEU: ELA-Entkopplung von Erkennung und Ringwertung! <---
+                # Wir zwingen die Ringwertung nun AUSSCHLIESSLICH, den offiziellen
+                # Wettkampf-Durchmesser der Zielscheibe (z.B. 4.5mm) zu verwenden, 
+                # egal was im Labor für die optische Loch-Erkennung eingestellt wurde!
+                # =========================================================================
+                offizielles_kaliber_mm = float(target_data.get('kaliber_mm', 4.5))
                 
                 ring_abstand_radius_mm = (d_9 - d_10) / 2.0
-                radius_10_score = (d_10 + kaliber) / 2.0
+                radius_10_score = (d_10 + offizielles_kaliber_mm) / 2.0
                 
                 # --- NEU: Faire 10er-Ring Verteilung für Scheiben mit großem Zehner ---
                 if dist_mm <= radius_10_score:
