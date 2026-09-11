@@ -547,7 +547,7 @@ class OfflineLaborApp:
                 parser.set('Erkennung', "farb_bonus_aktiv", val_str)
                 self.on_param_change()
         self.farb_bonus_aktiv_var.trace_add("write", sync_farb_config)
-        self.make_slider(param_frame, "farb_bonus_limit (Distanz):", self.farb_bonus_limit_var, 50.0, 500.0, 5.0, key="farb_bonus_limit")
+        self.make_slider(param_frame, "farb_bonus_limit (Distanz):", self.farb_bonus_limit_var, 50.0, 750.0, 5.0, key="farb_bonus_limit")
         self.make_slider(param_frame, "farb_bonus_kurve (Exponent):", self.farb_bonus_kurve_var, 1.0, 5.0, 0.1, key="farb_bonus_kurve")
         
         

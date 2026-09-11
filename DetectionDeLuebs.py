@@ -567,9 +567,9 @@ class TargetDetector:
                         
                         # 2. Die feste Hierarchie: Je höher die Zahl, desto bevorzugter
                         name = cand['name']
-                        if name == "MinCircle (MEC)": 
+                        if name == "Schwerpunkt (CoG)": 
                             prio = 4
-                        elif name == "Schwerpunkt (CoG)": 
+                        elif name == "MinCircle (MEC)": 
                             prio = 3
                         elif "Hough" in name: 
                             prio = 2
@@ -737,8 +737,8 @@ class TargetDetector:
             
             # Die gesammelten Sieger-Kanten für das Offline-Labor bereitstellen
             self.save_debug_image(f"letzte_abrisskante_{side}", frame_abrisskanten)
-            # ---> NEU: Das normalisierte Bild für Paint-Analysen speichern! <---
-            self.save_debug_image(f"letzte_aufnahme_normalized_{side}", current_normalized)
+            # ---> NEU: Das normalisierte Bild für Paint-Analysen speichern! <--- AUSKOMMENTIERT ABER BITTE NICHT LÖSCHEN!
+            #self.save_debug_image(f"letzte_aufnahme_normalized_{side}", current_normalized)
             
             # =========================================================================
             # ---> NEU: Bilder intelligent abspeichern (Diät für Discards) <---
