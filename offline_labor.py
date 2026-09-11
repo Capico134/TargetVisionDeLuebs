@@ -162,7 +162,12 @@ class OfflineLaborApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Labor & Einstellungen")
-        self.root.geometry("1400x850")
+        
+        # ---> NEU: Fenstergröße dynamisch an die Windows-Skalierung (z.B. 200%) anpassen <---
+        # 96 DPI ist der Standardwert (100%). Liefert der Bildschirm mehr, wächst das Fenster proportional mit.
+        skalierungs_faktor = self.root.winfo_fpixels('1i') / 96.0 
+        w, h = int(1400 * skalierungs_faktor), int(850 * skalierungs_faktor)
+        self.root.geometry(f"{w}x{h}")
         
         self.dm = DateiManager() # <--- NEU: Unser zentraler ELA-Werkzeugkasten
         self.package_data = None # <--- NEU: Speichert das entpackte ZIP im RAM
@@ -992,8 +997,8 @@ class OfflineLaborApp:
             # Bild neu zeichnen, um das Highlight zu zeigen
             self.update_image_display()
             
-            # Timer setzen, um das Highlight nach 3 Sekunden wieder zu löschen
-            self.root.after(3000, self.clear_highlight)
+            # Timer setzen, um das Highlight nach 5 Sekunden wieder zu löschen
+            self.root.after(5000, self.clear_highlight)
 
     def clear_highlight(self):
         """Löscht das orangene Highlight nach Ablauf des Timers"""
@@ -2285,8 +2290,24 @@ class OfflineLaborApp:
 
 if __name__ == "__main__":
     import sys # Für sys.argv
+    
+    # =========================================================================
+    # ---> NEU: DPI-Awareness für gestochen scharfe GUI auf 4K Monitoren <---
+    # =========================================================================
+    try:
+        import ctypes
+        # Versuche die moderne Windows 10/11 Methode
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        try:
+            # Fallback für ältere Windows-Versionen
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass # Auf Linux/Mac oder bei Fehlern ignorieren wir das einfach komplett
+            
     root = tk.Tk()
     app = OfflineLaborApp(root)
+    
     
     # Wurde uns vom Live-System ein ZIP-Pfad in die Hand gedrückt?
     if len(sys.argv) > 1:
