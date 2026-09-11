@@ -431,9 +431,33 @@ class TargetTracker:
         
         # ---> TREFFER ZEICHNEN (Nach Seite getrennt, Nummer mittig im Kreis) <---
         for side in ['left', 'right']:
-            # ---> NEU: Holt sich den perfekten, linsenkorrigierten Radius aus der Engine! <---
-            cal_r = self.detector.get_caliber_radius(side)
-            final_radius = max(2, int(cal_r * self.scale_x))
+            # =========================================================================
+            # ---> NEU: ELA-Optimierung! Wir nutzen den OFFIZIELLEN Radius aus der JSON,
+            # aber fallen auf den Slider-Wert zurück, wenn die Ringwertung aus ist!
+            # =========================================================================
+            aktive_scheibe = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+            targets = self.dm.load_targets() 
+            
+            if self.ringwertung_aktiv and aktive_scheibe in targets:
+                offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
+            else:
+                val = self.config.get('Erkennung', 'caliber_durchmesser', fallback='4.5')
+                if str(val).strip().lower() == 'auto':
+                    offizielles_kaliber_mm = float(targets.get(aktive_scheibe, {}).get('kaliber_mm', 4.5))
+                else:
+                    try:
+                        offizielles_kaliber_mm = float(val)
+                    except ValueError:
+                        offizielles_kaliber_mm = 4.5
+            
+            seite_str = "links" if side == 'left' else "rechts"
+            px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+            px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+            avg_px = (px_x + px_y) / 2.0
+            
+            cal_r_offiziell = (offizielles_kaliber_mm / 2.0) * avg_px
+            final_radius = max(2, int(cal_r_offiziell * self.scale_x))
+            # =========================================================================
             
             side_shots = self.sm.get_shots_for_side(side)
             for idx, shot in enumerate(side_shots):

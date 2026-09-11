@@ -60,19 +60,45 @@ class MatchDetailWindow(tk.Toplevel):
                 except KeyError:
                     config.read("config.ini")
                 
-                # config wurde aus dem ZIP geladen...
-                d_config = config # ConfigParser kann direkt als Config übergeben werden
-                d_dm = DateiManager() # Nutzt die lokale zielscheiben.json
-                d_sm = None # Wird für den Radius nicht gebraucht
+                # =========================================================================
+                # ---> NEU: ELA-Optimierung! Wir berechnen den Radius direkt aus der JSON!
+                # 1. Prio: Die historische zielscheiben.json aus dem ZIP
+                # 2. Fallback: Die lokale zielscheiben.json von der Festplatte
+                # =========================================================================
+                try:
+                    targets = json.loads(zipf.read("zielscheiben.json").decode('utf-8'))
+                except KeyError:
+                    d_dm = DateiManager()
+                    targets = d_dm.load_targets()
                 
-                # Wir holen uns den echten Detector ins Boot!
-                detector = TargetDetector(d_config, d_dm, d_sm, lambda s, m, sg=False: None)
+                ringwertung_aktiv = config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+                aktive_scheibe = config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
                 
-                # Die Engine berechnet den perfekten Radius völlig automatisch linsenkorrigiert per ELA:
-                self.radius_left = detector.get_caliber_radius('left')
-                self.radius_right = detector.get_caliber_radius('right')
+                # Weiche: Offizielle Wettkampf-Wahrheit vs. Custom Optik
+                if ringwertung_aktiv and aktive_scheibe in targets:
+                    offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
+                else:
+                    val = config.get('Erkennung', 'caliber_durchmesser', fallback='4.5')
+                    if str(val).strip().lower() == 'auto':
+                        offizielles_kaliber_mm = float(targets.get(aktive_scheibe, {}).get('kaliber_mm', 4.5))
+                    else:
+                        try:
+                            offizielles_kaliber_mm = float(val)
+                        except ValueError:
+                            offizielles_kaliber_mm = 4.5
                 
+                # Pixel-Umrechnung für Links
+                px_x_l = config.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0)
+                px_y_l = config.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0)
+                avg_px_l = (px_x_l + px_y_l) / 2.0
+                self.radius_left = (offizielles_kaliber_mm / 2.0) * avg_px_l
                 
+                # Pixel-Umrechnung für Rechts
+                px_x_r = config.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0)
+                px_y_r = config.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0)
+                avg_px_r = (px_x_r + px_y_r) / 2.0
+                self.radius_right = (offizielles_kaliber_mm / 2.0) * avg_px_r
+                # =========================================================================
                 
                 # ---> NEU: Erst PNG versuchen (neue Version), dann Fallback auf JPG (alte Version) <---
                 try:

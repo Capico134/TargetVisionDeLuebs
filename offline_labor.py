@@ -142,7 +142,12 @@ class DummyDateiManager:
             cv2.imwrite(path, image)
             
     def load_targets(self):
-        # ---> NEU: Holt die echten Zielscheiben-Daten für den StateManager! <---
+        # 1. PRIO: Nutze zwingend die historische zielscheiben.json aus dem ZIP-Archiv (Zeitkapsel)!
+        if getattr(self.app, 'package_data', None) and self.app.package_data.get('targets'):
+            return self.app.package_data['targets']
+            
+        # 2. FALLBACK: Das ZIP ist von früher und hat keine JSON an Bord. 
+        # Wir nehmen die tagesaktuelle aus der Gegenwart von der Festplatte.
         return self.app.dm.load_targets()
         
     def write_log(self, msg):
@@ -197,6 +202,10 @@ class OfflineLaborApp:
         self.clipping_factor_current_var = tk.DoubleVar(value=0.95)
         # ---> NEU: Variable für den Filter <---
         self.max_treffer_je_frame_var = tk.IntVar(value=0)
+        # ---> NEU: Farb-Bonus System <---
+        self.farb_bonus_aktiv_var = tk.BooleanVar(value=False)
+        self.farb_bonus_limit_var = tk.DoubleVar(value=150.0)
+        self.farb_bonus_kurve_var = tk.DoubleVar(value=2.00)
         
         self.zoom_factor = 1.0
         self.pan_x = 0
@@ -329,6 +338,11 @@ class OfflineLaborApp:
         
         tk.Button(top_frame, text="📦 ZIP-Paket laden", command=self.load_zip, font=("Arial", 10, "bold")).pack(side=tk.LEFT)
         
+        # ---> NEU: Der Pipetten-Button <---
+        self.color_picker_active = False
+        self.btn_pick_color = tk.Button(top_frame, text="🎨 Wandfarbe picken", command=self.toggle_color_picker, bg="#f39c12", fg="white", font=("Arial", 10, "bold"))
+        self.btn_pick_color.pack(side=tk.LEFT, padx=(20, 0))
+        
         # ---> lbl_file wurde hier komplett gelöscht! <---
         
         self.btn_compare = tk.Button(top_frame, text="📊 Abweichung messen", command=self.show_comparison, font=("Arial", 10, "bold"))
@@ -380,7 +394,8 @@ class OfflineLaborApp:
         # ---> NEU: Drag & Drop (Verschieben) + Reset <---
         self.lbl_image.bind('<ButtonPress-1>', self.on_drag_start)
         self.lbl_image.bind('<B1-Motion>', self.on_drag_motion)
-        self.lbl_image.bind('<Button-3>', self.reset_view) # Rechtsklick = Reset
+        self.lbl_image.bind('<ButtonRelease-1>', self.on_drag_stop) # <--- NEU: Der Loslass-Erkenner!
+        self.lbl_image.bind('<Button-3>', self.reset_view)
         
         # Das Log-Fenster (Standard-Höhe etwas kleiner, da man es ja nun größer ziehen kann)
         self.log_text = tk.Text(self.paned_window, height=12, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
@@ -517,6 +532,24 @@ class OfflineLaborApp:
         self.make_slider(param_frame, "clipping_factor_current:", self.clipping_factor_current_var, 0.5, 1.5, 0.01, key="clipping_factor_current")
         # ---> NEU: Slider für das Limit <---
         self.make_slider(param_frame, "max_treffer_je_frame:", self.max_treffer_je_frame_var, 0, 10, key="max_treffer_je_frame")
+        tk.Label(param_frame, text="--- Anti-Weiß Filter (Farb-Bonus) ---", fg="gray").pack(pady=(10, 5))
+        
+        # Checkbutton
+        chk_farb = tk.Checkbutton(param_frame, text="🟢 farb_bonus_aktiv", variable=self.farb_bonus_aktiv_var)
+        chk_farb.pack(anchor=tk.W)
+        self.registered_sliders["farb_bonus_aktiv"] = self.farb_bonus_aktiv_var
+        
+        def sync_farb_config(*args):
+            if getattr(self, 'package_data', None) and self.package_data.get('config'):
+                parser = self.package_data['config']
+                if not parser.has_section('Erkennung'): parser.add_section('Erkennung')
+                val_str = "yes" if self.farb_bonus_aktiv_var.get() else "no"
+                parser.set('Erkennung', "farb_bonus_aktiv", val_str)
+                self.on_param_change()
+        self.farb_bonus_aktiv_var.trace_add("write", sync_farb_config)
+        self.make_slider(param_frame, "farb_bonus_limit (Distanz):", self.farb_bonus_limit_var, 50.0, 500.0, 5.0, key="farb_bonus_limit")
+        self.make_slider(param_frame, "farb_bonus_kurve (Exponent):", self.farb_bonus_kurve_var, 1.0, 5.0, 0.1, key="farb_bonus_kurve")
+        
         
         tk.Checkbutton(param_frame, text="💾 Simulations-Bilder exportieren", 
                        variable=self.export_images_var, fg="#00aaff").pack(anchor=tk.W, pady=(15, 0))
@@ -575,11 +608,14 @@ class OfflineLaborApp:
             
             self.original_values = {}
             
-            # 1. DIE MAGIE: Automatische Zuweisung ALLER registrierten Slider!
+            # 1. DIE MAGIE: Automatische Zuweisung ALLER registrierten Slider (und Checkboxen)!
             for key, tk_var in self.registered_sliders.items():
                 if parser.has_option('Erkennung', key):
                     # Typ prüfen und passend aus der Config holen
-                    if isinstance(tk_var, tk.IntVar):
+                    if isinstance(tk_var, tk.BooleanVar):
+                        # ConfigParser benötigt .getboolean() für "yes/no", "true/false"
+                        tk_var.set(parser.getboolean('Erkennung', key))
+                    elif isinstance(tk_var, tk.IntVar):
                         tk_var.set(parser.getint('Erkennung', key))
                     elif isinstance(tk_var, tk.DoubleVar):
                         tk_var.set(parser.getfloat('Erkennung', key))
@@ -766,38 +802,58 @@ class OfflineLaborApp:
         temp_img = self.base_combined_img.copy()
         
         # Den aktuellen Radius an den Zoom-Faktor anpassen
-        base_r = getattr(self, 'current_radius_px', 15) # Holt den perfekten Radius aus Schritt 1
-        r = int(base_r * self.current_scale)
-        
-        # Neon-Blau / Cyan in BGR-Farbraum
+        base_r = getattr(self, 'current_radius_px', 15) 
+        kreis_radius = int(base_r * self.current_scale) 
         neon_blue = (255, 255, 0)
         
-        # Prüfen, ob wir im linken oder rechten Bild sind
-        if x < self.current_img_w:
-            real_x = int(x / self.current_scale)
-            real_y = int(y / self.current_scale)
+        # 1. Ermitteln, in welcher Bildhälfte wir sind und die Basis-Koordinaten rechnen
+        is_left = (x < self.current_img_w)
+        raw_x = x if is_left else (x - self.current_img_w)
+        
+        real_x = int(raw_x / self.current_scale)
+        real_y = int(y / self.current_scale)
+        
+        # ---> DER FIX: Schutzplanken gegen Out-of-Bounds <---
+        if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
+            orig_h, orig_w = self.last_clean_live_img.shape[:2]
+            real_x = max(0, min(real_x, orig_w - 1))
+            real_y = max(0, min(real_y, orig_h - 1))
             
-            # ---> NEU: Diff-Wert auslesen <---
-            diff_val = self.last_raw_diff[real_y, real_x] if hasattr(self, 'last_raw_diff') else 0
-            self.lbl_coords.config(text=f"Live-Bild -> X:{real_x:04d} | Y:{real_y:04d} | DIFF:{diff_val:03d}")
-            
-            # ---> NEU: Fadenkreuz im RECHTEN Bild einzeichnen <---
-            mirror_x = x + self.current_img_w
-            cv2.circle(temp_img, (mirror_x, y), r, neon_blue, 2)
-            cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) 
-            
+        # ---> RGB-Werte aus dem Referenzbild holen <---
+        if hasattr(self, 'last_ref_img') and self.last_ref_img is not None:
+            ref_h, ref_w = self.last_ref_img.shape[:2]
+            safe_ref_x = max(0, min(real_x, ref_w - 1))
+            safe_ref_y = max(0, min(real_y, ref_h - 1))
+            ref_b, ref_g, ref_r = self.last_ref_img[safe_ref_y, safe_ref_x]
+            ref_str = f"Ref({ref_r},{ref_g},{ref_b})"
         else:
-            real_x = int((x - self.current_img_w) / self.current_scale)
-            real_y = int(y / self.current_scale)
+            ref_str = "Ref(-,-,-)"
+
+        # RGB-Werte aus dem nackten Live-Bild holen
+        if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
+            b_val, g_val, r_val = self.last_clean_live_img[real_y, real_x]
+            live_str = f"Live({r_val},{g_val},{b_val})"
+        else:
+            live_str = "Live(-,-,-)"
+
+        diff_val = self.last_raw_diff[real_y, real_x] if hasattr(self, 'last_raw_diff') else 0
+        
+        # Faktor und Farb-Distanz auslesen
+        if hasattr(self, 'last_color_multiplier') and self.last_color_multiplier is not None:
+            factor = self.last_color_multiplier[real_y, real_x]
+            dist_c = self.last_color_dist[real_y, real_x] if hasattr(self, 'last_color_dist') else 0
+            bonus_str = f" | Dist: {dist_c:.0f} | F: {factor:.2f}"
+        else:
+            bonus_str = " | Filter Aus"
             
-            # ---> NEU: Diff-Wert auslesen <---
-            diff_val = self.last_raw_diff[real_y, real_x] if hasattr(self, 'last_raw_diff') else 0
-            self.lbl_coords.config(text=f"Rechtes Bild -> X:{real_x:04d} | Y:{real_y:04d} | DIFF:{diff_val:03d}")
-            
-            # ---> NEU: Fadenkreuz im LINKEN Bild einzeichnen <---
-            mirror_x = x - self.current_img_w
-            cv2.circle(temp_img, (mirror_x, y), r, neon_blue, 2)
-            cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) 
+        # UI Update mit Anzeige der Seite
+        side_name = "Live" if is_left else "Rechts"
+        self.lbl_coords.config(text=f"{side_name} X:{real_x:04d} Y:{real_y:04d} | D:{diff_val:03d} | {ref_str} -> {live_str}{bonus_str}")
+        
+        # Fadenkreuz zeichnen (mit Spiegel-Logik für die jeweils andere Seite)
+        mirror_x = (x + self.current_img_w) if is_left else (x - self.current_img_w)
+        cv2.circle(temp_img, (mirror_x, y), kreis_radius, neon_blue, 2)
+        cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) 
 
         # Das temporäre Bild mit dem Overlay blitzschnell ins Tkinter-Label werfen
         img_pil = Image.fromarray(cv2.cvtColor(temp_img, cv2.COLOR_BGR2RGB))
@@ -814,13 +870,129 @@ class OfflineLaborApp:
             self.lbl_image.config(image=self.tk_image)
 
     def on_drag_start(self, event):
-        """Merkt sich die Startkoordinaten beim Klicken"""
-        # Wir nutzen x_root/y_root, weil das die absoluten Bildschirmkoordinaten sind.
-        # So zittert das Bild nicht, wenn sich das Label unter der Maus wegbewegt.
+        """Merkt sich die Startkoordinaten beim Klicken ODER pickt die Wandfarbe"""
+        # ---> DER FIX: Wir merken uns IMMER die Mauskoordinaten, egal in welchem Modus.
+        # Das verhindert den "Teleport-Bug", falls man beim Klicken die Maus minimal bewegt!
         self.drag_start_x = event.x_root
         self.drag_start_y = event.y_root
         self.start_pan_x = self.pan_x
         self.start_pan_y = self.pan_y
+
+        # ---> Wenn die Pipette aktiv ist, fangen wir den Klick ab! <---
+        if getattr(self, 'color_picker_active', False):
+            self.pick_color_from_event(event)
+            self.toggle_color_picker() # Nach dem Klick sofort wieder deaktivieren
+            return
+
+    def toggle_color_picker(self):
+        """Schaltet den Modus um und ändert das Aussehen des Buttons/Mauszeigers"""
+        self.color_picker_active = not getattr(self, 'color_picker_active', False)
+        if self.color_picker_active:
+            self.btn_pick_color.config(bg="#e74c3c", text="🔴 Klick ins Bild...")
+            self.lbl_image.config(cursor="crosshair")
+        else:
+            self.btn_pick_color.config(bg="#f39c12", text="🎨 Wandfarbe picken")
+            self.lbl_image.config(cursor="")
+
+    def pick_color_from_event(self, event):
+        """Holt den Farbwert unter der Maus und schreibt ihn in die Config"""
+        if getattr(self, 'base_combined_img', None) is None or not hasattr(self, 'current_scale'):
+            return
+            
+        x, y = event.x, event.y
+        img_h, img_w = self.base_combined_img.shape[:2]
+        if x < 0 or y < 0 or x >= img_w or y >= img_h: return
+
+        # Koordinaten exakt wie beim Maus-Hover ausrechnen
+        is_left = (x < self.current_img_w)
+        raw_x = x if is_left else (x - self.current_img_w)
+        real_x = int(raw_x / self.current_scale)
+        real_y = int(y / self.current_scale)
+
+        if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
+            orig_h, orig_w = self.last_clean_live_img.shape[:2]
+            real_x = max(0, min(real_x, orig_w - 1))
+            real_y = max(0, min(real_y, orig_h - 1))
+            
+            # Farbe auslesen (BGR)
+            b_val, g_val, r_val = self.last_clean_live_img[real_y, real_x]
+            
+            # In die Konfiguration der AKTUELLEN Kamera schreiben
+            if getattr(self, 'package_data', None) and self.package_data.get('config'):
+                parser = self.package_data['config']
+                side_str = "Hintergrund_Links" if self.current_side == 'left' else "Hintergrund_Rechts"
+                
+                if not parser.has_section(side_str):
+                    parser.add_section(side_str)
+                
+                parser.set(side_str, 'rgb_r', str(r_val))
+                parser.set(side_str, 'rgb_g', str(g_val))
+                parser.set(side_str, 'rgb_b', str(b_val))
+                
+                self.print_log("SYSTEM", f"🎨 WANDFARBE GEUPDATET ({side_str}): RGB({r_val}, {g_val}, {b_val}) gepickt an Position X:{real_x}, Y:{real_y}")
+                
+                # Engine sofort mit den neuen Farben zwingen neuzustarten!
+                self.on_param_change(force=True)
+
+    def on_drag_stop(self, event):
+        """Entscheidet beim Loslassen: War es Drag&Drop oder ein Röntgen-Klick?"""
+        if getattr(self, 'color_picker_active', False): return
+        if getattr(self, 'tk_image', None) is None: return
+
+        # Wie weit hat sich die Maus seit dem Klick bewegt?
+        dx = event.x_root - self.drag_start_x
+        dy = event.y_root - self.drag_start_y
+        dist = (dx**2 + dy**2)**0.5
+
+        # Wenn sich die Maus kaum bewegt hat (< 5 Pixel), war es ein Klick!
+        if dist < 5:  
+            self.identify_shot_at_click(event.x, event.y)
+
+    def identify_shot_at_click(self, x, y):
+        """Sucht den Treffer unter der Maus und blendet die Frame-Info ein"""
+        if getattr(self, 'base_combined_img', None) is None: return
+            
+        is_left = (x < self.current_img_w)
+        raw_x = x if is_left else (x - self.current_img_w)
+        real_x = int(raw_x / self.current_scale)
+        real_y = int(y / self.current_scale)
+
+        radius = getattr(self, 'current_radius_px', 15)
+        best_shot = None
+        best_dist = float('inf')
+
+        # Alle Treffer durchsuchen, welcher am nächsten am Klick liegt
+        for shot in getattr(self, 'current_engine_shots', []):
+            sx, sy = shot['pos']
+            d = ((sx - real_x)**2 + (sy - real_y)**2)**0.5
+            if d <= radius and d < best_dist:
+                best_shot = shot
+                best_dist = d
+
+        if best_shot:
+            f_num = best_shot.get('labor_frame_num', '?')
+            # 1. Info ins Log schreiben
+            self.print_log("SYSTEM", f"🎯 RÖNTGEN-SCAN: Dieser Treffer entstand in BILD #{f_num} (Score: {best_shot.get('score', 0.0):.1f})")
+            
+            import time
+            # 2. Highlight-Daten speichern (für den orangen Kreis)
+            self.highlighted_shot = {
+                'pos': best_shot['pos'], 
+                'frame': f_num, 
+                'time': time.time()
+            }
+            
+            # Bild neu zeichnen, um das Highlight zu zeigen
+            self.update_image_display()
+            
+            # Timer setzen, um das Highlight nach 3 Sekunden wieder zu löschen
+            self.root.after(3000, self.clear_highlight)
+
+    def clear_highlight(self):
+        """Löscht das orangene Highlight nach Ablauf des Timers"""
+        self.highlighted_shot = None
+        self.update_image_display()
+
 
     def on_drag_motion(self, event):
         """Verschiebt das Bild während des Ziehens"""
@@ -876,6 +1048,36 @@ class OfflineLaborApp:
         
         side = self.active_camera_var.get()
         side_origs = self.get_current_side_origs()
+        
+        # =========================================================================
+        # ---> NEU: ELA-Optimierung! Wir berechnen den offiziellen Wettkampf-Radius
+        # genau EINMAL pro Frame-Wechsel und speichern ihn im RAM.
+        # =========================================================================
+        d_config = DummyConfig(self)
+        ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+        aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+        targets = self.dm.load_targets()
+        
+        # 1. Fallback-Weiche: Wettkampf-Modus vs. Freies Schießen
+        if ringwertung_aktiv and aktive_scheibe in targets:
+            offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
+        else:
+            val = d_config.get('Erkennung', 'caliber_durchmesser', fallback='4.5')
+            if str(val).strip().lower() == 'auto':
+                offizielles_kaliber_mm = float(targets.get(aktive_scheibe, {}).get('kaliber_mm', 4.5))
+            else:
+                try:
+                    offizielles_kaliber_mm = float(val)
+                except ValueError:
+                    offizielles_kaliber_mm = 4.5
+        
+        seite_str = "links" if side == 'left' else "rechts"
+        px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+        px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+        avg_px = (px_x + px_y) / 2.0
+        
+        self.official_radius_px = (offizielles_kaliber_mm / 2.0) * avg_px
+        # =========================================================================
         
         # UI updaten
         self.shot_jump_var.set(str(self.current_index))
@@ -957,9 +1159,6 @@ class OfflineLaborApp:
             img = self.get_img(side_origs[i])
             
             if i == target_idx:
-                ## ---> NEU: Echter Logger für das ZIEL-Bild einschalten <---
-                #detector.log = self.print_log
-                
                 self.log_text.insert(tk.END, "\n" + "▼"*70 + "\n")
                 self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR BILD-AUFNAHME ({i+1})  ███\n")
                 self.log_text.insert(tk.END, "▼"*70 + "\n\n")
@@ -975,12 +1174,16 @@ class OfflineLaborApp:
                     history_mask = temp_state.cumulative_mask.copy()
                 else:
                     history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
-            #else:
-            #    # ---> DER TURBO-BOOST: Stummschaltung für die Historie! <---
-            #    # Wir verhindern hunderte zeitraubende Tkinter-GUI-Updates
-            #    detector.log = lambda side, text, show_gui=False: None
-                
+                    
+            # ---> NEU: Zähle die Schüsse VOR der Erkennung <---
+            shots_before = len(d_sm.shots)
+            
             detector.detect_new_shot(img, side)
+            
+            # ---> NEU: Stemple alle neu hinzugekommenen Schüsse mit der Bildnummer <---
+            shots_after = len(d_sm.shots)
+            for j in range(shots_before, shots_after):
+                d_sm.shots[j]['labor_frame_num'] = i + 1
 
         # 4. VISUALISIERUNG DER ENGINE-ERGEBNISSE
         # ... (Ab hier geht der bisherige Code von "Hole das Diff-Bild direkt aus dem Dummy..." exakt wie gewohnt weiter!)
@@ -1028,12 +1231,12 @@ class OfflineLaborApp:
             
             orig_shots_side = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
             curr_shots_side = [s for s in d_sm.shots if s.get('side') == side]
-            #cal_r = self.caliber_radius_var.get()
-            # Wir holen uns den perfekten, linsenkorrigierten Pixel-Radius direkt aus der Engine!
-            cal_r = detector.get_caliber_radius(side)
+            
+            # Wir holen uns den perfekten optischen Pixel-Radius NUR für das Alignment!
+            cal_r_optisch = detector.get_caliber_radius(side)
             
             # Wir nutzen das smarte Alignment, um die gelben Kreise an die neuen Treffer zu koppeln!
-            aligned = self.align_shots(orig_shots_side, curr_shots_side, cal_r * 2.5)
+            aligned = self.align_shots(orig_shots_side, curr_shots_side, cal_r_optisch * 2.5)
             
             # Finde den Punkt in der Timeline, an dem der aktuell letzte neue Schuss (curr_idx) steht
             last_valid_align_idx = -1
@@ -1054,10 +1257,9 @@ class OfflineLaborApp:
             
             for s in shots_to_draw:
                 ox, oy = s['x'], s['y']
-                # Gelb in BGR = (0, 255, 255), Dicke = 1
-                cv2.circle(live_img, (ox, oy), int(cal_r), (0, 255, 255), 1)
+                # ---> DER FIX: Wir nutzen den blitzschnellen, gecachten offiziellen Radius! <---
+                cv2.circle(live_img, (ox, oy), int(self.official_radius_px), (0, 255, 255), 1)
         # ====================================================================
-
         # ---> NEU: Daten für den späteren Vergleich merken <---
         self.current_engine_shots = d_sm.shots 
         self.current_side = side
@@ -1104,7 +1306,50 @@ class OfflineLaborApp:
             diff_bgr = cv2.absdiff(ref_blur, norm_live)
             raw_diff = np.max(diff_bgr, axis=2) # Unser Farb-Hack!
             
+            # =========================================================================
+            # ---> NEU: Matrix-Simulation für das Labor (Ansicht 4 synchron halten!) <---
+            # =========================================================================
+            if self.farb_bonus_aktiv_var.get():
+                bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
+                r_tgt = d_config.getint(bg_sec, 'rgb_r')
+                g_tgt = d_config.getint(bg_sec, 'rgb_g')
+                b_tgt = d_config.getint(bg_sec, 'rgb_b')
+                
+                sum_tgt = float(r_tgt + g_tgt + b_tgt)
+                if sum_tgt == 0: sum_tgt = 1.0
+                target_norm = np.array([b_tgt/sum_tgt, g_tgt/sum_tgt, r_tgt/sum_tgt], dtype=np.float32)
+                
+                live_float = norm_live.astype(np.float32)
+                live_sum = np.sum(live_float, axis=2, keepdims=True)
+                live_sum[live_sum == 0] = 1.0
+                live_norm = live_float / live_sum
+                
+                dist_matrix = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
+                
+                self.last_color_dist = dist_matrix # Distanz für die Maus retten!
+                
+                # =========================================================================
+                # ---> NEU: ELA-konforme Multiplikator-Logik mit Rausch-Plateau <---
+                # =========================================================================
+                limit = self.farb_bonus_limit_var.get()
+                multiplier = 1.0 - (dist_matrix / limit)
+                
+                # Boost um 15% (Rausch-Ausgleich), aber hart bei 1.0 abriegeln!
+                multiplier = np.clip(multiplier * 1.15, 0.0, 1.0)
+                
+                kurve = self.farb_bonus_kurve_var.get()
+                if kurve != 1.0:
+                    multiplier = multiplier ** kurve
+                
+                self.last_color_multiplier = multiplier 
+                
+                raw_diff = np.clip(raw_diff.astype(np.float32) * multiplier, 0, 255).astype(np.uint8)
+            else:
+                self.last_color_multiplier = None
+
             # ---> NEU: Wir führen den Threshold VORHER aus, genau wie die Engine! <---
+
+
             hit_tol = self.hit_tolerance_var.get()
             _, thresh_raw = cv2.threshold(raw_diff, hit_tol, 255, cv2.THRESH_BINARY)
             self.last_thresh_raw = thresh_raw.copy()
@@ -1678,7 +1923,18 @@ class OfflineLaborApp:
             raw_display = raw.copy()
             if hist_mask is not None and cv2.countNonZero(hist_mask) > 0:
                 raw_display[hist_mask > 0] = 0
-            base_gray = cv2.cvtColor(raw_display, cv2.COLOR_GRAY2BGR)
+                
+            # ====================================================================
+            # ---> NEU: Der statische visuelle Boost (ELA-Gradationskurve) <---
+            # Wir ziehen nur die rohen Differenzwerte für das Auge künstlich hoch.
+            # Ein konstanter Faktor (2.5) sorgt für 100% Vergleichbarkeit über alle ZIPs!
+            # ====================================================================
+            optischer_boost = 3.5 #2.5 
+            # Multiplizieren und bei 255 (Weiß) abriegeln
+            raw_boosted = np.clip(raw_display.astype(np.float32) * optischer_boost, 0, 255).astype(np.uint8)
+            
+            # Aus dem helleren Graubild machen wir nun das farbige Basis-Bild
+            base_gray = cv2.cvtColor(raw_boosted, cv2.COLOR_GRAY2BGR)
             
             # 1. ERST die Historie abziehen! (Wir erhalten isolierte, nackte Risse)
             if hist_mask is not None and cv2.countNonZero(hist_mask) > 0:
@@ -1696,28 +1952,6 @@ class OfflineLaborApp:
                 new_fragments_morphed = cv2.morphologyEx(new_fragments_raw, cv2.MORPH_CLOSE, kernel)
             else:
                 new_fragments_morphed = new_fragments_raw.copy()
-                
-            ## ====================================================================
-            ## ---> DEIN DEBUG-EXPORT-BLOCK <---
-            ## ====================================================================
-            #import os
-            #export_dir = "labor_export"
-            #os.makedirs(export_dir, exist_ok=True)
-            #
-            #cv2.imwrite(os.path.join(export_dir, "debug_00_final_morphed_gesamt.png"), new_fragments_morphed)
-            #contours, _ = cv2.findContours(new_fragments_morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            #
-            #for i, cnt in enumerate(contours):
-            #    area = cv2.contourArea(cnt)
-            #    single_contour_mask = np.zeros_like(new_fragments_morphed)
-            #    cv2.drawContours(single_contour_mask, [cnt], -1, 255, -1)
-            #    
-            #    x, y, cw, ch = cv2.boundingRect(cnt)
-            #    if cw > 0 and ch > 0:
-            #        cropped_contour = single_contour_mask[y:y+ch, x:x+cw]
-            #        filename = f"debug_contour_{i:03d}_area_{area:.1f}.png"
-            #        cv2.imwrite(os.path.join(export_dir, filename), cropped_contour)
-            ## ====================================================================
 
             # 3. Differenz bilden: Was genau hat der Morph-Filter hinzugefügt?
             added_by_morph = cv2.subtract(new_fragments_morphed, new_fragments_raw)
@@ -1727,7 +1961,8 @@ class OfflineLaborApp:
             bool_morph = added_by_morph > 0
             
             red_overlay = np.zeros_like(base_gray)
-            red_overlay[:,:,2] = np.maximum(raw_display, 100) 
+            # ---> KORREKTUR: Wir nutzen auch hier das hellere Bild für die rote Sättigung <---
+            red_overlay[:,:,2] = np.maximum(raw_boosted, 100) 
             
             blue_overlay = np.zeros_like(base_gray)
             blue_overlay[:,:,0] = 255 
@@ -1792,6 +2027,43 @@ class OfflineLaborApp:
         resized_right = cv2.resize(right_img, (self.current_img_w, new_h), interpolation=cv2.INTER_NEAREST)
         
         combined = np.hstack((resized_live, resized_right))
+        
+        # =========================================================================
+        # ---> NEU: Das präzise, dünne Treffer-Highlight (Röntgen-Klick) <---
+        # =========================================================================
+        hl = getattr(self, 'highlighted_shot', None)
+        if hl is not None:
+            import time
+            # Nur zeichnen, wenn der Klick weniger als 3 Sekunden her ist
+            if time.time() - hl['time'] < 3.0:
+                hx, hy = hl['pos']
+                f_num = hl['frame']
+                
+                # Koordinaten und den exakten optischen Radius passend zum Zoom skalieren
+                scaled_x1 = int(hx * self.current_scale)
+                scaled_y = int(hy * self.current_scale)
+                
+                # ---> DER FIX: Wir nutzen den offiziellen Wettkampf-Radius für die Prüfung! <---
+                base_r = getattr(self, 'official_radius_px', 15)
+                scaled_r = int(base_r * self.current_scale)
+                
+                scaled_x2 = scaled_x1 + self.current_img_w # Rechte Bildhälfte
+                
+                color = (0, 165, 255) # Leuchtendes Orange (BGR)
+                
+                # Linienstärke 1 oder 2 für maximale Präzision (statt dickem 3er Balken)
+                line_thickness = 1 
+                
+                # Highlight Links (Exakter Kaliber-Kreis)
+                cv2.circle(combined, (scaled_x1, scaled_y), scaled_r, color, line_thickness)
+                # Punkt im Zentrum für das exakte Pixel-Zentrum
+                cv2.circle(combined, (scaled_x1, scaled_y), 2, color, -1)
+                cv2.putText(combined, f"#{f_num}", (scaled_x1 - 15, scaled_y - scaled_r - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                
+                # Highlight Rechts (Gespiegelt)
+                cv2.circle(combined, (scaled_x2, scaled_y), scaled_r, color, line_thickness)
+                cv2.circle(combined, (scaled_x2, scaled_y), 2, color, -1)
+                cv2.putText(combined, f"#{f_num}", (scaled_x2 - 15, scaled_y - scaled_r - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 1)
         
         # ---> NEU: Das nackte Bild ohne Maus-Overlay als Base-Image merken <---
         self.base_combined_img = combined.copy()
