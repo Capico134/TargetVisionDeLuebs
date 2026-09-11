@@ -340,22 +340,22 @@ class OfflineLaborApp:
         
         # ---> NEU: Der Pipetten-Button <---
         self.color_picker_active = False
-        self.btn_pick_color = tk.Button(top_frame, text="🎨 Wandfarbe picken", command=self.toggle_color_picker, bg="#f39c12", fg="white", font=("Arial", 10, "bold"))
+        self.btn_pick_color = tk.Button(top_frame, text="🎨 Farbe picken", command=self.toggle_color_picker, bg="#f39c12", fg="white", font=("Arial", 10, "bold"))
         self.btn_pick_color.pack(side=tk.LEFT, padx=(20, 0))
         
         # ---> lbl_file wurde hier komplett gelöscht! <---
         
-        self.btn_compare = tk.Button(top_frame, text="📊 Abweichung messen", command=self.show_comparison, font=("Arial", 10, "bold"))
+        self.btn_compare = tk.Button(top_frame, text="📊 Abweichungen", command=self.show_comparison, font=("Arial", 10, "bold"))
         self.btn_compare.pack(side=tk.LEFT, padx=20)        
         
-        btn_export = tk.Button(top_frame, text="💾 Test-Case exportieren", command=self.export_test_case)
+        btn_export = tk.Button(top_frame, text="💾 Test-Case-Export", command=self.export_test_case)
         btn_export.pack(side=tk.LEFT, pady=5, padx=(0, 20))
         
         btn_einstellungen = tk.Button(top_frame, text="⚙️ Erweiterte Einstellungen", command=self.open_all_settings_dialog, bg="#34495e", fg="white")
         btn_einstellungen.pack(side=tk.LEFT, pady=5, padx=(0, 20))
         
         # ---> NEU: Der lange, eindeutige Button-Text <---
-        self.btn_apply = tk.Button(top_frame, text="✅ Einstellungen speichern und Labor schließen", 
+        self.btn_apply = tk.Button(top_frame, text="✅ Einstellungen speichern", 
                                    command=self.apply_to_live, bg="#27ae60", fg="white", font=("Arial", 10, "bold"))
         self.btn_apply.pack(side=tk.LEFT, pady=5)
         
@@ -848,7 +848,8 @@ class OfflineLaborApp:
             
         # UI Update mit Anzeige der Seite
         side_name = "Live" if is_left else "Rechts"
-        self.lbl_coords.config(text=f"{side_name} X:{real_x:04d} Y:{real_y:04d} | D:{diff_val:03d} | {ref_str} -> {live_str}{bonus_str}")
+        #self.lbl_coords.config(text=f"{side_name} X:{real_x:04d} Y:{real_y:04d} | D:{diff_val:03d} | {ref_str} -> {live_str}{bonus_str}")
+        self.lbl_coords.config(text=f"{side_name} X:{real_x:04d} Y:{real_y:04d} | D:{diff_val:03d} | {bonus_str}")
         
         # Fadenkreuz zeichnen (mit Spiegel-Logik für die jeweils andere Seite)
         mirror_x = (x + self.current_img_w) if is_left else (x - self.current_img_w)
