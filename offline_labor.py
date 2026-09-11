@@ -142,11 +142,12 @@ class DummyDateiManager:
             cv2.imwrite(path, image)
             
     def load_targets(self):
-        # ---> NEU: Nutze bevorzugt die historische zielscheiben.json aus dem ZIP-Archiv! <---
+        # 1. PRIO: Nutze zwingend die historische zielscheiben.json aus dem ZIP-Archiv (Zeitkapsel)!
         if getattr(self.app, 'package_data', None) and self.app.package_data.get('targets'):
             return self.app.package_data['targets']
             
-        # Fallback: Das ZIP hat keine, wir nehmen die frische von der Festplatte
+        # 2. FALLBACK: Das ZIP ist von früher und hat keine JSON an Bord. 
+        # Wir nehmen die tagesaktuelle aus der Gegenwart von der Festplatte.
         return self.app.dm.load_targets()
         
     def write_log(self, msg):
@@ -533,8 +534,8 @@ class OfflineLaborApp:
         self.make_slider(param_frame, "max_treffer_je_frame:", self.max_treffer_je_frame_var, 0, 10, key="max_treffer_je_frame")
         tk.Label(param_frame, text="--- Anti-Weiß Filter (Farb-Bonus) ---", fg="gray").pack(pady=(10, 5))
         
-        # Checkbutton (registriert sich selbst über trace)
-        chk_farb = tk.Checkbutton(param_frame, text="🟢 Farb-Bonus aktiv (HSV-Richtung)", variable=self.farb_bonus_aktiv_var)
+        # Checkbutton
+        chk_farb = tk.Checkbutton(param_frame, text="🟢 farb_bonus_aktiv", variable=self.farb_bonus_aktiv_var)
         chk_farb.pack(anchor=tk.W)
         self.registered_sliders["farb_bonus_aktiv"] = self.farb_bonus_aktiv_var
         
@@ -607,11 +608,14 @@ class OfflineLaborApp:
             
             self.original_values = {}
             
-            # 1. DIE MAGIE: Automatische Zuweisung ALLER registrierten Slider!
+            # 1. DIE MAGIE: Automatische Zuweisung ALLER registrierten Slider (und Checkboxen)!
             for key, tk_var in self.registered_sliders.items():
                 if parser.has_option('Erkennung', key):
                     # Typ prüfen und passend aus der Config holen
-                    if isinstance(tk_var, tk.IntVar):
+                    if isinstance(tk_var, tk.BooleanVar):
+                        # ConfigParser benötigt .getboolean() für "yes/no", "true/false"
+                        tk_var.set(parser.getboolean('Erkennung', key))
+                    elif isinstance(tk_var, tk.IntVar):
                         tk_var.set(parser.getint('Erkennung', key))
                     elif isinstance(tk_var, tk.DoubleVar):
                         tk_var.set(parser.getfloat('Erkennung', key))
@@ -1047,13 +1051,25 @@ class OfflineLaborApp:
         
         # =========================================================================
         # ---> NEU: ELA-Optimierung! Wir berechnen den offiziellen Wettkampf-Radius
-        # genau EINMAL pro Frame-Wechsel und speichern ihn im RAM, 
-        # statt ständig die JSON von der Festplatte zu lesen.
+        # genau EINMAL pro Frame-Wechsel und speichern ihn im RAM.
         # =========================================================================
         d_config = DummyConfig(self)
+        ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
         targets = self.dm.load_targets()
-        offizielles_kaliber_mm = float(targets.get(aktive_scheibe, {}).get('kaliber_mm', 4.5))
+        
+        # 1. Fallback-Weiche: Wettkampf-Modus vs. Freies Schießen
+        if ringwertung_aktiv and aktive_scheibe in targets:
+            offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
+        else:
+            val = d_config.get('Erkennung', 'caliber_durchmesser', fallback='4.5')
+            if str(val).strip().lower() == 'auto':
+                offizielles_kaliber_mm = float(targets.get(aktive_scheibe, {}).get('kaliber_mm', 4.5))
+            else:
+                try:
+                    offizielles_kaliber_mm = float(val)
+                except ValueError:
+                    offizielles_kaliber_mm = 4.5
         
         seite_str = "links" if side == 'left' else "rechts"
         px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)

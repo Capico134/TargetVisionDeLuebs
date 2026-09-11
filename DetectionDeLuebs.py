@@ -234,6 +234,7 @@ class TargetDetector:
 
         
         if self.farb_bonus_aktiv:
+            #print(f"self.farb_bonus_aktiv {self.farb_bonus_aktiv}")
             farb_bonus_limit = self.config.getfloat('Erkennung', 'farb_bonus_limit', fallback=150.0)
             farb_bonus_kurve = self.config.getfloat('Erkennung', 'farb_bonus_kurve', fallback=2.0)
             

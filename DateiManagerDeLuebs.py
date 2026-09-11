@@ -616,11 +616,10 @@ darstellung_ohne_weissabgleich = yes
                 if os.path.exists(self.LOG_FILE) and not apply_diet_filter:
                     zf_out.write(self.LOG_FILE, os.path.basename(self.LOG_FILE))
                     
-                # ---> NEU: Zielscheiben.json mit in die Kapsel packen! <---
-                target_file = "zielscheiben.json"
-                if os.path.exists(target_file):
-                    zf_out.write(target_file, target_file)
-
+                # =========================================================================
+                # ---> NEU: Die Time-Capsule Logik für die zielscheiben.json <---
+                # Wir überschreiben die alte JSON im ZIP NICHT aus Versehen mit der lokalen!
+                # =========================================================================
                 # Hilfsfunktion für den Diät-Filter
                 def should_skip(fname):
                     if not apply_diet_filter: return False
@@ -631,18 +630,25 @@ darstellung_ohne_weissabgleich = yes
                     if "verworfene" in name_lower: return True
                     return False
 
-                # 4A. Bilder aus einem existierenden ZIP kopieren (Für das Offline-Labor)
+                target_file = "zielscheiben.json"
+                
+                # 4A. Bilder (und historische JSON) aus einem existierenden ZIP kopieren
                 if source_zip and os.path.exists(source_zip):
                     with zipfile.ZipFile(source_zip, 'r') as zf_in:
                         for item in zf_in.infolist():
                             fname = item.filename
-                            # Wir überspringen config und json, weil die oben schon frisch geschrieben wurden!
+                            # Wir überspringen config und json, weil die oben frisch geschrieben wurden!
+                            # WICHTIG: "zielscheiben.json" wird NICHT mehr übersprungen, sondern kopiert!
                             if fname in ["match.json", "config.ini"] or should_skip(fname): 
                                 continue
                             zf_out.writestr(item, zf_in.read(fname))
                             
-                # 4B. Bilder von der Festplatte holen (Für den TargetVision Live-Betrieb)
+                # 4B. Live-Betrieb: Bilder (und lokale JSON) von der Festplatte holen
                 elif source_folder and os.path.exists(source_folder):
+                    # Wenn wir frisch vom Stand speichern, nehmen wir die aktuelle lokale JSON mit!
+                    if os.path.exists(target_file):
+                        zf_out.write(target_file, target_file)
+                        
                     for fname in os.listdir(source_folder):
                         if should_skip(fname): 
                             continue
