@@ -48,7 +48,7 @@ class TargetDetector:
         self.max_treffer_je_frame = config.getint('Erkennung', 'max_treffer_je_frame', fallback=0)
         self.randaufschlag_cumulative = config.getint('Erkennung', 'randaufschlag_cumulative', fallback=0)
         # ---> NEU: Farb-Bonus System (Anti-Weiß Filter) <---
-        self.farb_bonus_aktiv = config.getboolean('Erkennung', 'farb_bonus_aktiv', fallback=True)
+        self.farb_bonus_aktiv = config.getboolean('Erkennung', 'farb_bonus_aktiv', fallback=False)
         self.farb_bonus_limit = config.getfloat('Erkennung', 'farb_bonus_limit', fallback=150.0)
         self.farb_bonus_kurve = self.config.getfloat('Erkennung', 'farb_bonus_kurve', fallback=2.0)
 
@@ -257,10 +257,12 @@ class TargetDetector:
             dist_matrix = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
             
             # =========================================================================
-            # ---> NEU: ELA-konforme Multiplikator-Logik (Nur Strafe, kein Boost) <---
+            # ---> NEU: ELA-konforme Multiplikator-Logik mit Rausch-Plateau <---
             # =========================================================================
             multiplier = 1.0 - (dist_matrix / farb_bonus_limit)
-            multiplier = np.clip(multiplier, 0.0, 1.0)
+            
+            # Boost um 15% (Rausch-Ausgleich), aber hart bei 1.0 abriegeln!
+            multiplier = np.clip(multiplier * 1.15, 0.0, 1.0)
             
             if farb_bonus_kurve != 1.0:
                 multiplier = multiplier ** farb_bonus_kurve
@@ -555,7 +557,28 @@ class TargetDetector:
                         # Fallback (Passiert nur, falls Base aus irgendeinem Grund rausfliegt)
                         valid_candidates = kandidaten
 
-                    winner = max(valid_candidates, key=lambda x: x['score'])
+                    # =========================================================================
+                    # ---> NEU: Die ELA Tie-Breaker Logik (Hierarchie bei Gleichstand) <---
+                    # =========================================================================
+                    def tie_breaker_key(cand):
+                        # 1. Wir vergleichen nur die 1. Nachkommastelle (wie im Log)
+                        rounded_score = round(cand['score'], 1)
+                        
+                        # 2. Die feste Hierarchie: Je höher die Zahl, desto bevorzugter
+                        name = cand['name']
+                        if name == "MinCircle (MEC)": 
+                            prio = 4
+                        elif name == "Schwerpunkt (CoG)": 
+                            prio = 3
+                        elif "Hough" in name: 
+                            prio = 2
+                        else: 
+                            prio = 1 # Fallback für Abrisskanten
+                            
+                        # Python sortiert Tuples nacheinander: Erst Score, dann Priorität
+                        return (rounded_score, prio)
+
+                    winner = max(valid_candidates, key=tie_breaker_key)
                     
                     self.log(side, f"🏆 BATTLE ROYALE SIEGER: {winner['name']} setzt Zentrum (Score {winner['score']:.1f})")
                     

@@ -142,7 +142,11 @@ class DummyDateiManager:
             cv2.imwrite(path, image)
             
     def load_targets(self):
-        # ---> NEU: Holt die echten Zielscheiben-Daten für den StateManager! <---
+        # ---> NEU: Nutze bevorzugt die historische zielscheiben.json aus dem ZIP-Archiv! <---
+        if getattr(self.app, 'package_data', None) and self.app.package_data.get('targets'):
+            return self.app.package_data['targets']
+            
+        # Fallback: Das ZIP hat keine, wir nehmen die frische von der Festplatte
         return self.app.dm.load_targets()
         
     def write_log(self, msg):
@@ -198,7 +202,7 @@ class OfflineLaborApp:
         # ---> NEU: Variable für den Filter <---
         self.max_treffer_je_frame_var = tk.IntVar(value=0)
         # ---> NEU: Farb-Bonus System <---
-        self.farb_bonus_aktiv_var = tk.BooleanVar(value=True)
+        self.farb_bonus_aktiv_var = tk.BooleanVar(value=False)
         self.farb_bonus_limit_var = tk.DoubleVar(value=150.0)
         self.farb_bonus_kurve_var = tk.DoubleVar(value=2.00)
         
@@ -389,7 +393,8 @@ class OfflineLaborApp:
         # ---> NEU: Drag & Drop (Verschieben) + Reset <---
         self.lbl_image.bind('<ButtonPress-1>', self.on_drag_start)
         self.lbl_image.bind('<B1-Motion>', self.on_drag_motion)
-        self.lbl_image.bind('<Button-3>', self.reset_view) # Rechtsklick = Reset
+        self.lbl_image.bind('<ButtonRelease-1>', self.on_drag_stop) # <--- NEU: Der Loslass-Erkenner!
+        self.lbl_image.bind('<Button-3>', self.reset_view)
         
         # Das Log-Fenster (Standard-Höhe etwas kleiner, da man es ja nun größer ziehen kann)
         self.log_text = tk.Text(self.paned_window, height=12, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
@@ -925,6 +930,65 @@ class OfflineLaborApp:
                 # Engine sofort mit den neuen Farben zwingen neuzustarten!
                 self.on_param_change(force=True)
 
+    def on_drag_stop(self, event):
+        """Entscheidet beim Loslassen: War es Drag&Drop oder ein Röntgen-Klick?"""
+        if getattr(self, 'color_picker_active', False): return
+        if getattr(self, 'tk_image', None) is None: return
+
+        # Wie weit hat sich die Maus seit dem Klick bewegt?
+        dx = event.x_root - self.drag_start_x
+        dy = event.y_root - self.drag_start_y
+        dist = (dx**2 + dy**2)**0.5
+
+        # Wenn sich die Maus kaum bewegt hat (< 5 Pixel), war es ein Klick!
+        if dist < 5:  
+            self.identify_shot_at_click(event.x, event.y)
+
+    def identify_shot_at_click(self, x, y):
+        """Sucht den Treffer unter der Maus und blendet die Frame-Info ein"""
+        if getattr(self, 'base_combined_img', None) is None: return
+            
+        is_left = (x < self.current_img_w)
+        raw_x = x if is_left else (x - self.current_img_w)
+        real_x = int(raw_x / self.current_scale)
+        real_y = int(y / self.current_scale)
+
+        radius = getattr(self, 'current_radius_px', 15)
+        best_shot = None
+        best_dist = float('inf')
+
+        # Alle Treffer durchsuchen, welcher am nächsten am Klick liegt
+        for shot in getattr(self, 'current_engine_shots', []):
+            sx, sy = shot['pos']
+            d = ((sx - real_x)**2 + (sy - real_y)**2)**0.5
+            if d <= radius and d < best_dist:
+                best_shot = shot
+                best_dist = d
+
+        if best_shot:
+            f_num = best_shot.get('labor_frame_num', '?')
+            # 1. Info ins Log schreiben
+            self.print_log("SYSTEM", f"🎯 RÖNTGEN-SCAN: Dieser Treffer entstand in BILD #{f_num} (Score: {best_shot.get('score', 0.0):.1f})")
+            
+            import time
+            # 2. Highlight-Daten speichern (für den orangen Kreis)
+            self.highlighted_shot = {
+                'pos': best_shot['pos'], 
+                'frame': f_num, 
+                'time': time.time()
+            }
+            
+            # Bild neu zeichnen, um das Highlight zu zeigen
+            self.update_image_display()
+            
+            # Timer setzen, um das Highlight nach 3 Sekunden wieder zu löschen
+            self.root.after(3000, self.clear_highlight)
+
+    def clear_highlight(self):
+        """Löscht das orangene Highlight nach Ablauf des Timers"""
+        self.highlighted_shot = None
+        self.update_image_display()
+
 
     def on_drag_motion(self, event):
         """Verschiebt das Bild während des Ziehens"""
@@ -980,6 +1044,24 @@ class OfflineLaborApp:
         
         side = self.active_camera_var.get()
         side_origs = self.get_current_side_origs()
+        
+        # =========================================================================
+        # ---> NEU: ELA-Optimierung! Wir berechnen den offiziellen Wettkampf-Radius
+        # genau EINMAL pro Frame-Wechsel und speichern ihn im RAM, 
+        # statt ständig die JSON von der Festplatte zu lesen.
+        # =========================================================================
+        d_config = DummyConfig(self)
+        aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+        targets = self.dm.load_targets()
+        offizielles_kaliber_mm = float(targets.get(aktive_scheibe, {}).get('kaliber_mm', 4.5))
+        
+        seite_str = "links" if side == 'left' else "rechts"
+        px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+        px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+        avg_px = (px_x + px_y) / 2.0
+        
+        self.official_radius_px = (offizielles_kaliber_mm / 2.0) * avg_px
+        # =========================================================================
         
         # UI updaten
         self.shot_jump_var.set(str(self.current_index))
@@ -1061,9 +1143,6 @@ class OfflineLaborApp:
             img = self.get_img(side_origs[i])
             
             if i == target_idx:
-                ## ---> NEU: Echter Logger für das ZIEL-Bild einschalten <---
-                #detector.log = self.print_log
-                
                 self.log_text.insert(tk.END, "\n" + "▼"*70 + "\n")
                 self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR BILD-AUFNAHME ({i+1})  ███\n")
                 self.log_text.insert(tk.END, "▼"*70 + "\n\n")
@@ -1079,12 +1158,16 @@ class OfflineLaborApp:
                     history_mask = temp_state.cumulative_mask.copy()
                 else:
                     history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
-            #else:
-            #    # ---> DER TURBO-BOOST: Stummschaltung für die Historie! <---
-            #    # Wir verhindern hunderte zeitraubende Tkinter-GUI-Updates
-            #    detector.log = lambda side, text, show_gui=False: None
-                
+                    
+            # ---> NEU: Zähle die Schüsse VOR der Erkennung <---
+            shots_before = len(d_sm.shots)
+            
             detector.detect_new_shot(img, side)
+            
+            # ---> NEU: Stemple alle neu hinzugekommenen Schüsse mit der Bildnummer <---
+            shots_after = len(d_sm.shots)
+            for j in range(shots_before, shots_after):
+                d_sm.shots[j]['labor_frame_num'] = i + 1
 
         # 4. VISUALISIERUNG DER ENGINE-ERGEBNISSE
         # ... (Ab hier geht der bisherige Code von "Hole das Diff-Bild direkt aus dem Dummy..." exakt wie gewohnt weiter!)
@@ -1132,12 +1215,12 @@ class OfflineLaborApp:
             
             orig_shots_side = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
             curr_shots_side = [s for s in d_sm.shots if s.get('side') == side]
-            #cal_r = self.caliber_radius_var.get()
-            # Wir holen uns den perfekten, linsenkorrigierten Pixel-Radius direkt aus der Engine!
-            cal_r = detector.get_caliber_radius(side)
+            
+            # Wir holen uns den perfekten optischen Pixel-Radius NUR für das Alignment!
+            cal_r_optisch = detector.get_caliber_radius(side)
             
             # Wir nutzen das smarte Alignment, um die gelben Kreise an die neuen Treffer zu koppeln!
-            aligned = self.align_shots(orig_shots_side, curr_shots_side, cal_r * 2.5)
+            aligned = self.align_shots(orig_shots_side, curr_shots_side, cal_r_optisch * 2.5)
             
             # Finde den Punkt in der Timeline, an dem der aktuell letzte neue Schuss (curr_idx) steht
             last_valid_align_idx = -1
@@ -1158,10 +1241,9 @@ class OfflineLaborApp:
             
             for s in shots_to_draw:
                 ox, oy = s['x'], s['y']
-                # Gelb in BGR = (0, 255, 255), Dicke = 1
-                cv2.circle(live_img, (ox, oy), int(cal_r), (0, 255, 255), 1)
+                # ---> DER FIX: Wir nutzen den blitzschnellen, gecachten offiziellen Radius! <---
+                cv2.circle(live_img, (ox, oy), int(self.official_radius_px), (0, 255, 255), 1)
         # ====================================================================
-
         # ---> NEU: Daten für den späteren Vergleich merken <---
         self.current_engine_shots = d_sm.shots 
         self.current_side = side
@@ -1231,11 +1313,13 @@ class OfflineLaborApp:
                 self.last_color_dist = dist_matrix # Distanz für die Maus retten!
                 
                 # =========================================================================
-                # ---> NEU: ELA-konforme Multiplikator-Logik (Nur Strafe, kein Boost) <---
+                # ---> NEU: ELA-konforme Multiplikator-Logik mit Rausch-Plateau <---
                 # =========================================================================
                 limit = self.farb_bonus_limit_var.get()
                 multiplier = 1.0 - (dist_matrix / limit)
-                multiplier = np.clip(multiplier, 0.0, 1.0)
+                
+                # Boost um 15% (Rausch-Ausgleich), aber hart bei 1.0 abriegeln!
+                multiplier = np.clip(multiplier * 1.15, 0.0, 1.0)
                 
                 kurve = self.farb_bonus_kurve_var.get()
                 if kurve != 1.0:
@@ -1829,7 +1913,7 @@ class OfflineLaborApp:
             # Wir ziehen nur die rohen Differenzwerte für das Auge künstlich hoch.
             # Ein konstanter Faktor (2.5) sorgt für 100% Vergleichbarkeit über alle ZIPs!
             # ====================================================================
-            optischer_boost = 2.5 
+            optischer_boost = 3.5 #2.5 
             # Multiplizieren und bei 255 (Weiß) abriegeln
             raw_boosted = np.clip(raw_display.astype(np.float32) * optischer_boost, 0, 255).astype(np.uint8)
             
@@ -1927,6 +2011,43 @@ class OfflineLaborApp:
         resized_right = cv2.resize(right_img, (self.current_img_w, new_h), interpolation=cv2.INTER_NEAREST)
         
         combined = np.hstack((resized_live, resized_right))
+        
+        # =========================================================================
+        # ---> NEU: Das präzise, dünne Treffer-Highlight (Röntgen-Klick) <---
+        # =========================================================================
+        hl = getattr(self, 'highlighted_shot', None)
+        if hl is not None:
+            import time
+            # Nur zeichnen, wenn der Klick weniger als 3 Sekunden her ist
+            if time.time() - hl['time'] < 3.0:
+                hx, hy = hl['pos']
+                f_num = hl['frame']
+                
+                # Koordinaten und den exakten optischen Radius passend zum Zoom skalieren
+                scaled_x1 = int(hx * self.current_scale)
+                scaled_y = int(hy * self.current_scale)
+                
+                # ---> DER FIX: Wir nutzen den offiziellen Wettkampf-Radius für die Prüfung! <---
+                base_r = getattr(self, 'official_radius_px', 15)
+                scaled_r = int(base_r * self.current_scale)
+                
+                scaled_x2 = scaled_x1 + self.current_img_w # Rechte Bildhälfte
+                
+                color = (0, 165, 255) # Leuchtendes Orange (BGR)
+                
+                # Linienstärke 1 oder 2 für maximale Präzision (statt dickem 3er Balken)
+                line_thickness = 1 
+                
+                # Highlight Links (Exakter Kaliber-Kreis)
+                cv2.circle(combined, (scaled_x1, scaled_y), scaled_r, color, line_thickness)
+                # Punkt im Zentrum für das exakte Pixel-Zentrum
+                cv2.circle(combined, (scaled_x1, scaled_y), 2, color, -1)
+                cv2.putText(combined, f"#{f_num}", (scaled_x1 - 15, scaled_y - scaled_r - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                
+                # Highlight Rechts (Gespiegelt)
+                cv2.circle(combined, (scaled_x2, scaled_y), scaled_r, color, line_thickness)
+                cv2.circle(combined, (scaled_x2, scaled_y), 2, color, -1)
+                cv2.putText(combined, f"#{f_num}", (scaled_x2 - 15, scaled_y - scaled_r - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 1)
         
         # ---> NEU: Das nackte Bild ohne Maus-Overlay als Base-Image merken <---
         self.base_combined_img = combined.copy()

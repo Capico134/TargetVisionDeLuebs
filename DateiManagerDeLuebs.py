@@ -26,6 +26,8 @@ class DateiManager:
         self.image_queue = queue.Queue()
         self.save_thread = threading.Thread(target=self._image_writer_worker, daemon=True)
         self.save_thread.start()
+        
+        self.targets_cache = None # <--- NEU: Der RAM-Speicher für die Zielscheiben!
 
     def _init_system(self, clear_on_start):
         """Erstellt Ordner und leert das Log beim Start."""
@@ -289,6 +291,10 @@ clipping_factor_current = 0.95
 # 0 = alle Treffer; alle anderen Zahlenwerte = nur die ersten x Treffer mit der größten Fläche werden gewertet
 max_treffer_je_frame = 0
 randaufschlag_cumulative = 0
+farb_bonus_aktiv = yes
+farb_bonus_limit = 150.0
+farb_bonus_kurve = 2.0
+
 
 [Timing]
 # Bildwiederholrate/Haupttakt in Millisekunden (33 ms entspricht ca. 30 FPS).
@@ -563,6 +569,9 @@ darstellung_ohne_weissabgleich = yes
                     
                     if filename == "match.json":
                         result['match_data'] = json.loads(zf.read(filename).decode('utf-8'))
+                    elif filename == "zielscheiben.json":
+                        # ---> NEU: Eingefrorene Historien-Daten auslesen <---
+                        result['targets'] = json.loads(zf.read(filename).decode('utf-8'))
                     elif filename == "config.ini":
                         # Den String sofort in einen fertigen Parser umwandeln
                         config_str = zf.read(filename).decode('utf-8')
@@ -606,6 +615,11 @@ darstellung_ohne_weissabgleich = yes
                 # 3. Log-Datei (Von der Festplatte, falls sie nicht herausgefiltert werden soll)
                 if os.path.exists(self.LOG_FILE) and not apply_diet_filter:
                     zf_out.write(self.LOG_FILE, os.path.basename(self.LOG_FILE))
+                    
+                # ---> NEU: Zielscheiben.json mit in die Kapsel packen! <---
+                target_file = "zielscheiben.json"
+                if os.path.exists(target_file):
+                    zf_out.write(target_file, target_file)
 
                 # Hilfsfunktion für den Diät-Filter
                 def should_skip(fname):
@@ -647,12 +661,16 @@ darstellung_ohne_weissabgleich = yes
 
             
     def load_targets(self):
-        """Lädt die zielscheiben.json aus dem Projektverzeichnis."""
+        """Lädt die zielscheiben.json (gecacht im RAM für maximale Performance)."""
+        # ELA-Optimierung: Wenn schon geladen, sofort aus dem RAM antworten!
+        if self.targets_cache is not None:
+            return self.targets_cache
+            
         target_file = "zielscheiben.json"
-        
         try:
             with open(target_file, "r", encoding="utf-8") as f:
-                return json.load(f)
+                self.targets_cache = json.load(f)
+                return self.targets_cache
         except Exception as e:
             print(f"❌ Fehler beim Lesen der {target_file}: {e}")
             self.write_log(f"SYSTEM: ❌ Fehler beim Lesen der zielscheiben.json -> {e}")
