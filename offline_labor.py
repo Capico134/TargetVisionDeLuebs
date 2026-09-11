@@ -1,6 +1,6 @@
 
 import os
-
+import time
 import json
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
@@ -2034,19 +2034,18 @@ class OfflineLaborApp:
         # =========================================================================
         hl = getattr(self, 'highlighted_shot', None)
         if hl is not None:
-            import time
             # Nur zeichnen, wenn der Klick weniger als 3 Sekunden her ist
             if time.time() - hl['time'] < 3.0:
                 hx, hy = hl['pos']
                 f_num = hl['frame']
                 
                 # Koordinaten und den exakten optischen Radius passend zum Zoom skalieren
-                scaled_x1 = int(hx * self.current_scale)
-                scaled_y = int(hy * self.current_scale)
+                scaled_x1 = round(hx * self.current_scale)
+                scaled_y = round(hy * self.current_scale)
                 
                 # ---> DER FIX: Wir nutzen den offiziellen Wettkampf-Radius für die Prüfung! <---
                 base_r = getattr(self, 'official_radius_px', 15)
-                scaled_r = int(base_r * self.current_scale)
+                scaled_r = round(base_r * self.current_scale)
                 
                 scaled_x2 = scaled_x1 + self.current_img_w # Rechte Bildhälfte
                 
