@@ -554,6 +554,12 @@ class OfflineLaborApp:
         tk.Checkbutton(param_frame, text="💾 Simulations-Bilder exportieren", 
                        variable=self.export_images_var, fg="#00aaff").pack(anchor=tk.W, pady=(15, 0))
 
+        # ---> NEU: Zielscheiben-Ringe Checkbox <---
+        self.show_target_rings_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(param_frame, text="🎯 Zielscheibe (Ringe) einblenden", 
+                       variable=self.show_target_rings_var, fg="#3498db", 
+                       command=lambda: self.on_param_change(force=True)).pack(anchor=tk.W, pady=(5, 0))
+
         # ---> NEU: Scroll-Fix für das Mausrad im gesamten Parameter-Block <---
         def _on_mousewheel(event):
             # Check für Scrollrichtung (Windows/Mac: delta, Linux: num 4/5)
@@ -1222,7 +1228,7 @@ class OfflineLaborApp:
                 # Grün für alte, Rot für diesen Frame
                 color = (0, 0, 255) if shot.get('is_new', False) else (0, 255, 0)
                 cv2.circle(live_img, shot['pos'], r, color, 1)
-                
+
                 
         # ====================================================================
         # ---> NEU: Original-Treffer (Gelbe Linien) einblenden (SYNCHRONISIERT) <---
@@ -2028,6 +2034,56 @@ class OfflineLaborApp:
         resized_right = cv2.resize(right_img, (self.current_img_w, new_h), interpolation=cv2.INTER_NEAREST)
         
         combined = np.hstack((resized_live, resized_right))
+        
+        # =========================================================================
+        # ---> NEU: Zielscheiben-Ringe (Ellipsen) hochauflösend auf dem GUI-Bild <---
+        # =========================================================================
+        if getattr(self, 'show_target_rings_var', None) and self.show_target_rings_var.get():
+            meta = getattr(self, 'original_match_data', {})
+            if meta:
+                meta = meta.get("metadata", {})
+                
+            side = getattr(self, 'current_side', 'left')
+            center_key = 'center_l' if side == 'left' else 'center_r'
+            center_pts = meta.get(center_key)
+            
+            if center_pts:
+                cx, cy = center_pts
+                d_config = DummyConfig(self)
+                aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+                targets = self.dm.load_targets()
+                
+                if aktive_scheibe in targets:
+                    target_data = targets[aktive_scheibe]
+                    ringe = target_data.get('ringe_durchmesser_mm', {})
+                    innenzehner = target_data.get('innenzehner_mm', 0.0)
+                    
+                    seite_str = "links" if side == 'left' else "rechts"
+                    px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+                    px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+                    
+                    # 1. Nullpunkt skalieren und für das rechte Bild verschieben (+ current_img_w)
+                    scaled_cx = round(cx * self.current_scale) + self.current_img_w
+                    scaled_cy = round(cy * self.current_scale)
+                    
+                    ring_color = (255, 255, 0) # Cyan (BGR)
+                    
+                    # 2. Alle Standard-Ringe zeichnen
+                    for ring_name, d_mm in ringe.items():
+                        r_mm = float(d_mm) / 2.0
+                        # Erst in 720p-Pixel umrechnen, dann auf Monitor-Auflösung skalieren!
+                        rx = round((r_mm * px_x) * self.current_scale)
+                        ry = round((r_mm * px_y) * self.current_scale)
+                        
+                        cv2.ellipse(combined, (scaled_cx, scaled_cy), (rx, ry), 0, 0, 360, ring_color, 1)
+                        
+                    # 3. Den Innenzehner noch mit einzeichnen
+                    if innenzehner > 0:
+                        r_mm = float(innenzehner) / 2.0
+                        rx = round((r_mm * px_x) * self.current_scale)
+                        ry = round((r_mm * px_y) * self.current_scale)
+                        cv2.ellipse(combined, (scaled_cx, scaled_cy), (rx, ry), 0, 0, 360, ring_color, 1)
+        
         
         # =========================================================================
         # ---> NEU: Das präzise, dünne Treffer-Highlight (Röntgen-Klick) <---
