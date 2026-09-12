@@ -92,6 +92,10 @@ class TargetTracker:
         self.btn_right_coords = None
         self.btn_edit_left_coords = None  # <--- NEU
         self.btn_edit_right_coords = None # <--- NEU
+        # ---> NEU: Platzhalter für den Zentrum-Button <---
+        self.btn_center_left_coords = None
+        self.btn_center_right_coords = None        
+
         self.btn_exit_coords = None
         self.btn_zip_coords = None
         self.btn_highscore_coords = None
@@ -329,12 +333,21 @@ class TargetTracker:
         cv2.rectangle(view, (ex1, ey1), (ex2, ey2), (255, 255, 255), 1)
         cv2.putText(view, "Edit", (ex1 + 35, ey1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
         
+        # ---> NEU: Zentrum-Button links neben Edit <---
+        cx1, cy1 = start_x + frame_w - 330, total_h - 35
+        cx2, cy2 = start_x + frame_w - 230, total_h - 5
+        cv2.rectangle(view, (cx1, cy1), (cx2, cy2), (180, 130, 70), -1) # Dezentes Blau (BGR)
+        cv2.rectangle(view, (cx1, cy1), (cx2, cy2), (255, 255, 255), 1)
+        cv2.putText(view, "Zentrum", (cx1 + 15, cy1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        
         if side == 'left':
             self.btn_left_coords = (bx1, by1, bx2, by2)
-            self.btn_edit_left_coords = (ex1, ey1, ex2, ey2)  # <--- HIER FEHLTE DIE ZUWEISUNG
+            self.btn_edit_left_coords = (ex1, ey1, ex2, ey2)
+            self.btn_center_left_coords = (cx1, cy1, cx2, cy2) # <--- NEU
         else:
             self.btn_right_coords = (bx1, by1, bx2, by2)
-            self.btn_edit_right_coords = (ex1, ey1, ex2, ey2) # <--- UND HIER
+            self.btn_edit_right_coords = (ex1, ey1, ex2, ey2) 
+            self.btn_center_right_coords = (cx1, cy1, cx2, cy2) # <--- NEU
 
     def update_gui(self, frame_l, frame_r, blink_state):
         frames_to_stack = []
@@ -699,29 +712,60 @@ class TargetTracker:
             # ---> NEU: Befinden wir uns im "Pick-Koordinaten"-Modus? <---
             if getattr(self, 'active_picker', None) is not None:
                 s = self.active_picker['side']
+                mode = self.active_picker.get('mode', 'edit') # <--- ELA: Fallback auf edit für den alten Dialog
                 
                 # ---> OFFSET ABZIEHEN! <---
                 raw_x = (x - getattr(self, 'pad_x', 0)) / self.scale_x
                 raw_y = (y - getattr(self, 'pad_y', 0)) / self.scale_y
                 
-                # Wenn wir rechts sind, müssen wir die Breite des linken Bildes abziehen
                 if s == 'right' and self.nutze_kamera_links:
                     raw_x -= self.w_left_displayed
                     
-                # Sicherheits-Check: Wurde auch auf die richtige Seite geklickt?
                 if (s == 'left' and raw_x > self.w_left_displayed and self.nutze_kamera_rechts) or \
                    (s == 'right' and raw_x < 0):
                     self.log("SYSTEM", "⚠️ Klick war auf der falschen Seite! Bitte nochmal.", True)
                     return
                 
-                raw_x = max(0.0, raw_x) # Verhindert negative Werte
+                raw_x = max(0.0, raw_x)
+                picked_x, picked_y = int(raw_x), int(raw_y)
                 
-                # ---> NEU: Briefkasten füllen, statt Tkinter direkt zu berühren! <---
-                self.picked_coords = (int(raw_x), int(raw_y)) # Wir nutzen saubere ganze Zahlen
-                self.picked_coords_ready = True
-                
-                self.log("SYSTEM", f"✅ Koordinaten für Treffer übernommen!", True)
-                return
+                # ==============================================================
+                # ---> NEU: Weiche für Editieren vs. Zentrum setzen <---
+                # ==============================================================
+                if mode == 'center':
+                    # 1. Den Nullpunkt im System überschreiben
+                    self.sm.set_nullpunkt(s, picked_x, picked_y)
+                    self.log("SYSTEM", f"🎯 Neues Zentrum {s.upper()} gesetzt: X:{picked_x} Y:{picked_y}", True)
+                    
+                    # 2. Visuelles Feedback aktualisieren (Grüner Kreis rutscht zur Maus)
+                    old_fb = self.calib_feedback_left if s == 'left' else self.calib_feedback_right
+                    new_fb = {
+                        'cx': picked_x, 'cy': picked_y,
+                        'red_cx': picked_x, 'red_cy': picked_y,
+                        'ideal_rx': old_fb['ideal_rx'] if old_fb else 150, 
+                        'ideal_ry': old_fb['ideal_ry'] if old_fb else 150,
+                        'red_rx': 0, 'red_ry': 0,
+                        'show_red': False,
+                        'time': time.time() # Startet den Timer für die Anzeige neu
+                    }
+                    if s == 'left': self.calib_feedback_left = new_fb
+                    else: self.calib_feedback_right = new_fb
+                        
+                    # 3. Ringwertung aller bestehenden Schüsse live neu durchrechnen!
+                    for shot in self.sm.shots:
+                        if shot['side'] == s:
+                            new_score, raw_score = self.sm.calculate_score(s, shot['pos'][0], shot['pos'][1])
+                            shot['score'] = new_score
+                            shot['raw_score'] = raw_score
+                            
+                    self.active_picker = None 
+                    return
+                else:
+                    # Der bisherige Editier-Modus für den Briefkasten
+                    self.picked_coords = (picked_x, picked_y) 
+                    self.picked_coords_ready = True
+                    self.log("SYSTEM", f"✅ Koordinaten für Treffer übernommen!", True)
+                    return
                 
         if event == cv2.EVENT_LBUTTONDOWN:
             # Beenden Button
@@ -778,6 +822,22 @@ class TargetTracker:
                 ex1, ey1, ex2, ey2 = self.btn_edit_right_coords
                 if ex1 <= x <= ex2 and ey1 <= y <= ey2:
                     self.trigger_edit_right = True
+                    return
+            
+            # Zentrum Button (Links)
+            if self.nutze_kamera_links and getattr(self, 'btn_center_left_coords', None):
+                cx1, cy1, cx2, cy2 = self.btn_center_left_coords
+                if cx1 <= x <= cx2 and cy1 <= y <= cy2:
+                    self.active_picker = {'mode': 'center', 'side': 'left'}
+                    self.log("SYSTEM", "🎯 Klicke ins LINKE Kamerabild, um das neue Zentrum zu setzen!", True)
+                    return
+            
+            # Zentrum Button (Rechts)
+            if self.nutze_kamera_rechts and getattr(self, 'btn_center_right_coords', None):
+                cx1, cy1, cx2, cy2 = self.btn_center_right_coords
+                if cx1 <= x <= cx2 and cy1 <= y <= cy2:
+                    self.active_picker = {'mode': 'center', 'side': 'right'}
+                    self.log("SYSTEM", "🎯 Klicke ins RECHTE Kamerabild, um das neue Zentrum zu setzen!", True)
                     return
             
             # Highscore Button

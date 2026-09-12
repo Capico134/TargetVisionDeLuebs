@@ -56,7 +56,7 @@
   "Laufende_Scheibe_50m": {
     "name": "Laufende Scheibe 50m (DSB/ISSF)",
     "kaliber_mm": 5.6,
-    "spiegel_durchmesser_mm": 60.0,
+    "spiegel_durchmesser_mm": 366.0,
     "ringe_durchmesser_mm": {
       "10": 60.0,
       "9": 94.0,
