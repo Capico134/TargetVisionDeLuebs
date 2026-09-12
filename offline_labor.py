@@ -562,7 +562,7 @@ class OfflineLaborApp:
         # ---> NEU: Zielscheiben-Ringe Checkbox <---
         self.show_target_rings_var = tk.BooleanVar(value=False)
         tk.Checkbutton(param_frame, text="🎯 Zielscheibe (Ringe) einblenden", 
-                       variable=self.show_target_rings_var, fg="#3498db", 
+                       variable=self.show_target_rings_var, fg="#27ae60", 
                        command=lambda: self.on_param_change(force=True)).pack(anchor=tk.W, pady=(5, 0))
 
         # ---> NEU: Scroll-Fix für das Mausrad im gesamten Parameter-Block <---
@@ -1059,6 +1059,12 @@ class OfflineLaborApp:
         if not self.current_zip_path: return
         
         side = self.active_camera_var.get()
+        
+        # =====================================================================
+        # ---> ELA-FIX: Zustand direkt am Anfang unbestechlich synchronisieren!
+        # =====================================================================
+        self.current_side = side 
+        
         side_origs = self.get_current_side_origs()
         
         # =========================================================================
@@ -1157,6 +1163,15 @@ class OfflineLaborApp:
         if not ref_name: return
         ref_img = self.get_img(ref_name)
         detector.set_reference_image(ref_img, side)
+        
+        # =========================================================================
+        # ---> ELA FIX: Beschütze das echte Zentrum vor der Auto-Erkennung! <---
+        # =========================================================================
+        if getattr(self, 'original_match_data', None):
+            meta = self.original_match_data.get('metadata', {})
+            center_key = 'center_l' if side == 'left' else 'center_r'
+            if meta.get(center_key):
+                d_sm.set_nullpunkt(side, meta[center_key][0], meta[center_key][1])
         
         startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{side}" in f), None)
         if startmask_name:
@@ -1280,7 +1295,7 @@ class OfflineLaborApp:
         # ====================================================================
         # ---> NEU: Daten für den späteren Vergleich merken <---
         self.current_engine_shots = d_sm.shots 
-        self.current_side = side
+        #self.current_side = side # WURDE SCHON GANZ OBEN GEMACHT!!
 
         # ---> NEU: Alle nötigen Bilder aus der Engine fischen <---
         h, w = live_img.shape[:2]
@@ -1460,8 +1475,15 @@ class OfflineLaborApp:
         for s in ['left', 'right']:
             ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
             if ref_name:
-                ref_img = self.get_img( ref_name)
+                ref_img = self.get_img(ref_name)
                 detector.set_reference_image(ref_img, s)
+                
+                # ---> ELA FIX <---
+                if getattr(self, 'original_match_data', None):
+                    meta = self.original_match_data.get('metadata', {})
+                    center_key = 'center_l' if s == 'left' else 'center_r'
+                    if meta.get(center_key):
+                        d_sm.set_nullpunkt(s, meta[center_key][0], meta[center_key][1])
             
             startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
             if startmask_name:
@@ -1641,6 +1663,13 @@ class OfflineLaborApp:
                     ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
                     if ref_name:
                         detector.set_reference_image(self.get_img(ref_name), s)
+                        
+                        # ---> ELA FIX <---
+                        if getattr(self, 'original_match_data', None):
+                            meta = self.original_match_data.get('metadata', {})
+                            center_key = 'center_l' if s == 'left' else 'center_r'
+                            if meta.get(center_key):
+                                d_sm.set_nullpunkt(s, meta[center_key][0], meta[center_key][1])
                     
                     startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
                     if startmask_name:
@@ -2054,7 +2083,8 @@ class OfflineLaborApp:
             if meta:
                 meta = meta.get("metadata", {})
                 
-            side = getattr(self, 'current_side', 'left')
+            # ---> ELA FIX: Wir holen uns die Seite immer absolut verlässlich direkt vom Radiobutton! <---
+            side = self.active_camera_var.get()
             center_key = 'center_l' if side == 'left' else 'center_r'
             center_pts = meta.get(center_key)
             
