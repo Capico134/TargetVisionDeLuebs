@@ -860,7 +860,7 @@ class OfflineLaborApp:
         # UI Update mit Anzeige der Seite
         side_name = "Live" if is_left else "Rechts"
         #self.lbl_coords.config(text=f"{side_name} X:{real_x:04d} Y:{real_y:04d} | D:{diff_val:03d} | {ref_str} -> {live_str}{bonus_str}")
-        self.lbl_coords.config(text=f"{side_name} X:{real_x:04d} Y:{real_y:04d} | D:{diff_val:03d} | {bonus_str}")
+        self.lbl_coords.config(text=f"{side_name} X:{real_x:04d} Y:{real_y:04d} | D:{diff_val:03d}{bonus_str}")
         
         # Fadenkreuz zeichnen (mit Spiegel-Logik für die jeweils andere Seite)
         mirror_x = (x + self.current_img_w) if is_left else (x - self.current_img_w)
@@ -1175,8 +1175,10 @@ class OfflineLaborApp:
                 self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR BILD-AUFNAHME ({i+1})  ███\n")
                 self.log_text.insert(tk.END, "▼"*70 + "\n\n")
                 
+                # --- ELA: Alte Geister-Bilder aus der Zeitreise vor dem echten Frame löschen ---
                 d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
                 d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
+                d_dm.debug_images.pop(f"letzte_abrisskante_{side}", None) # <--- NEU
                 
                 live_img = img.copy()
                 clean_live_img = img.copy()
@@ -1224,39 +1226,37 @@ class OfflineLaborApp:
         if len(diff_img.shape) == 2:
             diff_img = cv2.cvtColor(diff_img, cv2.COLOR_GRAY2BGR)
             
-        # Kreise auf das Live-Bild zeichnen (aus dem StateManager der Engine!)
-        # ---> NEU: Dynamischen Radius verwenden!
-        r = int(detector.get_caliber_radius(side))
-        self.current_radius_px = r  # <--- NEU: Für das Maus-Fadenkreuz speichern!
-        for shot in d_sm.shots:
-            if shot['side'] == side:
-                # Grün für alte, Rot für diesen Frame
-                color = (0, 0, 255) if shot.get('is_new', False) else (0, 255, 0)
-                cv2.circle(live_img, shot['pos'], r, color, 1)
+        # ====================================================================
+        # ---> ELA-Render-Pipeline: Optische Schichten (Layers) <---
+        # Schicht 1 (Hintergrund): Alte berechnete Treffer (Grün)
+        # Schicht 2 (Mitte): Original-Treffer aus der JSON (Gelb)
+        # Schicht 3 (Vordergrund): Aktuellster Treffer (Rot)
+        # ====================================================================
+        
+        # Radien sauber runden
+        r_erkennung = round(detector.get_caliber_radius(side))
+        r_offiziell = round(self.official_radius_px)
+        self.current_radius_px = r_erkennung  # Für das Maus-Fadenkreuz speichern!
 
+        # --- LAYER 1: Alte Treffer (Grün) ---
+        for shot in d_sm.shots:
+            if shot['side'] == side and not shot.get('is_new', False):
+                cv2.circle(live_img, shot['pos'], r_erkennung, (0, 255, 0), 1)
                 
-        # ====================================================================
-        # ---> NEU: Original-Treffer (Gelbe Linien) einblenden (SYNCHRONISIERT) <---
-        # ====================================================================
+        # --- LAYER 2: Original-Treffer aus match.json (Gelb) ---
         if getattr(self, 'show_orig_hits_var', None) and self.show_orig_hits_var.get() and getattr(self, 'original_match_data', None):
             side_char = 'l' if side == 'left' else 'r'
-            
             orig_shots_side = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
             curr_shots_side = [s for s in d_sm.shots if s.get('side') == side]
             
-            # Wir holen uns den perfekten optischen Pixel-Radius NUR für das Alignment!
-            cal_r_optisch = detector.get_caliber_radius(side)
+            # Smart Alignment
+            aligned = self.align_shots(orig_shots_side, curr_shots_side, r_erkennung * 2.5)
             
-            # Wir nutzen das smarte Alignment, um die gelben Kreise an die neuen Treffer zu koppeln!
-            aligned = self.align_shots(orig_shots_side, curr_shots_side, cal_r_optisch * 2.5)
-            
-            # Finde den Punkt in der Timeline, an dem der aktuell letzte neue Schuss (curr_idx) steht
             last_valid_align_idx = -1
             for idx, (o_idx, c_idx, dist) in enumerate(aligned):
                 if c_idx is not None:
                     last_valid_align_idx = idx
                     
-            # Wir zeichnen alle Original-Schüsse, die chronologisch bis zu diesem Punkt passiert sind
             shots_to_draw = []
             if last_valid_align_idx >= 0:
                 for idx in range(last_valid_align_idx + 1):
@@ -1264,13 +1264,19 @@ class OfflineLaborApp:
                     if o_idx is not None:
                         shots_to_draw.append(orig_shots_side[o_idx])
             else:
-                # Fallback: Falls noch gar kein neuer Schuss da ist, nutzen wir den Bild-Index
                 shots_to_draw = orig_shots_side[:target_idx + 1]
             
             for s in shots_to_draw:
-                ox, oy = s['x'], s['y']
-                # ---> DER FIX: Wir nutzen den blitzschnellen, gecachten offiziellen Radius! <---
-                cv2.circle(live_img, (ox, oy), int(self.official_radius_px), (0, 255, 255), 1)
+                cv2.circle(live_img, (s['x'], s['y']), r_offiziell, (0, 255, 255), 1)
+
+        # --- LAYER 3: Neue Treffer (Rot - Immer ganz oben!) ---
+        for shot in d_sm.shots:
+            if shot['side'] == side and shot.get('is_new', False):
+                cv2.circle(live_img, shot['pos'], r_erkennung, (0, 0, 255), 1)
+        
+        
+        
+        
         # ====================================================================
         # ---> NEU: Daten für den späteren Vergleich merken <---
         self.current_engine_shots = d_sm.shots 
