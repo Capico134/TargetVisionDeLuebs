@@ -53,15 +53,16 @@ class DateiManager:
             f.write(f"=== DIGITALE TREFFERANZEIGE LOG - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n")
 
     def _image_writer_worker(self):
-        """Der Koch: Läuft unsichtbar im Hintergrund und speichert Bilder ab."""
+        """Der Koch: Läuft unsichtbar im Hintergrund und speichert Bilder als lupenreine PNGs."""
         while True:
-            # Holt den ältesten Auftrag (blockiert sanft, wenn die Queue leer ist)
             task = self.image_queue.get()
             if task is None: 
-                break # Das "Feierabend"-Signal
+                break
                 
             filepath, image_data = task
-            cv2.imwrite(filepath, image_data)
+            # ---> DER FIX: Wir zwingen OpenCV, das PNG mit Kompressionsstufe 3 (perfekter Mittelweg aus
+            # Platzbedarf und absoluter 100% Verlustfreiheit) zu speichern.
+            cv2.imwrite(filepath, image_data, [cv2.IMWRITE_PNG_COMPRESSION, 3])
             self.image_queue.task_done()
 
 

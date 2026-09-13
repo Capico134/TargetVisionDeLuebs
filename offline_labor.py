@@ -106,9 +106,9 @@ class DummyDateiManager:
             import os
             if not os.path.exists(self.export_folder):
                 os.makedirs(self.export_folder)
-            ext = ".png" if "diff" in name.lower() or "mask" in name.lower() else ".jpg"
-            path = os.path.join(self.export_folder, f"{name}{ext}")
-            cv2.imwrite(path, image)
+            # ---> DER FIX: ALLES zwingend als verlustfreies PNG speichern! <---
+            path = os.path.join(self.export_folder, f"{name}.png")
+            cv2.imwrite(path, image, [cv2.IMWRITE_PNG_COMPRESSION, 3])
             
     def load_targets(self):
         # 1. PRIO: Nutze zwingend die historische zielscheiben.json aus dem ZIP-Archiv (Zeitkapsel)!
