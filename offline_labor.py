@@ -598,6 +598,9 @@ class OfflineLaborApp:
         # ---> NEU: Pfeiltasten global an das Fenster binden <---
         self.root.bind('<Left>', self.safe_prev_shot)
         self.root.bind('<Right>', self.safe_next_shot)
+        # ---> NEU: WASD für das Pixel-Schubsen des Zentrums <---
+        for key_char in ['w', 'a', 's', 'd', 'W', 'A', 'S', 'D']:
+            self.root.bind(f'<{key_char}>', self.nudge_center)
     
         # ---> NEU: Original-Treffer Checkbox <---
         self.show_orig_hits_var = tk.BooleanVar(value=False)
@@ -804,6 +807,36 @@ class OfflineLaborApp:
         except ValueError:
             self.shot_jump_var.set(str(self.current_index))
 
+    def nudge_center(self, event):
+        """Verschiebt den Mittelpunkt im RAM und triggert eine vollständige Neuberechnung."""
+        # 1. Schutz: Wenn der Nutzer gerade in ein Textfeld klickt, ignorieren wir WASD!
+        if isinstance(self.root.focus_get(), tk.Entry):
+            return
+            
+        if not getattr(self, 'original_match_data', None):
+            return
+            
+        side = self.active_camera_var.get()
+        center_key = 'center_l' if side == 'left' else 'center_r'
+        
+        meta = self.original_match_data.get('metadata', {})
+        if not meta or center_key not in meta or not meta.get(center_key):
+            return # Es gibt in dieser JSON noch gar keinen Mittelpunkt
+            
+        cx, cy = meta[center_key]
+        char = event.keysym.lower()
+        
+        if char == 'w': cy -= 1
+        elif char == 's': cy += 1
+        elif char == 'a': cx -= 1
+        elif char == 'd': cx += 1
+        
+        # 2. Den neuen Wert speichern (wird dann beim nächsten "Test-Case-Export" auch physisch in die JSON geschrieben!)
+        self.original_match_data['metadata'][center_key] = [cx, cy]
+        
+        # 3. Log ausgeben und Bild sofort neu rendern (stanzt die Engine neu und berechnet die Ringe neu!)
+        self.print_log("SYSTEM", f"🎯 Zentrum {side.upper()} feinjustiert: X:{cx} Y:{cy}")
+        self.on_param_change(force=True)
  
     def on_param_change(self, event=None, force=False):
         if not self.current_zip_path:
