@@ -1870,10 +1870,10 @@ class OfflineLaborApp:
             if current_path and os.path.basename(current_path) == "Live_Tuning_Bridge.zip":
                 
                 # Wir müssen die aktuellen Masken/Diffs berechnen, um sie an TargetVision zu übergeben
-                d_config = DummyConfig(self)
+                d_config = self.package_data['config']  # <--- ELA FIX
                 d_dm = DummyDateiManager(self)
                 d_sm = StateManager(d_config, d_dm)
-                detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
+                detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None)
 
                 for orig_name in self.orig_files:
                     s = 'left' if 'left' in orig_name else 'right'
@@ -2114,7 +2114,7 @@ class OfflineLaborApp:
             
             if center_pts:
                 cx, cy = center_pts
-                d_config = DummyConfig(self)
+                d_config = self.package_data['config']  # <--- ELA FIX
                 aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
                 targets = self.dm.load_targets()
                 
