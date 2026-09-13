@@ -574,11 +574,13 @@ class TargetTracker:
                             seite_str = "links" if s == 'left' else "rechts"
                             px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
                             px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+                            korrektur = self.config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) # <--- NEU
                             
                             for d_mm in aeusserste_zwei:
-                                r_mm = d_mm / 2.0
-                                ring_rx = round((r_mm * px_x) * self.scale_x)
-                                ring_ry = round((r_mm * px_y) * self.scale_y)
+                                r_mm_base = d_mm / 2.0
+                                r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) # <--- NEU
+                                ring_rx = round((r_mm_draw * px_x) * self.scale_x)
+                                ring_ry = round((r_mm_draw * px_y) * self.scale_y)
                                 
                                 # Gestrichelte äußere Ringe zeichnen
                                 draw_dashed_ellipse(combined_view, (fb_cx, fb_cy), ring_rx, ring_ry, (0, 255, 0))
@@ -604,15 +606,17 @@ class TargetTracker:
                         seite_str = "links" if s == 'left' else "rechts"
                         px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
                         px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+                        korrektur = self.config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) # <--- NEU
                         
                         def draw_dashed_ellipse_perm(img, center, rx, ry, color):
                             for angle in range(0, 360, 6):
                                 cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 2, color, 1, cv2.LINE_AA)
                                 
                         for ring_name, d_mm in ringe.items():
-                            r_mm = float(d_mm) / 2.0
-                            rx = round((r_mm * px_x) * self.scale_x)
-                            ry = round((r_mm * px_y) * self.scale_y)
+                            r_mm_base = float(d_mm) / 2.0
+                            r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) # <--- NEU
+                            rx = round((r_mm_draw * px_x) * self.scale_x)
+                            ry = round((r_mm_draw * px_y) * self.scale_y)
                             draw_dashed_ellipse_perm(combined_view, (cx, cy), rx, ry, (0, 255, 0))
                             
                         if innenzehner > 0:

@@ -81,7 +81,8 @@ PARAMETER_LEXIKON = {
     "max_treffer_je_frame": "Hard-Limit: Wie viele NEUE Treffer darf das System maximal in einem einzigen Bild (Frame) finden? Wert 0 = Unbegrenzt. Schützt vor massivem Bildrauschen.",
     "farb_bonus_aktiv": "Wandfarben-Spion (Chrominanz-Filter). Die Basis-Erkennung berücksichtigt bereits wenn sich die Farben zum Referenzbild geändert hat. Dieser Filter analysiert ZUSÄTZLICH, ob der geänderte Bereich sich in Richtung dem Farbton der Hintergrundfarbe geändert hat. Damit werden z.B. ausgefranste Ränder nicht mehr als Änderung bewertet.",
     "farb_bonus_limit": "Farb-Toleranzbereich (Übergangsfaktor). Dies ist kein harter Grenzwert, sondern bestimmt die Weichheit des Filters. Er regelt, wie stark ein Pixel von der idealen Wandfarbe abweichen darf, bevor er gleitend auf null gedämpft wird. Größere Werte (z. B. 275) machen den Übergang sanfter, sodass auch beschattete, ausgefranste Risse noch anteilig als Treffer gewertet werden.",
-    "farb_bonus_kurve": "Gradationskurve für den Farb-Bonus. Ein Exponent (z.B. 2.0). Bestimmt, wie 'aggressiv' sich der Farb-Bonus aufschaukelt, je näher ein Pixel an der reinen Wandfarbe ist."
+    "farb_bonus_kurve": "Gradationskurve für den Farb-Bonus. Ein Exponent (z.B. 2.0). Bestimmt, wie 'aggressiv' sich der Farb-Bonus aufschaukelt, je näher ein Pixel an der reinen Wandfarbe ist.",
+    "fischaugenkorrektur": "Gleicht die 'Tonnenverzerrung' der Kameralinse am Bildrand aus. Positive Werte (z. B. 0.002) stauchen das mathematische Raster leicht, damit äußere Ringe exakt auf die optisch gewölbte Papierscheibe im Kamerabild passen.",
 }
 
 

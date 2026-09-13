@@ -172,6 +172,16 @@ class StateManager:
             dy_mm = dy_px / px_y
             dist_mm = math.sqrt(dx_mm**2 + dy_mm**2)
             
+            # =========================================================================
+            # ---> NEU: Linsenverzerrung (Fischauge) korrigieren <---
+            # =========================================================================
+            korrektur = self.config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
+            if korrektur != 0.0:
+                # Wir stauchen/strecken die mathematische Distanz zum Zentrum progressiv.
+                # Positive Werte (z.B. 0.002) ziehen weite Treffer "näher" ans Zentrum,
+                # um die optische Stauchung der Kameralinse am Bildrand auszugleichen.
+                dist_mm = dist_mm * (1.0 - (dist_mm * korrektur))
+            
             aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
             targets = self.dm.load_targets()
             

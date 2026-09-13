@@ -490,6 +490,10 @@ class OfflineLaborApp:
         self.make_slider(param_frame, "Pixel pro mm (X):", self.calib_x_var, 1.0, 15.0, 0.01, key=None, tooltip_key="px_pro_mm")
         self.make_slider(param_frame, "Pixel pro mm (Y):", self.calib_y_var, 1.0, 15.0, 0.01, key=None, tooltip_key="px_pro_mm")
 
+        # ---> NEU: Der Fischaugen-Slider <---
+        self.calib_fischauge_var = tk.DoubleVar(value=0.0)
+        self.make_slider(param_frame, "Fischaugen-Korr.:", self.calib_fischauge_var, -0.01, 0.01, 0.0001, key=None, tooltip_key="fischaugenkorrektur")
+
         def sync_calib_config(*args):
             if getattr(self, 'package_data', None) and self.package_data.get('config'):
                 parser = self.package_data['config']
@@ -500,12 +504,13 @@ class OfflineLaborApp:
                 
                 parser.set('Kameras', f'px_pro_mm_x_{seite_str}', str(self.calib_x_var.get()))
                 parser.set('Kameras', f'px_pro_mm_y_{seite_str}', str(self.calib_y_var.get()))
+                parser.set('Kameras', f'fischaugenkorrektur_{seite_str}', str(self.calib_fischauge_var.get())) # <--- NEU
                 
-                # Zwingt das Bild, die cyanfarbene Ellipse live mit dem Schieberegler neu zu zeichnen!
                 self.on_param_change()
                 
         self.calib_x_var.trace_add("write", sync_calib_config)
         self.calib_y_var.trace_add("write", sync_calib_config)
+        self.calib_fischauge_var.trace_add("write", sync_calib_config) # <--- NEU
         
         self.make_slider(param_frame, "hit_tolerance:", self.hit_tolerance_var, 1, 100, key="hit_tolerance")
         self.make_slider(param_frame, "min_hole_area:", self.min_hole_area_var, 5, 500, key="min_hole_area")
@@ -608,20 +613,18 @@ class OfflineLaborApp:
             seite_str = "links" if side == 'left' else "rechts"
             
             if parser.has_section('Kameras'):
-                # ---> ELA FIX: Erst BEIDE Werte in Sicherheit bringen, bevor der Trace feuert! <---
                 val_x = parser.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
                 val_y = parser.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+                val_fisch = parser.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) # <--- NEU
                 
-                # Jetzt erst die GUI updaten (die Traces feuern nun gefahrlos)
                 self.calib_x_var.set(val_x)
                 self.calib_y_var.set(val_y)
+                self.calib_fischauge_var.set(val_fisch) # <--- NEU
                 
-                # =================================================================
-                # ---> ELA FIX: Den Mittelklick-Resetter dynamisch mit den Tresor-Werten füttern! <---
-                # =================================================================
                 if hasattr(self, 'orig_calib'):
                     self.original_values[str(self.calib_x_var)] = self.orig_calib[f"{side}_x"]
                     self.original_values[str(self.calib_y_var)] = self.orig_calib[f"{side}_y"]
+                    self.original_values[str(self.calib_fischauge_var)] = self.orig_calib.get(f"{side}_fisch", 0.0) # <--- NEU
 
     def switch_camera(self):
         """Wird aufgerufen, wenn man zwischen Links/Rechts umschaltet."""
@@ -678,8 +681,10 @@ class OfflineLaborApp:
                 self.orig_calib = {
                     'left_x': parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0),
                     'left_y': parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0),
+                    'left_fisch': parser.getfloat('Kameras', 'fischaugenkorrektur_links', fallback=0.0), # <--- NEU
                     'right_x': parser.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0),
-                    'right_y': parser.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0)
+                    'right_y': parser.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0),
+                    'right_fisch': parser.getfloat('Kameras', 'fischaugenkorrektur_rechts', fallback=0.0) # <--- NEU
                 }
 
     def get_img(self, name):
@@ -2126,6 +2131,7 @@ class OfflineLaborApp:
                     seite_str = "links" if side == 'left' else "rechts"
                     px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
                     px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+                    korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) # <--- NEU
                     
                     # 1. Nullpunkt skalieren und für das rechte Bild verschieben (+ current_img_w)
                     scaled_cx = round(cx * self.current_scale) + self.current_img_w
@@ -2143,19 +2149,27 @@ class OfflineLaborApp:
                             cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 2, color, 1, cv2.LINE_AA)
                     
                     # 2. Alle Standard-Ringe gestrichelt zeichnen
+                    seite_str = "links" if side == 'left' else "rechts"
+                    px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+                    px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+                    korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) # <--- NEU
+                    
+                    # ... [Code für Mittelpunkt bleibt gleich] ...
+                    
                     for ring_name, d_mm in ringe.items():
-                        r_mm = float(d_mm) / 2.0
-                        # Erst in 720p-Pixel umrechnen, dann auf Monitor-Auflösung skalieren!
-                        rx = round((r_mm * px_x) * self.current_scale)
-                        ry = round((r_mm * px_y) * self.current_scale)
+                        r_mm_base = float(d_mm) / 2.0
+                        # ---> NEU: Optische Umkehr-Korrektur zum Zeichnen! <---
+                        r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) 
                         
+                        rx = round((r_mm_draw * px_x) * self.current_scale)
+                        ry = round((r_mm_draw * px_y) * self.current_scale)
                         draw_dashed_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, ring_color)
                         
-                    # 3. Den Innenzehner noch gestrichelt mit einzeichnen
                     if innenzehner > 0:
-                        r_mm = float(innenzehner) / 2.0
-                        rx = round((r_mm * px_x) * self.current_scale)
-                        ry = round((r_mm * px_y) * self.current_scale)
+                        r_mm_base = float(innenzehner) / 2.0
+                        r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) # <--- NEU
+                        rx = round((r_mm_draw * px_x) * self.current_scale)
+                        ry = round((r_mm_draw * px_y) * self.current_scale)
                         draw_dashed_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, ring_color)
         
         
