@@ -108,6 +108,9 @@ class TargetTracker:
         self.trigger_exit = False
         self.active_picker = None  # <--- NEU: Speichert, welche Zeile gerade auf einen Klick wartet
         
+        self.show_all_rings = False
+        self.btn_rings_coords = None
+        
     # ---> NEU: Der Parameter show_gui=False <---
     def log(self, side, text, show_gui=False):
         timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
@@ -550,6 +553,11 @@ class TargetTracker:
                     # 1. Den Standard "Spiegel" (Zentrum) zeichnen
                     draw_dashed_ellipse(combined_view, (fb_cx, fb_cy), fb_ideal_rx, fb_ideal_ry, (0, 255, 0))
                     
+                    # ---> NEU: Ein feines Kreuz im exakten Zentrum <---
+                    cross_size = 6
+                    cv2.line(combined_view, (fb_cx - cross_size, fb_cy), (fb_cx + cross_size, fb_cy), (0, 255, 0), 1, cv2.LINE_AA)
+                    cv2.line(combined_view, (fb_cx, fb_cy - cross_size), (fb_cx, fb_cy + cross_size), (0, 255, 0), 1, cv2.LINE_AA)
+                    
                     # =========================================================================
                     # ---> ELA: Die beiden äußersten Ringe zur optischen Kontrolle zeichnen <---
                     # =========================================================================
@@ -574,6 +582,44 @@ class TargetTracker:
                                 
                                 # Gestrichelte äußere Ringe zeichnen
                                 draw_dashed_ellipse(combined_view, (fb_cx, fb_cy), ring_rx, ring_ry, (0, 255, 0))
+        
+        # =========================================================================
+        # ---> NEU: Dauerhafte Zielscheiben-Ringe (Ein/Aus-Schalter) <---
+        # =========================================================================
+        if self.show_all_rings:
+            for s, fb in [('left', self.calib_feedback_left), ('right', self.calib_feedback_right)]:
+                use_cam = self.nutze_kamera_links if s == 'left' else self.nutze_kamera_rechts
+                if use_cam and fb:
+                    offset_x = 0 if s == 'left' else scaled_w_left
+                    cx = int(fb['cx'] * self.scale_x) + offset_x + getattr(self, 'pad_x', 0)
+                    cy = int(fb['cy'] * self.scale_y) + getattr(self, 'pad_y', 0)
+                    
+                    aktive_scheibe = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+                    targets = self.dm.load_targets()
+                    if aktive_scheibe in targets:
+                        target_data = targets[aktive_scheibe]
+                        ringe = target_data.get('ringe_durchmesser_mm', {})
+                        innenzehner = target_data.get('innenzehner_mm', 0.0)
+                        
+                        seite_str = "links" if s == 'left' else "rechts"
+                        px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+                        px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+                        
+                        def draw_dashed_ellipse_perm(img, center, rx, ry, color):
+                            for angle in range(0, 360, 6):
+                                cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 2, color, 1, cv2.LINE_AA)
+                                
+                        for ring_name, d_mm in ringe.items():
+                            r_mm = float(d_mm) / 2.0
+                            rx = round((r_mm * px_x) * self.scale_x)
+                            ry = round((r_mm * px_y) * self.scale_y)
+                            draw_dashed_ellipse_perm(combined_view, (cx, cy), rx, ry, (0, 255, 0))
+                            
+                        if innenzehner > 0:
+                            r_mm = float(innenzehner) / 2.0
+                            rx = round((r_mm * px_x) * self.scale_x)
+                            ry = round((r_mm * px_y) * self.scale_y)
+                            draw_dashed_ellipse_perm(combined_view, (cx, cy), rx, ry, (0, 255, 0))
         
         # --- BUTTON-LEISTE OBEN RECHTS ---
         gap = 10     # Abstand zwischen den Buttons
@@ -632,6 +678,11 @@ class TargetTracker:
         
         # 6. Offline Labor (Lila)
         self.btn_labor_coords, x_cursor = draw_button(combined_view, "Labor & Einstellungen", x_cursor, (150, 50, 150))
+        
+        # ---> NEU: 7. Zielscheiben-Ringe An/Aus <---
+        rings_text = "Scheibe: An" if self.show_all_rings else "Scheibe: Aus"
+        rings_color = (40, 160, 40) if self.show_all_rings else (80, 80, 80)
+        self.btn_rings_coords, x_cursor = draw_button(combined_view, rings_text, x_cursor, rings_color)
         
         
         # ---> HUD / Trefferliste (Getrennt für beide Seiten) <---
@@ -1156,6 +1207,14 @@ class TargetTracker:
                     self.log("SYSTEM", "Öffne Handbuch...", True)
                     # WICHTIG: Dateiname angepasst!
                     subprocess.Popen(["python", "HandbuchDeLuebs.py"]) 
+                    return
+                    
+            # ---> NEU: Zielscheiben-Ringe Button <---
+            if getattr(self, 'btn_rings_coords', None):
+                rx1, ry1, rx2, ry2 = self.btn_rings_coords
+                if rx1 <= x <= rx2 and ry1 <= y <= ry2:
+                    self.show_all_rings = not self.show_all_rings
+                    self.log("SYSTEM", f"Zielscheiben-Ringe dauerhaft {'aktiviert' if self.show_all_rings else 'deaktiviert'}.", True)
                     return
 
             
