@@ -94,49 +94,6 @@ class ToolTip:
             self.tip_window.destroy()
             self.tip_window = None
             
-# ==========================================
-# DUMMY-KLASSEN FÜR DIE TARGET-DETECTION
-# ==========================================
-class DummyConfig:
-    def __init__(self, app):
-        self.app = app
-        
-    def has_option(self, section, key):
-        if getattr(self.app, 'package_data', None) and self.app.package_data.get('config'):
-            parser = self.app.package_data['config']
-            return parser.has_option(section, key)
-        return False
-        
-    def has_section(self, section):
-        if getattr(self.app, 'package_data', None) and self.app.package_data.get('config'):
-            parser = self.app.package_data['config']
-            return parser.has_section(section)
-        return False
-
-    def _get_val(self, section, key, fallback):
-        if getattr(self.app, 'package_data', None) and self.app.package_data.get('config'):
-            parser = self.app.package_data['config']
-            if parser.has_option(section, key):
-                return parser.get(section, key)
-        return fallback
-
-    def getint(self, section, key, fallback=0):
-        try: return int(self._get_val(section, key, fallback))
-        except ValueError: return fallback
-        
-    def getfloat(self, section, key, fallback=0.0):
-        try: return float(self._get_val(section, key, fallback))
-        except ValueError: return fallback
-        
-    def getboolean(self, section, key, fallback=False):
-        val = self._get_val(section, key, str(fallback)).strip().lower()
-        if val in ('yes', 'true', '1', 'on'): return True
-        if val in ('no', 'false', '0', 'off'): return False
-        return fallback
-        
-    def get(self, section, key, fallback=''):
-        return self._get_val(section, key, fallback)
-
 class DummyDateiManager:
     def __init__(self, app):
         self.app = app
@@ -1141,7 +1098,8 @@ class OfflineLaborApp:
         # ---> NEU: ELA-Optimierung! Wir berechnen den offiziellen Wettkampf-Radius
         # genau EINMAL pro Frame-Wechsel und speichern ihn im RAM.
         # =========================================================================
-        d_config = DummyConfig(self)
+        # ---> ELA FIX: Der Dummy ist tot! Wir nutzen direkt den echten Parser <---
+        d_config = self.package_data['config']
         ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
         targets = self.dm.load_targets()
@@ -1215,7 +1173,8 @@ class OfflineLaborApp:
         self.image_frame.config(text=f" Live-Labor (Mausrad = Zoom | Klick = Bewegen | Rechtsklick = Reset)  |  📄 {orig_name} ")
         
         # 1. DUMMYS AUFBAUEN
-        d_config = DummyConfig(self)
+        # ---> ELA FIX <---
+        d_config = self.package_data['config']
         d_dm = DummyDateiManager(self)
         d_sm = StateManager(d_config, d_dm)
         
@@ -1527,7 +1486,8 @@ class OfflineLaborApp:
         comp_win.update()
 
         # 2. Voller Simulations-Durchlauf (Stumm im Hintergrund)
-        d_config = DummyConfig(self)
+        # ---> ELA FIX <---
+        d_config = self.package_data['config']
         d_dm = DummyDateiManager(self)
         d_sm = StateManager(d_config, d_dm)
         # Stumme Log-Funktion, damit die Konsole nicht überflutet wird
@@ -1709,7 +1669,8 @@ class OfflineLaborApp:
             # NEU: 4. SILENT MATCH RECALCULATION (Die perfekten Schüsse generieren!)
             # =========================================================================
             # Wir machen hier genau das Gleiche wie in show_comparison(), aber STUMM.
-            d_config = DummyConfig(self)
+            # ---> ELA FIX <---
+            d_config = self.package_data['config']
             d_dm = DummyDateiManager(self)
             d_sm = StateManager(d_config, d_dm)
             detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
