@@ -543,9 +543,13 @@ class TargetTracker:
                     # ---> ELA HILFSFUNKTION: Gestrichelte Ellipsen zeichnen (1/3 Linie, 2/3 Lücke) <---
                     # =========================================================================
                     def draw_dashed_ellipse(img, center, rx, ry, color):
+                        # Sicherheitscheck: OpenCV crasht bei Radien <= 0
+                        if rx <= 0 or ry <= 0:
+                            return
+                            
                         # 60 kleine Segmente (alle 6 Grad). Davon 2 Grad Linie, 4 Grad Lücke.
                         for angle in range(0, 360, 6):
-                            cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 2, color, 1, cv2.LINE_AA)
+                            cv2.ellipse(img, center, (int(rx), int(ry)), 0, angle, angle + 2, color, 1, cv2.LINE_AA)
 
                     if feedback['show_red']:
                         draw_dashed_ellipse(combined_view, (fb_red_cx, fb_red_cy), fb_red_rx, fb_red_ry, (0, 0, 255))

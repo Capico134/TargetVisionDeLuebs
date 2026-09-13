@@ -1512,7 +1512,11 @@ class OfflineLaborApp:
         # 1. Info-Fenster öffnen
         comp_win = tk.Toplevel(self.root)
         comp_win.title(f"📊 Integrations-Check: Live-Parameter vs. Original-Match")
-        comp_win.geometry("1100x750")
+        
+        # ---> NEU: DPI-Awareness für 4K-TVs <---
+        sf = self.root.winfo_fpixels('1i') / 96.0
+        w, h = int(1100 * sf), int(750 * sf)
+        comp_win.geometry(f"{w}x{h}")
         
         comp_win.transient(self.root)  # Zwingt das Unterfenster über das Labor-Hauptfenster
         comp_win.attributes('-topmost', True)
@@ -2211,8 +2215,8 @@ class OfflineLaborApp:
         # =========================================================================
         hl = getattr(self, 'highlighted_shot', None)
         if hl is not None:
-            # Nur zeichnen, wenn der Klick weniger als 3 Sekunden her ist
-            if time.time() - hl['time'] < 3.0:
+            # Nur zeichnen, wenn der Klick weniger als 6 Sekunden her ist
+            if time.time() - hl['time'] < 5.0:
                 hx, hy = hl['pos']
                 f_num = hl['frame']
                 
@@ -2220,27 +2224,27 @@ class OfflineLaborApp:
                 scaled_x1 = round(hx * self.current_scale)
                 scaled_y = round(hy * self.current_scale)
                 
-                # ---> DER FIX: Wir nutzen den offiziellen Wettkampf-Radius für die Prüfung! <---
                 base_r = getattr(self, 'official_radius_px', 15)
                 scaled_r = round(base_r * self.current_scale)
-                
                 scaled_x2 = scaled_x1 + self.current_img_w # Rechte Bildhälfte
                 
-                color = (0, 165, 255) # Leuchtendes Orange (BGR)
-                
-                # Linienstärke 1 oder 2 für maximale Präzision (statt dickem 3er Balken)
+                # ---> NEU: Leuchtendes Lila (BGR) <---
+                color = (255, 50, 200) 
                 line_thickness = 1 
                 
                 # Highlight Links (Exakter Kaliber-Kreis)
                 cv2.circle(combined, (scaled_x1, scaled_y), scaled_r, color, line_thickness)
-                # Punkt im Zentrum für das exakte Pixel-Zentrum
                 cv2.circle(combined, (scaled_x1, scaled_y), 2, color, -1)
-                cv2.putText(combined, f"#{f_num}", (scaled_x1 - 15, scaled_y - scaled_r - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                
+                # ---> NEU: Fette, große Schrift (Scale 1.2, Dicke 2) <---
+                cv2.putText(combined, f"#{f_num}", (scaled_x1 - 25, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2, cv2.LINE_AA)
                 
                 # Highlight Rechts (Gespiegelt)
                 cv2.circle(combined, (scaled_x2, scaled_y), scaled_r, color, line_thickness)
                 cv2.circle(combined, (scaled_x2, scaled_y), 2, color, -1)
-                cv2.putText(combined, f"#{f_num}", (scaled_x2 - 15, scaled_y - scaled_r - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 1)
+                
+                # ---> NEU: Auf der rechten Seite noch einen Tick größer (Scale 1.5, Dicke 3) <---
+                cv2.putText(combined, f"#{f_num}", (scaled_x2 - 30, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_AA)
         
         # ---> NEU: Das nackte Bild ohne Maus-Overlay als Base-Image merken <---
         self.base_combined_img = combined.copy()
@@ -2277,7 +2281,11 @@ class OfflineLaborApp:
         # Neues Fenster erstellen
         dialog = tk.Toplevel(self.root)
         dialog.title("Erweiterte Einstellungen (Live Data-Binding)")
-        dialog.geometry("550x800")
+        
+        # ---> NEU: DPI-Awareness für 4K-TVs <---
+        sf = self.root.winfo_fpixels('1i') / 96.0
+        w, h = int(550 * sf), int(800 * sf)
+        dialog.geometry(f"{w}x{h}")
         
         # =========================================================================
         # ---> DER FIX: Die Hierarchie für Windows & Tkinter klarstellen <---

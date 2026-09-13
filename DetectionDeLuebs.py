@@ -746,8 +746,13 @@ class TargetDetector:
                     self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff_gesamt", state.cumulative_mask)
                     
                 elif update_mask_only:
-                    # Bei Fehlalarmen speichern wir NUR das winzige S/W-Diff-Bild als Info
-                    self.save_debug_image(f"Info_Discard_{side}_{ts}_diff", thresh_new)
+                    # ---> DER FIX: Geister-Frames als "_orig" speichern für das Labor! <---
+                    # Wir nutzen den gleichen Präfix "Schuss_XX", damit der Zeitstempel
+                    # für eine perfekte chronologische Sortierung im Labor-ZIP sorgt.
+                    shot_idx = sum(1 for s in self.sm.shots if s['side'] == side)
+                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_diff", thresh_new)
+                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_orig", frame)
+                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_diff_gesamt", state.cumulative_mask)
 
             return True if new_shots_found_this_frame else False
             
