@@ -101,6 +101,18 @@ class DummyConfig:
     def __init__(self, app):
         self.app = app
         
+    def has_option(self, section, key):
+        if getattr(self.app, 'package_data', None) and self.app.package_data.get('config'):
+            parser = self.app.package_data['config']
+            return parser.has_option(section, key)
+        return False
+        
+    def has_section(self, section):
+        if getattr(self.app, 'package_data', None) and self.app.package_data.get('config'):
+            parser = self.app.package_data['config']
+            return parser.has_section(section)
+        return False
+
     def _get_val(self, section, key, fallback):
         if getattr(self.app, 'package_data', None) and self.app.package_data.get('config'):
             parser = self.app.package_data['config']
@@ -222,8 +234,8 @@ class OfflineLaborApp:
         
         self.setup_ui()
         
-    # ---> NEU: Parameter 'odd_only' hinzugefügt <---
-    def make_slider(self, parent, label_text, tk_var, from_, to_, res=1, section="Erkennung", key=None, odd_only=False):
+    # ---> ELA FIX: Optionaler tooltip_key Parameter hinzugefügt <---
+    def make_slider(self, parent, label_text, tk_var, from_, to_, res=1, section="Erkennung", key=None, odd_only=False, tooltip_key=None):
         """Hilfsfunktion für Slider mit direkter Eingabe, Reset und Live-Data-Binding"""
         # Jeder Slider meldet seine Variable automatisch beim System an!
         if key:
@@ -237,9 +249,11 @@ class OfflineLaborApp:
         
         lbl = tk.Label(frame, text=label_text, width=25, anchor="w")
         lbl.pack(side=tk.LEFT)
-        # ---> NEU: Tooltip aus dem Handbuch anhängen, falls vorhanden <---
-        if key and key in PARAMETER_LEXIKON:
-            ToolTip(lbl, PARAMETER_LEXIKON[key])
+        
+        # ---> NEU: Tooltip aus dem Handbuch anhängen (Nutzt tooltip_key, wenn vorhanden, sonst key) <---
+        t_key = tooltip_key if tooltip_key else key
+        if t_key and t_key in PARAMETER_LEXIKON:
+            ToolTip(lbl, PARAMETER_LEXIKON[t_key])
         
         # ---> DER FIX: Wir trennen das Textfeld von der strengen Slider-Variable! <---
         entry = tk.Entry(frame, width=6, justify="right")
@@ -506,6 +520,36 @@ class OfflineLaborApp:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # --- Hier kommen die Slider in das neue scrollbare param_frame ---
+        
+        # =====================================================================
+        # ---> NEU: Dynamische Kamera-Kalibrierung (ELA-Style) <---
+        # =====================================================================
+        tk.Label(param_frame, text="--- Kamera Kalibrierung (Live) ---", fg="#3498db").pack(pady=(5, 5))
+        self.calib_x_var = tk.DoubleVar(value=5.0)
+        self.calib_y_var = tk.DoubleVar(value=5.0)
+        
+        # key=None trennt die Slider vom Standard-Spion!
+        # ---> ELA FIX: Wir geben explizit den tooltip_key an! <---
+        self.make_slider(param_frame, "Pixel pro mm (X):", self.calib_x_var, 1.0, 15.0, 0.01, key=None, tooltip_key="px_pro_mm")
+        self.make_slider(param_frame, "Pixel pro mm (Y):", self.calib_y_var, 1.0, 15.0, 0.01, key=None, tooltip_key="px_pro_mm")
+
+        def sync_calib_config(*args):
+            if getattr(self, 'package_data', None) and self.package_data.get('config'):
+                parser = self.package_data['config']
+                side = self.active_camera_var.get()
+                seite_str = "links" if side == 'left' else "rechts"
+                
+                if not parser.has_section('Kameras'): parser.add_section('Kameras')
+                
+                parser.set('Kameras', f'px_pro_mm_x_{seite_str}', str(self.calib_x_var.get()))
+                parser.set('Kameras', f'px_pro_mm_y_{seite_str}', str(self.calib_y_var.get()))
+                
+                # Zwingt das Bild, die cyanfarbene Ellipse live mit dem Schieberegler neu zu zeichnen!
+                self.on_param_change()
+                
+        self.calib_x_var.trace_add("write", sync_calib_config)
+        self.calib_y_var.trace_add("write", sync_calib_config)
+        
         self.make_slider(param_frame, "hit_tolerance:", self.hit_tolerance_var, 1, 100, key="hit_tolerance")
         self.make_slider(param_frame, "min_hole_area:", self.min_hole_area_var, 5, 500, key="min_hole_area")
         #self.make_slider(param_frame, "caliber_radius:", self.caliber_radius_var, 5.0, 50.0, res=0.1, key="caliber_radius")
@@ -543,6 +587,9 @@ class OfflineLaborApp:
         chk_farb = tk.Checkbutton(param_frame, text="🟢 farb_bonus_aktiv", variable=self.farb_bonus_aktiv_var)
         chk_farb.pack(anchor=tk.W)
         self.registered_sliders["farb_bonus_aktiv"] = self.farb_bonus_aktiv_var
+        # ---> ELA FIX: Tooltip manuell an die Checkbox hängen <---
+        if "farb_bonus_aktiv" in PARAMETER_LEXIKON:
+            ToolTip(chk_farb, PARAMETER_LEXIKON["farb_bonus_aktiv"])
         
         def sync_farb_config(*args):
             if getattr(self, 'package_data', None) and self.package_data.get('config'):
@@ -596,9 +643,33 @@ class OfflineLaborApp:
                        variable=self.show_orig_hits_var, fg="#f1c40f", 
                        command=lambda: self.on_param_change(force=True)).pack(anchor=tk.W, pady=(5, 0))
 
+    def update_calib_sliders(self):
+        """Holt die echten Config-Werte der aktuell aktiven Kamera in die GUI-Slider"""
+        if getattr(self, 'package_data', None) and self.package_data.get('config'):
+            parser = self.package_data['config']
+            side = self.active_camera_var.get()
+            seite_str = "links" if side == 'left' else "rechts"
+            
+            if parser.has_section('Kameras'):
+                # ---> ELA FIX: Erst BEIDE Werte in Sicherheit bringen, bevor der Trace feuert! <---
+                val_x = parser.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+                val_y = parser.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+                
+                # Jetzt erst die GUI updaten (die Traces feuern nun gefahrlos)
+                self.calib_x_var.set(val_x)
+                self.calib_y_var.set(val_y)
+                
+                # =================================================================
+                # ---> ELA FIX: Den Mittelklick-Resetter dynamisch mit den Tresor-Werten füttern! <---
+                # =================================================================
+                if hasattr(self, 'orig_calib'):
+                    self.original_values[str(self.calib_x_var)] = self.orig_calib[f"{side}_x"]
+                    self.original_values[str(self.calib_y_var)] = self.orig_calib[f"{side}_y"]
+
     def switch_camera(self):
         """Wird aufgerufen, wenn man zwischen Links/Rechts umschaltet."""
         self.current_index = 0 # Zurück auf Start!
+        self.update_calib_sliders() # <--- NEU
         self.process_and_display()
 
     def get_current_side_origs(self):
@@ -619,42 +690,40 @@ class OfflineLaborApp:
             
             self.original_values = {}
             
-            # 1. DIE MAGIE: Automatische Zuweisung ALLER registrierten Slider (und Checkboxen)!
+            # 1. DIE MAGIE: Automatische Zuweisung ALLER registrierten Slider
             for key, tk_var in self.registered_sliders.items():
                 if parser.has_option('Erkennung', key):
-                    # Typ prüfen und passend aus der Config holen
                     if isinstance(tk_var, tk.BooleanVar):
-                        # ConfigParser benötigt .getboolean() für "yes/no", "true/false"
                         tk_var.set(parser.getboolean('Erkennung', key))
                     elif isinstance(tk_var, tk.IntVar):
                         tk_var.set(parser.getint('Erkennung', key))
                     elif isinstance(tk_var, tk.DoubleVar):
                         tk_var.set(parser.getfloat('Erkennung', key))
                         
-                # Wenn der Key NICHT in der Config steht, behält tk_var einfach seinen 
-                # Default-Wert aus der __init__, was perfekt als Fallback dient!
-                
-                # Gleichzeitig den Snapshot für den Mittelklick (Reset) speichern
                 self.original_values[str(tk_var)] = tk_var.get()
 
-            # 2. SONDERFALL: Der Kaliber-Durchmesser (Legacy-Migration & 'auto' String)
-            if parser.has_option('Erkennung', 'caliber_durchmesser'):
-                val = parser.get('Erkennung', 'caliber_durchmesser')
-                if val.strip().lower() == 'auto':
-                    self.caliber_durchmesser_var.set(4.50) # Fallback für die GUI
-                else:
-                    self.caliber_durchmesser_var.set(float(val))
-            elif parser.has_option('Erkennung', 'caliber_radius'):
-                # Uralt-Config (Pixel) präzise in Millimeter umrechnen
+            # 2. SONDERFALL: Nur noch Legacy-Migration für Uralt-Configs (Pixel zu mm)
+            if not parser.has_option('Erkennung', 'caliber_durchmesser') and parser.has_option('Erkennung', 'caliber_radius'):
                 alt_r = parser.getfloat('Erkennung', 'caliber_radius', fallback=15.0)
                 px_x = parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0) if parser.has_section('Kameras') else 5.0
                 px_y = parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0) if parser.has_section('Kameras') else 5.0
                 avg_px = (px_x + px_y) / 2.0
                 calc_durchmesser = (alt_r / avg_px) * 2.0 if avg_px > 0 else 4.5
-                self.caliber_durchmesser_var.set(round(calc_durchmesser, 2))
                 
-            # Den manuell verarbeiteten Sonderfall noch separat für den Reset sichern
-            self.original_values[str(self.caliber_durchmesser_var)] = self.caliber_durchmesser_var.get()
+                # Wir setzen den aus Pixeln errechneten Wert und merken ihn uns für den Mittelklick-Reset
+                self.caliber_durchmesser_var.set(round(calc_durchmesser, 2))
+                self.original_values[str(self.caliber_durchmesser_var)] = self.caliber_durchmesser_var.get()
+            
+            # =================================================================
+            # ---> ELA FIX: Echte Originalwerte der Kameras für den Mittelklick sichern <---
+            # =================================================================
+            if parser.has_section('Kameras'):
+                self.orig_calib = {
+                    'left_x': parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0),
+                    'left_y': parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0),
+                    'right_x': parser.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0),
+                    'right_y': parser.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0)
+                }
 
     def get_img(self, name):
         """Holt ein Bild blitzschnell aus dem vorbereiteten RAM-Speicher"""
@@ -715,6 +784,7 @@ class OfflineLaborApp:
             self.btn_next.config(state=tk.NORMAL)
             self.btn_first.config(state=tk.NORMAL)
             self.btn_last.config(state=tk.NORMAL)
+            self.update_calib_sliders() # <--- NEU: Initiales Füllen der Slider nach dem Laden!
             # 1. ZUERST BILD LADEN UND LOG LÖSCHEN
             self.process_and_display()
 
@@ -1080,14 +1150,7 @@ class OfflineLaborApp:
         if ringwertung_aktiv and aktive_scheibe in targets:
             offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
         else:
-            val = d_config.get('Erkennung', 'caliber_durchmesser', fallback='4.5')
-            if str(val).strip().lower() == 'auto':
-                offizielles_kaliber_mm = float(targets.get(aktive_scheibe, {}).get('kaliber_mm', 4.5))
-            else:
-                try:
-                    offizielles_kaliber_mm = float(val)
-                except ValueError:
-                    offizielles_kaliber_mm = 4.5
+            offizielles_kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
         
         seite_str = "links" if side == 'left' else "rechts"
         px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
@@ -2107,23 +2170,32 @@ class OfflineLaborApp:
                     scaled_cx = round(cx * self.current_scale) + self.current_img_w
                     scaled_cy = round(cy * self.current_scale)
                     
+                    
+                    #ring_color = (0, 255, 0)
                     ring_color = (255, 255, 0) # Cyan (BGR)
                     
-                    # 2. Alle Standard-Ringe zeichnen
+                    # =========================================================================
+                    # ---> ELA HILFSFUNKTION: Gestrichelte Ellipsen zeichnen (1/3 Linie, 2/3 Lücke) <---
+                    # =========================================================================
+                    def draw_dashed_ellipse(img, center, rx, ry, color):
+                        for angle in range(0, 360, 6):
+                            cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 2, color, 1, cv2.LINE_AA)
+                    
+                    # 2. Alle Standard-Ringe gestrichelt zeichnen
                     for ring_name, d_mm in ringe.items():
                         r_mm = float(d_mm) / 2.0
                         # Erst in 720p-Pixel umrechnen, dann auf Monitor-Auflösung skalieren!
                         rx = round((r_mm * px_x) * self.current_scale)
                         ry = round((r_mm * px_y) * self.current_scale)
                         
-                        cv2.ellipse(combined, (scaled_cx, scaled_cy), (rx, ry), 0, 0, 360, ring_color, 1)
+                        draw_dashed_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, ring_color)
                         
-                    # 3. Den Innenzehner noch mit einzeichnen
+                    # 3. Den Innenzehner noch gestrichelt mit einzeichnen
                     if innenzehner > 0:
                         r_mm = float(innenzehner) / 2.0
                         rx = round((r_mm * px_x) * self.current_scale)
                         ry = round((r_mm * px_y) * self.current_scale)
-                        cv2.ellipse(combined, (scaled_cx, scaled_cy), (rx, ry), 0, 0, 360, ring_color, 1)
+                        draw_dashed_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, ring_color)
         
         
         # =========================================================================
@@ -2188,6 +2260,11 @@ class OfflineLaborApp:
         # ---> NEU: Wir holen uns einfach die Keys aus unserem neuen Dictionary! <---
         ignore_keys = set(self.registered_sliders.keys())
         ignore_keys.add('caliber_radius') # Den alten Legacy-Key manuell verstecken
+        # ---> ELA FIX: Verstecke die 4 dynamischen Kamera-Keys vor dem Pop-up <---
+        ignore_keys.add('px_pro_mm_x_links')
+        ignore_keys.add('px_pro_mm_y_links')
+        ignore_keys.add('px_pro_mm_x_rechts')
+        ignore_keys.add('px_pro_mm_y_rechts')
 
         # Neues Fenster erstellen
         dialog = tk.Toplevel(self.root)

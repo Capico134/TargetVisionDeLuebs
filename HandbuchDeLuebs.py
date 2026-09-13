@@ -28,12 +28,14 @@ Dabei sucht es automatisch das exakte Zentrum der Scheibe (den weißen Punkt) un
 
 5. Ringwertung kalibrieren (px_pro_mm)
 Damit die Zehntel-Ringe exakt berechnet werden, musst du das System optisch kalibrieren. So geht's am einfachsten:
-- Sorge dafür, dass eine LEERE (unbeschossene) Zielscheibe im Bild ist.
-- Drücke im Hauptfenster auf "Reset" für die jeweilige Kamera.
-- Das System zeichnet nun einen grünen Kreis ins Zentrum.
-- Öffne die Erweiterten Einstellungen und suche unter [Kameras] die Werte für "px_pro_mm_x" und "_y".
-- Verändere die Werte (z.B. auf 5.0) und prüfe das Live-Bild, bis der grüne Kreis EXAKT den schwarzen Spiegel der Zielscheibe umrandet. 
-- Wichtig: Kameralinsen verzerren! Es ist völlig normal, dass X (Breite) und Y (Höhe) unterschiedliche Werte brauchen (z. B. 5.0 und 5.8).
+- Klicke im Live-System auf "Labor & Einstellungen" (Das System pausiert).
+- Aktiviere in der Seitenleiste unten das Häkchen bei "🎯 Zielscheibe (Ringe) einblenden".
+- Nutze ganz oben in der Seitenleiste die Schieberegler für "Pixel pro mm (X)" und "(Y)", bis sich die cyanfarbenen Ringe perfekt über die Papierscheibe im Bild legen.
+- Klicke abschließend auf "✅ Einstellungen speichern".
+
+💡 PRO-TIPP: Zentrum setzen (Pixelgenau per Tastatur!)
+Wenn der Nullpunkt der Kamera (das Zentrum) leicht verschoben ist, klicke im Live-Bild auf den Button "Zentrum" und klicke grob in die Mitte der Zielscheibe. Es erscheinen für 15 Sekunden grüne, gestrichelte Orientierungskreise. 
+Nutze in diesen 15 Sekunden die Pfeiltasten (oder W,A,S,D) auf deiner Tastatur! Damit kannst du das Zentrum (und die Ringwertung aller bisherigen Schüsse) extrem präzise Pixel für Pixel an die echte Papierscheibe heranrücken!
 
 6. Schüsse werden nicht richtig erkannt?
 Drücke im Live-System auf "Labor & Einstellungen". Die Kamera pausiert und du kannst in der rechten Seitenleiste mit den Reglern spielen (z. B. "hit_tolerance" verringern, um empfindlicher zu werden). Klicke auf Übernehmen, und das System lernt sofort dazu.
@@ -71,7 +73,15 @@ PARAMETER_LEXIKON = {
     "early_exit_perfect_score": "Makelloser Score: Liegt die Abdeckung über diesem Wert (z.B. 196.0), wird die Form als so perfekt eingestuft, dass die Deep-Analysis selbst bei leichten Radius-Abweichungen übersprungen wird.",
     "min_score_valid": "Fehlalarm-Filter. Kandidaten, deren finaler Score unter diesem Wert liegt (z.B. < 70.0), werden strikt ignoriert und nicht als Treffer gewertet.",
     "clipping_factor_history": "Sperr-Radius für die Historie (Faktor des Kaliber-Radius). Ein neuer Kandidat muss diesen Mindestabstand zu allen ALTEN (bereits bestätigten) Schüssen einhalten, um nicht als Doppelzählung blockiert zu werden.",
-    "clipping_factor_current": "Sichel-Duell-Radius (Faktor des Kaliber-Radius). Wenn zwei Kandidaten im SELBEN Frame zu nah beieinander liegen, tritt dieser Filter in Kraft und nur das Fragment mit dem höheren Score überlebt."
+    "clipping_factor_current": "Sichel-Duell-Radius (Faktor des Kaliber-Radius). Wenn zwei Kandidaten im SELBEN Frame zu nah beieinander liegen, tritt dieser Filter in Kraft und nur das Fragment mit dem höheren Score überlebt.",
+    # ---> NEUE TOOLTIPS <---
+    "px_pro_mm": "Kamera-Skalierung: Definiert, wie viele Pixel im Kamerabild genau einem Millimeter auf der echten Zielscheibe entsprechen. Wird beim Kalibrieren per Augenmaß mit dem grünen Ring ermittelt.",
+    "caliber_durchmesser": "Offizielles Projektilmaß in Millimetern. Dient als physische Berechnungs-Grundlage für alle Skalierungen, Filter und Ring-Erkennungen.",
+    "randaufschlag_cumulative": "Panzer-Sticker-Filter (in Pixeln). Bläst das frisch gefundene Treffer-Loch künstlich auf, bevor es als Schablone in die Zeitlinie (Historie) gestempelt wird. Verschluckt zuverlässig ausgefranste Ränder von alten Schüssen.",
+    "max_treffer_je_frame": "Hard-Limit: Wie viele NEUE Treffer darf das System maximal in einem einzigen Bild (Frame) finden? Wert 0 = Unbegrenzt. Schützt vor massivem Bildrauschen.",
+    "farb_bonus_aktiv": "Wandfarben-Spion (Chrominanz-Filter). Die Basis-Erkennung berücksichtigt bereits wenn sich die Farben zum Referenzbild geändert hat. Dieser Filter analysiert ZUSÄTZLICH, ob der geänderte Bereich sich in Richtung dem Farbton der Hintergrundfarbe geändert hat. Damit werden z.B. ausgefranste Ränder nicht mehr als Änderung bewertet.",
+    "farb_bonus_limit": "Farb-Toleranzbereich (Übergangsfaktor). Dies ist kein harter Grenzwert, sondern bestimmt die Weichheit des Filters. Er regelt, wie stark ein Pixel von der idealen Wandfarbe abweichen darf, bevor er gleitend auf null gedämpft wird. Größere Werte (z. B. 275) machen den Übergang sanfter, sodass auch beschattete, ausgefranste Risse noch anteilig als Treffer gewertet werden.",
+    "farb_bonus_kurve": "Gradationskurve für den Farb-Bonus. Ein Exponent (z.B. 2.0). Bestimmt, wie 'aggressiv' sich der Farb-Bonus aufschaukelt, je näher ein Pixel an der reinen Wandfarbe ist."
 }
 
 
@@ -110,7 +120,7 @@ class HelpWindow:
     def __init__(self, root):
         self.root = root
         self.root.title("TargetVision DeLübs - Hilfe & Handbuch")
-        self.root.geometry("750x650")
+        self.root.geometry("850x650")
         
         # Tabs erstellen
         self.notebook = ttk.Notebook(self.root)

@@ -172,17 +172,9 @@ class TargetDetector:
 
     def get_caliber_radius(self, side):
         """Berechnet den dynamischen Pixel-Radius anhand der optischen Linsen-Kalibrierung."""
-        val = self.config.get('Erkennung', 'caliber_durchmesser', fallback=None)
-        
         # 1. Der physikalische Weg (Millimeter) -> Automatisch linsenkorrigiert!
-        if val is not None:
-            if str(val).strip().lower() == 'auto':
-                aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-                targets = self.dm.load_targets()
-                durchmesser_mm = targets.get(aktive_scheibe_id, {}).get('kaliber_mm', 4.5)
-            else:
-                durchmesser_mm = float(val)
-                
+        if self.config.has_option('Erkennung', 'caliber_durchmesser'):
+            durchmesser_mm = self.config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
             radius_mm = durchmesser_mm / 2.0
             seite_str = "links" if side == 'left' else "rechts"
             px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)

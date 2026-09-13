@@ -454,14 +454,7 @@ class TargetTracker:
             if self.ringwertung_aktiv and aktive_scheibe in targets:
                 offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
             else:
-                val = self.config.get('Erkennung', 'caliber_durchmesser', fallback='4.5')
-                if str(val).strip().lower() == 'auto':
-                    offizielles_kaliber_mm = float(targets.get(aktive_scheibe, {}).get('kaliber_mm', 4.5))
-                else:
-                    try:
-                        offizielles_kaliber_mm = float(val)
-                    except ValueError:
-                        offizielles_kaliber_mm = 4.5
+                offizielles_kaliber_mm = self.config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
             
             seite_str = "links" if side == 'left' else "rechts"
             px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
@@ -543,10 +536,44 @@ class TargetTracker:
                     fb_red_rx = int(feedback['red_rx'] * self.scale_x)
                     fb_red_ry = int(feedback['red_ry'] * self.scale_y)
 
+                    # =========================================================================
+                    # ---> ELA HILFSFUNKTION: Gestrichelte Ellipsen zeichnen (1/3 Linie, 2/3 Lücke) <---
+                    # =========================================================================
+                    def draw_dashed_ellipse(img, center, rx, ry, color):
+                        # 60 kleine Segmente (alle 6 Grad). Davon 2 Grad Linie, 4 Grad Lücke.
+                        for angle in range(0, 360, 6):
+                            cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 2, color, 1, cv2.LINE_AA)
+
                     if feedback['show_red']:
-                        cv2.ellipse(combined_view, (fb_red_cx, fb_red_cy), (fb_red_rx, fb_red_ry), 0, 0, 360, (0, 0, 255), 1, cv2.LINE_AA)
+                        draw_dashed_ellipse(combined_view, (fb_red_cx, fb_red_cy), fb_red_rx, fb_red_ry, (0, 0, 255))
                     
-                    cv2.ellipse(combined_view, (fb_cx, fb_cy), (fb_ideal_rx, fb_ideal_ry), 0, 0, 360, (0, 255, 0), 1, cv2.LINE_AA)
+                    # 1. Den Standard "Spiegel" (Zentrum) zeichnen
+                    draw_dashed_ellipse(combined_view, (fb_cx, fb_cy), fb_ideal_rx, fb_ideal_ry, (0, 255, 0))
+                    
+                    # =========================================================================
+                    # ---> ELA: Die beiden äußersten Ringe zur optischen Kontrolle zeichnen <---
+                    # =========================================================================
+                    aktive_scheibe = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+                    targets = self.dm.load_targets()
+                    
+                    if aktive_scheibe in targets:
+                        ringe = targets[aktive_scheibe].get('ringe_durchmesser_mm', {})
+                        if ringe:
+                            # Wir sortieren alle Durchmesser absteigend und schnappen uns die zwei größten!
+                            alle_durchmesser = sorted([float(d) for d in ringe.values()], reverse=True)
+                            aeusserste_zwei = alle_durchmesser[:2]
+                            
+                            seite_str = "links" if s == 'left' else "rechts"
+                            px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+                            px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+                            
+                            for d_mm in aeusserste_zwei:
+                                r_mm = d_mm / 2.0
+                                ring_rx = round((r_mm * px_x) * self.scale_x)
+                                ring_ry = round((r_mm * px_y) * self.scale_y)
+                                
+                                # Gestrichelte äußere Ringe zeichnen
+                                draw_dashed_ellipse(combined_view, (fb_cx, fb_cy), ring_rx, ring_ry, (0, 255, 0))
         
         # --- BUTTON-LEISTE OBEN RECHTS ---
         gap = 10     # Abstand zwischen den Buttons
@@ -683,7 +710,10 @@ class TargetTracker:
         cv2.imshow(self.window_name, combined_view)
 
     def check_keys(self):
-        key = cv2.waitKey(self.poll_ms) & 0xFF
+        # ---> ELA FIX: waitKeyEx liest auch Pfeiltasten (Sondertasten) aus! <---
+        raw_key = cv2.waitKeyEx(self.poll_ms)
+        key = raw_key & 0xFF
+        
         if self.trigger_exit:
             return True
             
@@ -697,7 +727,57 @@ class TargetTracker:
         elif key == ord('r'):
             if self.nutze_kamera_links: self.trigger_reset_left = True
             if self.nutze_kamera_rechts: self.trigger_reset_right = True
+
+        # =========================================================================
+        # ---> NEU: ELA-Nudge-Funktion (Pixel-Schubsen per Pfeiltasten oder WASD) <---
+        # =========================================================================
+        # Windows Pfeiltasten: Hoch=2490368, Runter=2621440, Links=2424832, Rechts=2555904
+        # Linux Pfeiltasten: Hoch=65362, Runter=65364, Links=65361, Rechts=65363
+        if raw_key in (2490368, 65362, 2621440, 65364, 2424832, 65361, 2555904, 65363) or key in (ord('w'), ord('a'), ord('s'), ord('d')):
+            current_time = time.time()
             
+            # Herausfinden, welche Seite gerade aktiv kalibriert wird (Der neuere Timer gewinnt!)
+            active_side = None
+            active_fb = None
+            
+            t_left = self.calib_feedback_left['time'] if self.calib_feedback_left else 0
+            t_right = self.calib_feedback_right['time'] if self.calib_feedback_right else 0
+            
+            if current_time - t_left < 15.0 and t_left >= t_right:
+                active_side = 'left'
+                active_fb = self.calib_feedback_left
+            elif current_time - t_right < 15.0:
+                active_side = 'right'
+                active_fb = self.calib_feedback_right
+                
+            if active_side and active_fb:
+                dx, dy = 0, 0
+                if raw_key in (2490368, 65362) or key == ord('w'): dy = -1
+                elif raw_key in (2621440, 65364) or key == ord('s'): dy = 1
+                elif raw_key in (2424832, 65361) or key == ord('a'): dx = -1
+                elif raw_key in (2555904, 65363) or key == ord('d'): dx = 1
+                
+                # 1. Koordinaten um exakt 1 Pixel verschieben
+                new_x = active_fb['cx'] + dx
+                new_y = active_fb['cy'] + dy
+                
+                # 2. Ins System schreiben
+                self.sm.set_nullpunkt(active_side, new_x, new_y)
+                
+                # 3. Feedback updaten & TIMER VERLÄNGERN!
+                active_fb['cx'] = new_x
+                active_fb['cy'] = new_y
+                active_fb['time'] = current_time 
+                
+                # 4. Ringwertung aller bestehenden Schüsse live neu durchrechnen!
+                for shot in self.sm.shots:
+                    if shot['side'] == active_side:
+                        new_score, raw_score = self.sm.calculate_score(active_side, shot['pos'][0], shot['pos'][1])
+                        shot['score'] = new_score
+                        shot['raw_score'] = raw_score
+                        
+                self.log("SYSTEM", f"🎯 Zentrum {active_side.upper()} feinjustiert: X:{new_x} Y:{new_y}", True)
+
         return False
 
     def cleanup(self):
