@@ -259,8 +259,8 @@ ausloeser_durch_erschuetterung = no
 erkennungs_methode = C
 # Für Methode C: Ab welchem Vergrößerungs-Faktor (im Vergleich zum Normal-Kaliber) ein unsauberes Loch
 # nicht mehr als "Normal" gilt und den Hough-Algorithmus auslöst. (Standard: 1.5)
-hybrid_riss_faktor = 1.175
-hybrid_sichel_faktor = 1.05
+# hybrid_riss_faktor = 1.175
+# hybrid_sichel_faktor = 1.05
 hybrid_discard_faktor = 2.5
 # Für Methode C: Begrenzungen für den Hough-Algorithmus (Faktor bezogen auf caliber_radius)
 hough_min_faktor = 0.85
@@ -284,8 +284,8 @@ debug_alle_bilder_speichern = yes
 caliber_durchmesser = 4.5
 abriss_max_edge_percent = 0.75
 abriss_base_bonus = 15.0
-early_exit_min_score = 145.0
-early_exit_perfect_score = 196.0
+# early_exit_min_score = 145.0
+# early_exit_perfect_score = 196.0
 min_score_valid = 70.0
 clipping_factor_history = 0.15
 clipping_factor_current = 0.95
@@ -505,6 +505,13 @@ darstellung_ohne_weissabgleich = yes
             print("🔧 Führe Auto-Patch aus: Füge 'randaufschlag_cumulative = 0' hinzu...")
             self.update_ini_value('Erkennung', 'randaufschlag_cumulative', '0')
             needs_reload = True
+
+        # --- AUTO-PATCH: Kahlschlag! Early-Exit Parameter restlos entfernen ---
+        for key in ['hybrid_sichel_faktor', 'hybrid_riss_faktor', 'early_exit_min_score', 'early_exit_perfect_score']:
+            if config.has_option('Erkennung', key):
+                print(f"🔧 Führe Auto-Patch aus: Entferne obsoleten Parameter '{key}'...")
+                self.remove_ini_value('Erkennung', key)
+                needs_reload = True
 
 
         
