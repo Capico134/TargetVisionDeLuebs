@@ -98,6 +98,9 @@ class DateiManager:
         
         # WICHTIG: image.copy(), damit der Main-Thread das Array nicht nachträglich verändert!
         self.image_queue.put((path, image.copy()))
+        
+        # ---> NEU: Meldet der Engine zurück, dass der Speichervorgang in die Wege geleitet wurde
+        return True
 
     def flush_image_queue(self):
         """Blockiert den Main-Thread, bis die Warteschlange komplett leer gearbeitet ist."""

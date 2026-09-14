@@ -59,8 +59,13 @@ class TargetDetector:
         #self.calib_feedback_right = None #JETZT IN DER GUI
 
     def save_debug_image(self, name, image):
-        self.dm.save_debug_image(name, image)
-        self.log("SYSTEM", f"📸 Debug-Bild gespeichert: {name}")
+        # Der Live-Manager schiebt das Bild in die Warteschlange.
+        # Der DummyManager (Labor) blockiert oder speichert physisch.
+        result = self.dm.save_debug_image(name, image)
+        
+        # ---> DER FIX: Wir loggen das Bild NUR, wenn der Manager explizit True zurückgibt!
+        if result is True:
+            self.log("SYSTEM", f"📸 Debug-Bild gespeichert: {name}")
 
     def normalize_brightness(self, ref, live):
         mean_ref = cv2.mean(ref)[:3]
@@ -395,7 +400,7 @@ class TargetDetector:
                         continue
 
                     # 3. DEEP ANALYSIS (Hough & Abrisskante laufen jetzt IMMER mit!)
-                    self.log(side, "🔬 >>> DEEP-ANALYSIS WIRD IMMER AUSGEFUEHRT <<< (Hough & Abrisskanten-Check)")
+                    # self.log(side, "🔬 >>> DEEP-ANALYSIS WIRD IMMER AUSGEFUEHRT <<< (Hough & Abrisskanten-Check)")
                         
                     mask_for_deep = np.zeros_like(thresh_new)
                     cv2.drawContours(mask_for_deep, [cnt], -1, 255, -1)
