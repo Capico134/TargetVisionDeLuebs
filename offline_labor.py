@@ -185,7 +185,7 @@ class OfflineLaborApp:
         self.farb_bonus_kurve_var = tk.DoubleVar(value=2.00)
         # ---> NEU: Die Eintrittskarten für das Battle Royale <---
         self.grenzwert_hough_var = tk.DoubleVar(value=7.0)
-        self.grenzwert_abriss_var = tk.DoubleVar(value=1.0)
+        self.abriss_min_hebel_var = tk.DoubleVar(value=0.0)
         
         self.zoom_factor = 1.0
         self.pan_x = 0
@@ -542,7 +542,7 @@ class OfflineLaborApp:
         tk.Label(param_frame, text="--- Heuristik & Limits ---", fg="gray").pack(pady=(10, 5))
         self.make_slider(param_frame, "abriss_max_edge_percent:", self.abriss_max_edge_percent_var, 0.4, 1.5, 0.01, key="abriss_max_edge_percent")
         self.make_slider(param_frame, "abriss_base_bonus:", self.abriss_base_bonus_var, 0.0, 30.0, 0.5, key="abriss_base_bonus")
-        self.make_slider(param_frame, "grenzwert_abriss:", self.grenzwert_abriss_var, 0.0, 10.0, 0.2, key="grenzwert_abriss") #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        self.make_slider(param_frame, "abriss_min_hebel (px):", self.abriss_min_hebel_var, 0.0, 10.0, 0.5, key="abriss_min_hebel") #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         #self.make_slider(param_frame, "early_exit_min_score:", self.early_exit_min_score_var, 100.0, 201.0, 1.0, key="early_exit_min_score")
         #self.make_slider(param_frame, "early_exit_perfect_score:", self.early_exit_perfect_score_var, 150.0, 201.0, 1.0, key="early_exit_perfect_score")
         self.make_slider(param_frame, "min_score_valid (Discard):", self.min_score_valid_var, 10.0, 150.0, 1.0, key="min_score_valid")
@@ -734,6 +734,7 @@ class OfflineLaborApp:
             
         if filepath:
             self.current_zip_path = filepath
+            # Vorläufiger Titel (damit was dasteht, falls das Laden einer Riesen-ZIP kurz dauert)
             self.root.title(f"Labor & Einstellungen - {os.path.basename(filepath)}")
             
             self.package_data = self.dm.import_match_package(filepath)
@@ -746,6 +747,23 @@ class OfflineLaborApp:
             self.apply_config_to_ui(parser)
             self.original_match_data = self.package_data.get('match_data')
             
+            # =========================================================================
+            # ---> NEU: Fenster-Titel mit Version und Zeitstempel aufhübschen <---
+            # =========================================================================
+            if self.original_match_data and "metadata" in self.original_match_data:
+                meta = self.original_match_data["metadata"]
+                
+                # 1. Version auslesen (Fallback auf '???', falls bei ganz alten ZIPs nicht vorhanden)
+                version = meta.get("version", "???")
+                
+                # 2. Exakten Zeitstempel auslesen (Fallback auf 'start_zeit', falls 'timestamp' fehlt)
+                zeit = meta.get("timestamp", meta.get("start_zeit", ""))
+                    
+                zeit_str = f" | 🕒 {zeit}" if zeit else ""
+                
+                # 3. Den finalen Titel setzen
+                self.root.title(f"Labor & Einstellungen - {os.path.basename(filepath)}   [v{version}{zeit_str}]")
+
             self.all_files = list(self.package_data['images'].keys())
             # ---> DER FIX: Nur cumulative_orig filtern! ZZZ_ wird für die Live-Tuning Bridge zwingend gebraucht! <---
             self.orig_files = sorted([f for f in self.all_files if "_orig" in f and not os.path.basename(f).startswith("cumulative_")])

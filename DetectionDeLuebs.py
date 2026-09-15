@@ -52,7 +52,7 @@ class TargetDetector:
         self.farb_bonus_limit = config.getfloat('Erkennung', 'farb_bonus_limit', fallback=150.0)
         self.farb_bonus_kurve = self.config.getfloat('Erkennung', 'farb_bonus_kurve', fallback=2.0)
         self.grenzwert_hough =  self.config.getfloat('Erkennung', 'grenzwert_hough', fallback=7.0)
-        self.grenzwert_abriss = self.config.getfloat('Erkennung', 'grenzwert_abriss', fallback=1.0)
+        self.abriss_min_hebel = self.config.getfloat('Erkennung', 'abriss_min_hebel', fallback=0.0)
 
         # Internes Gedächtnis des Detectors
         self.ref_left = None
@@ -366,11 +366,14 @@ class TargetDetector:
                             'score': final_score, 'cov_new': cov_new, 'valid': valid
                         })
                         valid_str = "✅" if valid else f"❌ (Zu wenig Riss-Anteil: < {min_coverage}%)"
-                        # Vorher:
-                        # bonus_str = f" [+{bonus:.1f} Bonus]" if bonus > 0 else ""
-                        # Besser und absolut eindeutig:
                         bonus_str = f" (inkl. +{bonus:.1f} Bonus)" if bonus > 0 else ""
-                        self.log(side, f"   -> Kandidat [{name}]: X:{int(c_x)} Y:{int(c_y)} | Score: {final_score:.1f}{bonus_str} | Riss-Anteil: {cov_new:.1f}% {valid_str}")
+                        
+                        # ---> NEU: Saubere Formatierung mit Pfeil-Auffüllung <---
+                        pos_str = f"X:{int(c_x)} Y:{int(c_y)}"
+                        prefix = f"Kandidat [{name}]: {pos_str} "
+                        padded_prefix = f"{prefix:-<45}>"
+                        
+                        self.log(side, f"   -> {padded_prefix} Score: {final_score:5.1f}{bonus_str} | Riss-Anteil: {cov_new:5.1f}% {valid_str}")
                         return final_score
 
                     self.log(side, "🔍 Sammle Kandidaten für das Battle Royale...")
@@ -392,8 +395,7 @@ class TargetDetector:
                     
                     limit_discard = current_caliber_radius * self.hybrid_discard_faktor
 
-                    self.log(side, f"📊 Base-Leader: {best_base['name']} (Score: {base_score:.1f}) | Radius: {radius:.1f}px")
-                    self.log(side, f"🔍 Check Kontur: Limit -> Discard > {limit_discard:.1f}px")
+                    self.log(side, f"📊 Base-Leader: {best_base['name']} (Score: {base_score:.1f}) | Radius: {radius:.1f}px (Discard-Limit: {limit_discard:.1f}px)")
 
                     # 2. DISCARD CHECK (Mega-Störungen sofort abwürgen)
                     if radius > limit_discard:
@@ -508,32 +510,46 @@ class TargetDetector:
                                     # Das Log zeigt dir exakt, warum ein Bonus vergeben oder verweigert wurde
                                     pct_str = int(max_edge_percent * 100)
                                     if gets_bonus:
-                                        bonus_log = f" (+{bonus:.1f} Bonus [Faktor {area_ratio:.2f}], Einzelkante & L={edge_len:.1f}px < {pct_str}% Limit {limit_len:.1f}px)"
+                                        bonus_log = f" (+{bonus:.1f} Bonus [Faktor {area_ratio:.2f}], L={edge_len:.1f}px < {pct_str}% Limit)"
                                     elif is_closed_ring:
-                                        bonus_log = f" (Kein Bonus, Vollkreis erkannt! Area={edge_area:.0f}px)"
+                                        bonus_log = f" (Kein Bonus, Vollkreis! Area={edge_area:.0f}px)"
                                     elif not is_single_edge:
-                                        bonus_log = f" (Kein Bonus, da {len(valid_edges)} Kanten gefunden | L={edge_len:.1f}px)"
+                                        bonus_log = f" (Kein Bonus, {len(valid_edges)} Kanten gefunden)"
                                     else:
-                                        bonus_log = f" (Kein Bonus, L={edge_len:.1f}px >= {pct_str}% Limit {limit_len:.1f}px)"
+                                        bonus_log = f" (Kein Bonus, L={edge_len:.1f}px >= {pct_str}% Limit)"
                                         
-                                    self.log(side, f"📍 Abrisskante #{e_idx+1} gefunden (Snap-to-Edge): X:{cx_edge} Y:{cy_edge}{bonus_log}")
+                                    # ---> NEU: Formatierung für die Kanten <---
+                                    prefix_abriss = f"Kante #{e_idx+1} (Snap-to-Edge): X:{cx_edge} Y:{cy_edge} "
+                                    padded_abriss = f"{prefix_abriss:-<45}>"
                                     
-                                    #grenzwert_abriss = 1.0
+                                    self.log(side, f"📍 {padded_abriss}{bonus_log}")
                                     
-                                    # Kandidaten für Kante X ins Rennen schicken
+                                    # ---> NEU: Das Sicherheitsnetz für das "Hebel-Problem" (Jetzt dynamisch!) <---
+                                    min_hebel = self.abriss_min_hebel 
+                                    grenzwert_abriss = 1.0 # Hartcodiert auf 1.0% als reiner Sanity-Check
+                                    
                                     d_cog = np.hypot(cog_x - cx_edge, cog_y - cy_edge)
-                                    if d_cog > 0:
+                                    if d_cog > min_hebel:
                                         tcx_cog = int(cx_edge + ((cog_x - cx_edge)/d_cog) * current_caliber_radius)
                                         tcy_cog = int(cy_edge + ((cog_y - cy_edge)/d_cog) * current_caliber_radius)
-                                        add_candidate(f"Abriss-{e_idx+1}-CoG", tcx_cog, tcy_cog, min_coverage=self.grenzwert_abriss, bonus=bonus)
+                                        # Nutzt jetzt wieder den hartcodierten grenzwert_abriss
+                                        add_candidate(f"Abriss-{e_idx+1}-CoG", tcx_cog, tcy_cog, min_coverage=grenzwert_abriss, bonus=bonus)
+                                    else:
+                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-CoG ignoriert: Hebel zu kurz ({d_cog:.1f}px < {min_hebel}px). Peilung unsicher!")
                                         
                                     d_mec = np.hypot(circle_x - cx_edge, circle_y - cy_edge)
-                                    if d_mec > 0:
+                                    if d_mec > min_hebel:
                                         tcx_mec = int(cx_edge + ((circle_x - cx_edge)/d_mec) * current_caliber_radius)
                                         tcy_mec = int(cy_edge + ((circle_y - cy_edge)/d_mec) * current_caliber_radius)
-                                        add_candidate(f"Abriss-{e_idx+1}-MEC", tcx_mec, tcy_mec, min_coverage=self.grenzwert_abriss, bonus=bonus)
+                                        add_candidate(f"Abriss-{e_idx+1}-MEC", tcx_mec, tcy_mec, min_coverage=grenzwert_abriss, bonus=bonus)
+                                    else:
+                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-MEC ignoriert: Hebel zu kurz ({d_mec:.1f}px < {min_hebel}px). Peilung unsicher!")
                         else:
                             self.log(side, "⚠️ Abrisskante gescheitert: Berührt kein intaktes Papier.")
+                            
+                    # ---> NEU: Erklärung für Schuss #1 <---
+                    else:
+                        self.log(side, "ℹ️ Abrisskanten-Check übersprungen: Erstes Loch auf der Scheibe (noch keine alten Risse vorhanden).")
 
                     # 4. DAS GROSSE BATTLE ROYALE AUSWERTEN
                     valid_candidates = [c for c in kandidaten if c['valid']]
@@ -565,7 +581,10 @@ class TargetDetector:
 
                     winner = max(valid_candidates, key=tie_breaker_key)
                     
-                    self.log(side, f"🏆 BATTLE ROYALE SIEGER: {winner['name']} setzt Zentrum (Score {winner['score']:.1f})")
+                    # ---> NEU: Formatierter Sieger <---
+                    win_prefix = f"BATTLE ROYALE SIEGER: {winner['name']} "
+                    padded_win = f"{win_prefix:-<45}>"
+                    self.log(side, f"🏆 {padded_win} Score: {winner['score']:5.1f}")
                     
                     cx, cy = winner['cx'], winner['cy']
                     final_shot_score = winner['score']
