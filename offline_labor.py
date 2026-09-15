@@ -219,7 +219,7 @@ class OfflineLaborApp:
             ToolTip(lbl, PARAMETER_LEXIKON[t_key])
         
         # ---> DER FIX: Wir trennen das Textfeld von der strengen Slider-Variable! <---
-        entry = tk.Entry(frame, width=6, justify="right")
+        entry = tk.Entry(frame, width=8, justify="right")
         entry.pack(side=tk.RIGHT, padx=(5, 0))
         entry.insert(0, str(tk_var.get()))
         
@@ -280,11 +280,27 @@ class OfflineLaborApp:
         entry.bind('<Return>', apply_entry_val)
         entry.bind('<FocusOut>', apply_entry_val)
         
-        # ---> NEU: Wenn der SLIDER bewegt wird, updaten wir das Textfeld (außer der Nutzer tippt gerade!) <---
+        # =====================================================================
+        # ---> NEU: Der visuelle "Dirty-Marker" (Färbt das Label rot bei Änderung) <---
+        # =====================================================================
         def sync_entry(*args):
+            # 1. Textfeld aktualisieren (falls der Nutzer nicht gerade tippt)
             if self.root.focus_get() != entry:
                 entry.delete(0, tk.END)
                 entry.insert(0, str(tk_var.get()))
+                
+            # 2. Prüfen, ob der Wert vom Original abweicht und das Label entsprechend färben!
+            var_key = str(tk_var)
+            if hasattr(self, 'original_values') and var_key in self.original_values:
+                # Wir vergleichen als Strings, um Probleme mit Fließkomma-Ungenauigkeiten zu vermeiden
+                if str(tk_var.get()) != str(self.original_values[var_key]):
+                    lbl.config(fg="#e74c3c", font=("Segoe UI", 9, "bold")) # Sattes Rot und Fett
+                    # Ein Sternchen an den Text anhängen, falls noch keines da ist
+                    if not lbl.cget("text").startswith("*"):
+                        lbl.config(text=f"* {label_text}")
+                else:
+                    lbl.config(fg="black", font=("Segoe UI", 9, "normal")) # Zurück auf Standard
+                    lbl.config(text=label_text)
                 
         tk_var.trace_add("write", sync_entry)
 
@@ -525,8 +541,8 @@ class OfflineLaborApp:
         tk.Label(param_frame, text="--- Hybrid & Hough Faktoren ---", fg="gray").pack(pady=(10, 5))
         #self.make_slider(param_frame, "hybrid_sichel_faktor:", self.hybrid_sichel_faktor_var, 0.1, 1.5, 0.01, key="hybrid_sichel_faktor")
         #self.make_slider(param_frame, "hybrid_riss_faktor:", self.hybrid_riss_faktor_var, 1.0, 3.0, 0.001, key="hybrid_riss_faktor")
-        self.make_slider(param_frame, "grenzwert_hough:", self.grenzwert_hough_var, 0.0, 20.0, 0.5, key="grenzwert_hough") #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         self.make_slider(param_frame, "hybrid_discard_faktor:", self.hybrid_discard_faktor_var, 1.5, 5.0, 0.1, key="hybrid_discard_faktor")
+        self.make_slider(param_frame, "grenzwert_hough:", self.grenzwert_hough_var, 0.0, 20.0, 0.5, key="grenzwert_hough") #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         self.make_slider(param_frame, "hough_min_faktor:", self.hough_min_faktor_var, 0.5, 1.0, 0.01, key="hough_min_faktor")
         self.make_slider(param_frame, "hough_max_faktor:", self.hough_max_faktor_var, 1.0, 2.0, 0.01, key="hough_max_faktor")
         self.make_slider(param_frame, "hough_param1 (Kanten):", self.hough_param1_var, 10, 100, key="hough_param1")
@@ -554,21 +570,48 @@ class OfflineLaborApp:
         tk.Label(param_frame, text="--- Anti-Weiß Filter (Farb-Bonus) ---", fg="gray").pack(pady=(10, 5))
         
         # Checkbutton
-        chk_farb = tk.Checkbutton(param_frame, text="🟢 farb_bonus_aktiv", variable=self.farb_bonus_aktiv_var)
+        base_text_farb = "🟢 farb_bonus_aktiv"
+        chk_farb = tk.Checkbutton(param_frame, text=base_text_farb, variable=self.farb_bonus_aktiv_var)
         chk_farb.pack(anchor=tk.W)
         self.registered_sliders["farb_bonus_aktiv"] = self.farb_bonus_aktiv_var
+        
         # ---> ELA FIX: Tooltip manuell an die Checkbox hängen <---
         if "farb_bonus_aktiv" in PARAMETER_LEXIKON:
             ToolTip(chk_farb, PARAMETER_LEXIKON["farb_bonus_aktiv"])
         
         def sync_farb_config(*args):
+            # 1. Spion für die Config
             if getattr(self, 'package_data', None) and self.package_data.get('config'):
                 parser = self.package_data['config']
                 if not parser.has_section('Erkennung'): parser.add_section('Erkennung')
                 val_str = "yes" if self.farb_bonus_aktiv_var.get() else "no"
                 parser.set('Erkennung', "farb_bonus_aktiv", val_str)
                 self.on_param_change()
+                
+            # 2. ---> NEU: Visueller Dirty-Marker für die Checkbox <---
+            var_key = str(self.farb_bonus_aktiv_var)
+            if hasattr(self, 'original_values') and var_key in self.original_values:
+                # Prüfen ob der aktuelle Zustand (True/False) vom Original abweicht
+                if self.farb_bonus_aktiv_var.get() != self.original_values[var_key]:
+                    chk_farb.config(fg="#e74c3c", font=("Segoe UI", 9, "bold"), text=f"* {base_text_farb}")
+                else:
+                    chk_farb.config(fg="black", font=("Segoe UI", 9, "normal"), text=base_text_farb)
+                    
         self.farb_bonus_aktiv_var.trace_add("write", sync_farb_config)
+
+        # ---> NEU: Mittelklick-Reset auch für die Checkbox! <---
+        def reset_farb_to_original(event):
+            var_key = str(self.farb_bonus_aktiv_var)
+            if hasattr(self, 'original_values') and var_key in self.original_values:
+                self.farb_bonus_aktiv_var.set(self.original_values[var_key])
+                self.on_param_change(force=True)
+            return "break" 
+            
+        chk_farb.bind('<Button-2>', reset_farb_to_original)
+        
+        # =========================================================================
+        # ---> HIER SIND DIE BEIDEN VERLORENEN SLIDER WIEDER! <---
+        # =========================================================================
         self.make_slider(param_frame, "farb_bonus_limit (Distanz):", self.farb_bonus_limit_var, 50.0, 750.0, 5.0, key="farb_bonus_limit")
         self.make_slider(param_frame, "farb_bonus_kurve (Exponent):", self.farb_bonus_kurve_var, 1.0, 5.0, 0.1, key="farb_bonus_kurve")
         
