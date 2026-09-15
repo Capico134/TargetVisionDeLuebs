@@ -298,7 +298,8 @@ randaufschlag_cumulative = 0
 farb_bonus_aktiv = yes
 farb_bonus_limit = 150.0
 farb_bonus_kurve = 2.0
-
+grenzwert_hough = 7.0
+grenzwert_abriss = 1.0
 
 [Timing]
 # Bildwiederholrate/Haupttakt in Millisekunden (33 ms entspricht ca. 30 FPS).
@@ -463,21 +464,21 @@ darstellung_ohne_weissabgleich = yes
         #        pass
 
 
-        # --- AUTO-PATCH: Magic Numbers (v1.5.3) in die Config migrieren ---
-        neue_parameter = {
-            'abriss_max_edge_percent': '0.75',
-            'abriss_base_bonus': '17.0',
-            'early_exit_min_score': '145.0',
-            'early_exit_perfect_score': '196.0',
-            'min_score_valid': '70.0',
-            'clipping_factor_history': '0.15',
-            'clipping_factor_current': '0.95'
-        }
-        for key, default_val in neue_parameter.items():
-            if not config.has_option('Erkennung', key):
-                print(f"🔧 Führe Auto-Patch aus: Füge '{key} = {default_val}' hinzu...")
-                self.update_ini_value('Erkennung', key, default_val)
-                needs_reload = True
+        # # --- AUTO-PATCH: Magic Numbers (v1.5.3) in die Config migrieren ---
+        # neue_parameter = {
+        #     'abriss_max_edge_percent': '0.75',
+        #     'abriss_base_bonus': '17.0',
+        #     'early_exit_min_score': '145.0',
+        #     'early_exit_perfect_score': '196.0',
+        #     'min_score_valid': '70.0',
+        #     'clipping_factor_history': '0.15',
+        #     'clipping_factor_current': '0.95'
+        # }
+        # for key, default_val in neue_parameter.items():
+        #     if not config.has_option('Erkennung', key):
+        #         print(f"🔧 Führe Auto-Patch aus: Füge '{key} = {default_val}' hinzu...")
+        #         self.update_ini_value('Erkennung', key, default_val)
+        #         needs_reload = True
 
         if config.has_option('Erkennung', 'abriss_base_bonus'):
             try:

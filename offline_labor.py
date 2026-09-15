@@ -183,6 +183,9 @@ class OfflineLaborApp:
         self.farb_bonus_aktiv_var = tk.BooleanVar(value=False)
         self.farb_bonus_limit_var = tk.DoubleVar(value=150.0)
         self.farb_bonus_kurve_var = tk.DoubleVar(value=2.00)
+        # ---> NEU: Die Eintrittskarten für das Battle Royale <---
+        self.grenzwert_hough_var = tk.DoubleVar(value=7.0)
+        self.grenzwert_abriss_var = tk.DoubleVar(value=1.0)
         
         self.zoom_factor = 1.0
         self.pan_x = 0
@@ -522,6 +525,7 @@ class OfflineLaborApp:
         tk.Label(param_frame, text="--- Hybrid & Hough Faktoren ---", fg="gray").pack(pady=(10, 5))
         #self.make_slider(param_frame, "hybrid_sichel_faktor:", self.hybrid_sichel_faktor_var, 0.1, 1.5, 0.01, key="hybrid_sichel_faktor")
         #self.make_slider(param_frame, "hybrid_riss_faktor:", self.hybrid_riss_faktor_var, 1.0, 3.0, 0.001, key="hybrid_riss_faktor")
+        self.make_slider(param_frame, "grenzwert_hough:", self.grenzwert_hough_var, 0.0, 20.0, 0.5, key="grenzwert_hough") #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         self.make_slider(param_frame, "hybrid_discard_faktor:", self.hybrid_discard_faktor_var, 1.5, 5.0, 0.1, key="hybrid_discard_faktor")
         self.make_slider(param_frame, "hough_min_faktor:", self.hough_min_faktor_var, 0.5, 1.0, 0.01, key="hough_min_faktor")
         self.make_slider(param_frame, "hough_max_faktor:", self.hough_max_faktor_var, 1.0, 2.0, 0.01, key="hough_max_faktor")
@@ -538,6 +542,7 @@ class OfflineLaborApp:
         tk.Label(param_frame, text="--- Heuristik & Limits ---", fg="gray").pack(pady=(10, 5))
         self.make_slider(param_frame, "abriss_max_edge_percent:", self.abriss_max_edge_percent_var, 0.4, 1.5, 0.01, key="abriss_max_edge_percent")
         self.make_slider(param_frame, "abriss_base_bonus:", self.abriss_base_bonus_var, 0.0, 30.0, 0.5, key="abriss_base_bonus")
+        self.make_slider(param_frame, "grenzwert_abriss:", self.grenzwert_abriss_var, 0.0, 10.0, 0.2, key="grenzwert_abriss") #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         #self.make_slider(param_frame, "early_exit_min_score:", self.early_exit_min_score_var, 100.0, 201.0, 1.0, key="early_exit_min_score")
         #self.make_slider(param_frame, "early_exit_perfect_score:", self.early_exit_perfect_score_var, 150.0, 201.0, 1.0, key="early_exit_perfect_score")
         self.make_slider(param_frame, "min_score_valid (Discard):", self.min_score_valid_var, 10.0, 150.0, 1.0, key="min_score_valid")
@@ -700,6 +705,15 @@ class OfflineLaborApp:
     def load_local_config(self):
         """Lädt die lokale config.ini im Stand-Alone Modus."""
         parser = self.dm.load_or_create_config()
+        
+        # ---> NEU: Fehlende Keys auch bei lokaler Config ergänzen! <---
+        if parser:
+            if not parser.has_section('Erkennung'):
+                parser.add_section('Erkennung')
+            for key, tk_var in self.registered_sliders.items():
+                if not parser.has_option('Erkennung', key):
+                    # Key fehlt -> mit GUI-Wert ergänzen
+                    parser.set('Erkennung', key, str(tk_var.get()))
         
         self.package_data = {
             'config': parser,

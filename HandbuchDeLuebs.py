@@ -68,6 +68,8 @@ PARAMETER_LEXIKON = {
     "debug_alle_bilder_speichern": "Speichert bei JEDEM erkannten Treffer die rohen und gefilterten Bilder im debug_bilder-Ordner ab. Ausschließlich für Entwicklungszwecke!",
     # ---> NEU: Die ausgelagerten Magic Numbers für die Tooltips <---
     "abriss_max_edge_percent": "Abrisskanten-Limit: Eine erkannte Papierkante muss kürzer als dieser prozentuale Anteil des Vollkreis-Umfangs sein (z.B. 0.75 = 75%), um als echter Riss und nicht als geschlossenes Loch (Donut) zu gelten.",
+    "grenzwert_hough": "Battle-Royale Eintrittskarte für den Hough-Filter. Der gefundene Kreis muss zu mindestens X % (z. B. 7.0 %) tatsächlich aus einem dunklen Riss im Bild bestehen, um als Treffer-Kandidat zugelassen zu werden.",
+    "grenzwert_abriss": "Battle-Royale Eintrittskarte für die Abrisskante. Da ein perfekter Abriss oft nur aus einem hauchdünnen Sichel-Rand besteht, reicht hier ein sehr kleiner Wert (z. B. 1.0 %), damit der Kandidat zugelassen wird.",
     "abriss_base_bonus": "Basis-Bonus für Abrisskanten. Wird dynamisch mit der Rissfläche multipliziert und auf den Score aufgeschlagen, wenn genau eine echte, abgerissene Papierkante gefunden wird.",
     #"early_exit_min_score": "Mindest-Score für perfekte Löcher. Liegt der Radius in der Norm und der Score über diesem Wert, wird die aufwändige Deep-Analysis übersprungen (spart CPU-Ressourcen).",
     #"early_exit_perfect_score": "Makelloser Score: Liegt die Abdeckung über diesem Wert (z.B. 196.0), wird die Form als so perfekt eingestuft, dass die Deep-Analysis selbst bei leichten Radius-Abweichungen übersprungen wird.",

@@ -51,6 +51,8 @@ class TargetDetector:
         self.farb_bonus_aktiv = config.getboolean('Erkennung', 'farb_bonus_aktiv', fallback=False)
         self.farb_bonus_limit = config.getfloat('Erkennung', 'farb_bonus_limit', fallback=150.0)
         self.farb_bonus_kurve = self.config.getfloat('Erkennung', 'farb_bonus_kurve', fallback=2.0)
+        self.grenzwert_hough =  self.config.getfloat('Erkennung', 'grenzwert_hough', fallback=7.0)
+        self.grenzwert_abriss = self.config.getfloat('Erkennung', 'grenzwert_abriss', fallback=1.0)
 
         # Internes Gedächtnis des Detectors
         self.ref_left = None
@@ -425,8 +427,8 @@ class TargetDetector:
                             if h_score > best_hough_score:
                                 best_hough_score, best_h_cx, best_h_cy = h_score, hx, hy
                                 
-                        grenzwert_hough = 7.0 
-                        add_candidate("Hough-Sieger", best_h_cx, best_h_cy, min_coverage=grenzwert_hough)
+                        #grenzwert_hough = 7.0 
+                        add_candidate("Hough-Sieger", best_h_cx, best_h_cy, min_coverage=self.grenzwert_hough)
 
                     # --- ABRISSKANTEN KANDIDATEN ---
                     if state.cumulative_mask is not None and cv2.countNonZero(state.cumulative_mask) > 0:
@@ -516,20 +518,20 @@ class TargetDetector:
                                         
                                     self.log(side, f"📍 Abrisskante #{e_idx+1} gefunden (Snap-to-Edge): X:{cx_edge} Y:{cy_edge}{bonus_log}")
                                     
-                                    grenzwert_abriss = 1.0
+                                    #grenzwert_abriss = 1.0
                                     
                                     # Kandidaten für Kante X ins Rennen schicken
                                     d_cog = np.hypot(cog_x - cx_edge, cog_y - cy_edge)
                                     if d_cog > 0:
                                         tcx_cog = int(cx_edge + ((cog_x - cx_edge)/d_cog) * current_caliber_radius)
                                         tcy_cog = int(cy_edge + ((cog_y - cy_edge)/d_cog) * current_caliber_radius)
-                                        add_candidate(f"Abriss-{e_idx+1}-CoG", tcx_cog, tcy_cog, min_coverage=grenzwert_abriss, bonus=bonus)
+                                        add_candidate(f"Abriss-{e_idx+1}-CoG", tcx_cog, tcy_cog, min_coverage=self.grenzwert_abriss, bonus=bonus)
                                         
                                     d_mec = np.hypot(circle_x - cx_edge, circle_y - cy_edge)
                                     if d_mec > 0:
                                         tcx_mec = int(cx_edge + ((circle_x - cx_edge)/d_mec) * current_caliber_radius)
                                         tcy_mec = int(cy_edge + ((circle_y - cy_edge)/d_mec) * current_caliber_radius)
-                                        add_candidate(f"Abriss-{e_idx+1}-MEC", tcx_mec, tcy_mec, min_coverage=grenzwert_abriss, bonus=bonus)
+                                        add_candidate(f"Abriss-{e_idx+1}-MEC", tcx_mec, tcy_mec, min_coverage=self.grenzwert_abriss, bonus=bonus)
                         else:
                             self.log(side, "⚠️ Abrisskante gescheitert: Berührt kein intaktes Papier.")
 
