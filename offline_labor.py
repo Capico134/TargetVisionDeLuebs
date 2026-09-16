@@ -669,16 +669,18 @@ class OfflineLaborApp:
             if parser.has_section('Kameras'):
                 val_x = parser.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
                 val_y = parser.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-                val_fisch = parser.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) # <--- NEU
+                val_fisch = parser.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) 
                 
-                self.calib_x_var.set(val_x)
-                self.calib_y_var.set(val_y)
-                self.calib_fischauge_var.set(val_fisch) # <--- NEU
-                
+                # ---> DER FIX: original_values ZUERST aktualisieren, bevor set() den Trace auslöst! <---
                 if hasattr(self, 'orig_calib'):
                     self.original_values[str(self.calib_x_var)] = self.orig_calib[f"{side}_x"]
                     self.original_values[str(self.calib_y_var)] = self.orig_calib[f"{side}_y"]
-                    self.original_values[str(self.calib_fischauge_var)] = self.orig_calib.get(f"{side}_fisch", 0.0) # <--- NEU
+                    self.original_values[str(self.calib_fischauge_var)] = self.orig_calib.get(f"{side}_fisch", 0.0) 
+
+                # Jetzt erst die GUI setzen, damit der Trace keinen falschen Alarm (Rot) schlägt
+                self.calib_x_var.set(val_x)
+                self.calib_y_var.set(val_y)
+                self.calib_fischauge_var.set(val_fisch)
 
     def switch_camera(self):
         """Wird aufgerufen, wenn man zwischen Links/Rechts umschaltet."""
@@ -1673,7 +1675,7 @@ class OfflineLaborApp:
             txt.insert(tk.END, "Legende: 'E' = Manuell editiert | '*' = Methode hat sich zum Original geändert\n")
             
             # ---> NEU: Breiten optimiert für perfekten Tabellen-Look <---
-            header = f"{'Nr':>3} | {'Bild':>4} | {'Methode / Sieger':<22} | {'Orig (X,Y)':<14} | {'Neu (X,Y)':<14} | {'Dist':>6} | {'O-CV':>6} | {'N-CV':>6} | {'% Kal':<10}\n"
+            header = f"{'Nr':>3} | {'Bild':>4} | {'Methode / Sieger':<25} | {'Orig (X,Y)':<14} | {'Neu (X,Y)':<14} | {'Dist':>6} | {'O-CV':>6} | {'N-CV':>6} | {'% Kal':<10}\n"
             txt.insert(tk.END, header)
             txt.insert(tk.END, "-"*105 + "\n")
             
@@ -1722,7 +1724,7 @@ class OfflineLaborApp:
                     pct_str = f"{pct:.1f}% {warn}"
                     
                     # ---> NEU: Angepasste Format-Breiten <---
-                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {display_method:<22} | {orig_str:<14} | {curr_str:<14} | {dist:6.1f}p | {orig_cv:6.1f} | {curr_cv:6.1f} | {pct_str:<10}\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {display_method:<25} | {orig_str:<14} | {curr_str:<14} | {dist:6.1f}p | {orig_cv:6.1f} | {curr_cv:6.1f} | {pct_str:<10}\n")
                     
                 elif orig_idx is not None:
                     orig = orig_shots[orig_idx]
@@ -2184,30 +2186,62 @@ class OfflineLaborApp:
         
         
         else: # Modus 3: Die Überlagerung
-            ref = to_bgr(self.last_ref_img)
-            
-            # Mitte: Aktuelles Diff-Bild mit 80% Transparenz auf das Referenzbild legen
-            composite = cv2.addWeighted(ref, 0.65, diff_bgr, 0.65, 0)
-            
-            # Oben: Diff-Gesamt-Bild (Schwarz ausblenden, Weiß zu Grün machen)
-            diff_gesamt = self.last_diff_gesamt_img
-            if diff_gesamt is not None:
-                # ---> NEU: Zwingt auch die alte Maske gnadenlos auf die richtige Bildgröße! <---
-                if diff_gesamt.shape[:2] != (h, w):
-                    diff_gesamt = cv2.resize(diff_gesamt, (w, h), interpolation=cv2.INTER_NEAREST)
-                
-                # ---> KORREKTUR: Alles Schwarze (< 127) wird zu True für die grüne Farbe <---
-                mask = (cv2.cvtColor(diff_gesamt, cv2.COLOR_BGR2GRAY) < 127) if len(diff_gesamt.shape) == 3 else (diff_gesamt < 127)
-                
-                # Komplett grünes Bild in der Größe des Composites erzeugen
-                green_overlay = np.zeros_like(composite)
-                green_overlay[:] = (0, 255, 0) # Grün in BGR
-                
-                # Nur dort, wo die Maske weiß ist, das Grün mit 50% über das Composite blenden
-                composite[mask] = cv2.addWeighted(composite[mask], 0.5, green_overlay[mask], 0.5, 0)
-                
-            right_img = composite
-        
+                    ref = to_bgr(self.last_ref_img)
+                    
+                    # Mitte: Aktuelles Diff-Bild mit 80% Transparenz auf das Referenzbild legen
+                    composite = cv2.addWeighted(ref, 0.65, diff_bgr, 0.65, 0)
+                    
+                    # Oben: Diff-Gesamt-Bild (Schwarz ausblenden, Weiß zu Grün machen)
+                    diff_gesamt = self.last_diff_gesamt_img
+                    if diff_gesamt is not None:
+                        if diff_gesamt.shape[:2] != (h, w):
+                            diff_gesamt = cv2.resize(diff_gesamt, (w, h), interpolation=cv2.INTER_NEAREST)
+                        
+                        mask = (cv2.cvtColor(diff_gesamt, cv2.COLOR_BGR2GRAY) < 127) if len(diff_gesamt.shape) == 3 else (diff_gesamt < 127)
+                        green_overlay = np.zeros_like(composite)
+                        green_overlay[:] = (0, 255, 0)
+                        composite[mask] = cv2.addWeighted(composite[mask], 0.5, green_overlay[mask], 0.5, 0)
+                        
+                    right_img = composite
+
+        # =========================================================================
+        # ---> Tactic-Overlay: NUR in Ansicht 4 (Raw-Diff), nur für Abrisskanten-Sieger <---
+        # =========================================================================
+        if mode == 4:
+            side = getattr(self, 'current_side', self.active_camera_var.get())
+            # Nur Treffer zeichnen, die im AKTUELL angezeigten Labor-Bild entstanden sind.
+            # current_index ist bei normalen Bildern direkt die 1-basierte Bildnummer.
+            current_frame_num = self.current_index
+
+            if hasattr(self, 'current_engine_shots'):
+                for shot in self.current_engine_shots:
+                    if shot.get('side') != side:
+                        continue
+
+                    # Historische Abrisskanten anderer Bilder bleiben unsichtbar.
+                    if shot.get('labor_frame_num') != current_frame_num:
+                        continue
+
+                    winner_method = shot.get('winner_method', '')
+                    if "Abriss" not in winner_method:
+                        continue
+
+                    # Start = exakt gefundene Abrisskante
+                    bx, by = shot.get('base_pos', (0, 0))
+                    # Ende = die beim Gewinner hinterlegte rohe CoG-/MEC-Position
+                    ex, ey = shot.get('end_pos', (0, 0))
+
+                    hellblau = (255, 200, 0)  # BGR: hellblau
+                    gruen = (0, 255, 0) 
+                    
+                    if (bx, by) != (ex, ey):
+                        # Verbindung nur in Ansicht 4 zeichnen
+                        cv2.line(right_img, (bx, by), (ex, ey), gruen, 1, cv2.LINE_AA)
+
+                    # Beide Endpunkte: Abrisskante + gefundener CoG/MEC-Punkt
+                    cv2.circle(right_img, (bx, by), 2, hellblau, -1)
+                    cv2.circle(right_img, (ex, ey), 2, hellblau, -1)
+
         # Zoom-Faktor einrechnen
         self.current_scale = (550 / h) * self.zoom_factor
         self.current_img_w = int(w * self.current_scale)
@@ -2312,14 +2346,16 @@ class OfflineLaborApp:
                 
                 # Highlight Links (Exakter Kaliber-Kreis)
                 cv2.circle(combined, (scaled_x1, scaled_y), scaled_r, color, line_thickness)
-                cv2.circle(combined, (scaled_x1, scaled_y), 2, color, -1)
+                cv2.circle(combined, (scaled_x1, scaled_y), 4, (0, 0, 0), -1)    # <--- Schwarzer Hintergrund-Ring für Kontrast
+                cv2.circle(combined, (scaled_x1, scaled_y), 2, color, -1)        # <--- Der eigentliche lila Punkt
                 
                 # ---> NEU: Fette, große Schrift (Scale 1.2, Dicke 2) <---
                 cv2.putText(combined, f"#{f_num}", (scaled_x1 - 25, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2, cv2.LINE_AA)
                 
                 # Highlight Rechts (Gespiegelt)
                 cv2.circle(combined, (scaled_x2, scaled_y), scaled_r, color, line_thickness)
-                cv2.circle(combined, (scaled_x2, scaled_y), 2, color, -1)
+                cv2.circle(combined, (scaled_x2, scaled_y), 4, (0, 0, 0), -1)    # <--- Schwarzer Hintergrund-Ring
+                cv2.circle(combined, (scaled_x2, scaled_y), 2, color, -1)        # <--- Der eigentliche lila Punkt
                 
                 # ---> NEU: Auf der rechten Seite noch einen Tick größer (Scale 1.5, Dicke 3) <---
                 cv2.putText(combined, f"#{f_num}", (scaled_x2 - 30, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_AA)

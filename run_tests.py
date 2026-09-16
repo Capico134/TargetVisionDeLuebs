@@ -25,7 +25,7 @@ class DummyStateManager:
         self.state_right = DummyState('right')
         self.shots = []
         
-    def add_shot(self, side, cx, cy, area, cv_score=0.0):
+    def add_shot(self, side, cx, cy, area, cv_score=0.0, base_pos=None, end_pos=None):
         shot = {'side': side, 'pos': (cx, cy), 'area': area, 'score': -1.0, 'is_new': True, 'cv_score': cv_score}
         self.shots.append(shot)
         return shot

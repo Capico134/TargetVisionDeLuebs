@@ -217,17 +217,19 @@ class StateManager:
                 
         return score, raw_score # <--- NEU: Beide Werte zurückgeben!
 
-    def add_shot(self, side, cx, cy, area, cv_score=0.0):
+    def add_shot(self, side, cx, cy, area, cv_score=0.0, base_pos=None, end_pos=None):
         """Speichert einen neuen Schuss und berechnet die Ring-Zehntelwertung!"""
-        score, raw_score = self.calculate_score(side, cx, cy) # <--- NEU: Beide Werte fangen!
+        score, raw_score = self.calculate_score(side, cx, cy)
         
         shot_data = {
             'side': side,
             'pos': (cx, cy),
             'area': area,
             'score': score,
-            'raw_score': raw_score, # <--- NEU: Roh-Wert für das Logbuch speichern!
+            'raw_score': raw_score,
             'cv_score': cv_score,
+            'base_pos': base_pos if base_pos is not None else (int(cx), int(cy)),
+            'end_pos': end_pos if end_pos is not None else (int(cx), int(cy)), # <--- HIER KORRIGIERT
             'timestamp': time.time(),
             't_mono': time.monotonic() - getattr(self, 'match_start_mono', time.monotonic()), 
             'is_new': True
@@ -368,7 +370,9 @@ class StateManager:
                 "a": round(float(s['area']), 1),
                 "score": float(s.get('score', 0.0)),
                 "cv_score": round(float(s.get('cv_score', 0.0)), 1),
-                "winner_method": str(s.get('winner_method', 'Unbekannt')), # <--- NEU: Ab in die JSON!
+                "winner_method": str(s.get('winner_method', 'Unbekannt')),
+                "base_pos": [int(s.get('base_pos', s['pos'])[0]), int(s.get('base_pos', s['pos'])[1])],
+                "end_pos": [int(s.get('end_pos', s['pos'])[0]), int(s.get('end_pos', s['pos'])[1])], # <--- NEU IN DER JSON
                 "edited": bool(s.get('is_edited', False))
             })
 
@@ -389,15 +393,19 @@ class StateManager:
         # Timeline wiederherstellen
         for h in match_data.get('timeline', []):
             side_str = 'left' if h['s'] == 'l' else 'right'
+            bp = h.get('base_pos', [h['x'], h['y']])
+            ep = h.get('end_pos', [h['x'], h['y']]) # <--- NEU: Endpunkt auslesen
             self.shots.append({
                 'side': side_str,
                 'pos': (h['x'], h['y']),
+                'base_pos': (bp[0], bp[1]),
+                'end_pos': (ep[0], ep[1]),          # <--- NEU: Endpunkt wiederherstellen
                 'area': h.get('a', 0.0),
                 'score': h.get('score', 0.0),
                 'cv_score': h.get('cv_score', 0.0),
                 't_mono': h.get('t', 0.0),
-                'timestamp': time.time(), # Optischer Dummy für die GUI
-                'is_new': False, # WICHTIG: Alte Schüsse sollen nicht rot blinken!
+                'timestamp': time.time(),
+                'is_new': False,
                 'is_edited': h.get('edited', False)
             })
         self.dm.write_log(f"SYSTEM: 🔄 Status aus Handover wiederhergestellt ({len(self.shots)} Treffer).")

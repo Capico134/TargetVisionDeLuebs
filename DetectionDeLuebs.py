@@ -357,21 +357,34 @@ class TargetDetector:
                     kandidaten = []
                     
                     # --- HILFSFUNKTION FÜR DAS BATTLE ROYALE ---
-                    def add_candidate(name, c_x, c_y, min_coverage=0.0, bonus=0.0):
+                    def add_candidate(name, c_x, c_y, min_coverage=0.0, bonus=0.0, base_pos=None, end_pos=None):
                         score, cov_new, _ = self.calculate_hole_score(c_x, c_y, current_caliber_radius, thresh_new, thresh_raw)
-                        final_score = score + bonus # <--- NEU: Die Material-Prämie!
+                        final_score = score + bonus
                         valid = cov_new >= min_coverage
+                        
+                        bp = (int(base_pos[0]), int(base_pos[1])) if base_pos else (int(c_x), int(c_y))
+                        ep = (int(end_pos[0]), int(end_pos[1])) if end_pos else (int(c_x), int(c_y))
+                        
                         kandidaten.append({
                             'name': name, 'cx': int(c_x), 'cy': int(c_y), 
-                            'score': final_score, 'cov_new': cov_new, 'valid': valid
+                            'score': final_score, 'cov_new': cov_new, 'valid': valid,
+                            'base_pos': bp, 'end_pos': ep
                         })
+                        
                         valid_str = "✅" if valid else f"❌ (Zu wenig Riss-Anteil: < {min_coverage}%)"
                         bonus_str = f" (inkl. +{bonus:.1f} Bonus)" if bonus > 0 else ""
                         
-                        # ---> NEU: Saubere Formatierung mit Pfeil-Auffüllung <---
-                        pos_str = f"X:{int(c_x)} Y:{int(c_y)}"
+                        # =====================================================================
+                        # ---> NEU: Dynamische und glasklare Log-Ausgabe für Vektoren <---
+                        # =====================================================================
+                        if "Abriss" in name:
+                            # Zeigt den genauen Weg: Start (Kante) -> Anker (CoG/MEC) -> Endpunkt (Zentrum)
+                            pos_str = f"Kante {bp} ➔ Rumpf {ep} ➔ Ziel ({int(c_x)}, {int(c_y)})"
+                        else:
+                            pos_str = f"Ziel X:{int(c_x)} Y:{int(c_y)}"
+                            
                         prefix = f"Kandidat [{name}]: {pos_str} "
-                        padded_prefix = f"{prefix:-<45}>"
+                        padded_prefix = f"{prefix:-<85}>" # Etwas mehr Platz für den langen String
                         
                         self.log(side, f"   -> {padded_prefix} Score: {final_score:5.1f}{bonus_str} | Riss-Anteil: {cov_new:5.1f}% {valid_str}")
                         return final_score
@@ -379,6 +392,15 @@ class TargetDetector:
                     self.log(side, "🔍 Sammle Kandidaten für das Battle Royale...")
 
                     # 1. BASELINE KANDIDATEN (MEC & CoG)
+                    M = cv2.moments(cnt)
+                    if M["m00"] != 0:
+                        cog_x, cog_y = M["m10"] / M["m00"], M["m01"] / M["m00"]
+                        base_pos = (int(cog_x), int(cog_y))
+                        add_candidate("Schwerpunkt (CoG)", cog_x, cog_y)
+                    else:
+                        (circle_x, circle_y), _ = cv2.minEnclosingCircle(cnt)
+                        base_pos = (int(circle_x), int(circle_y))
+                        
                     (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
                     add_candidate("MinCircle (MEC)", circle_x, circle_y)
 
@@ -497,15 +519,25 @@ class TargetDetector:
                                     gets_bonus = is_single_edge and is_true_tear
                                     bonus = dynamic_bonus if gets_bonus else 0.0
                                     
+                                    # =====================================================================
+                                    # ---> DIE EIERLEGENDE WOLLMILCHSAU (Classic vs. Dynamic) <---
+                                    # =====================================================================
+                                    # 1. Startpunkt Variante A: Der Flächenschwerpunkt des Risses (Classic)
                                     M_int = cv2.moments(edge_cnt)
                                     if M_int["m00"] != 0:
                                         cx_float = M_int["m10"] / M_int["m00"]
                                         cy_float = M_int["m01"] / M_int["m00"]
                                     else:
                                         cx_float, cy_float = np.mean(edge_cnt[:,0,0]), np.mean(edge_cnt[:,0,1])
-                                        
-                                    best_pt = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - cx_float, pt[0][1] - cy_float))[0]
-                                    cx_edge, cy_edge = best_pt
+                                    best_pt_center = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - cx_float, pt[0][1] - cy_float))[0]
+                                    cx_edge_center, cy_edge_center = best_pt_center
+                                    
+                                    # 2. Startpunkt Variante B: Der kürzeste Weg zum Rumpf (Dynamic)
+                                    best_pt_cog = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - cog_x, pt[0][1] - cog_y))[0]
+                                    cx_edge_cog, cy_edge_cog = best_pt_cog
+                                    
+                                    best_pt_mec = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - circle_x, pt[0][1] - circle_y))[0]
+                                    cx_edge_mec, cy_edge_mec = best_pt_mec
                                     
                                     # Das Log zeigt dir exakt, warum ein Bonus vergeben oder verweigert wurde
                                     pct_str = int(max_edge_percent * 100)
@@ -518,32 +550,44 @@ class TargetDetector:
                                     else:
                                         bonus_log = f" (Kein Bonus, L={edge_len:.1f}px >= {pct_str}% Limit)"
                                         
-                                    # ---> NEU: Formatierung für die Kanten <---
-                                    prefix_abriss = f"Kante #{e_idx+1} (Snap-to-Edge): X:{cx_edge} Y:{cy_edge} "
+                                    prefix_abriss = f"Kante #{e_idx+1} (Classic vs. Dynamic) "
                                     padded_abriss = f"{prefix_abriss:-<45}>"
                                     
                                     self.log(side, f"📍 {padded_abriss}{bonus_log}")
                                     
-                                    # ---> NEU: Das Sicherheitsnetz für das "Hebel-Problem" (Jetzt dynamisch!) <---
+                                    # Das Sicherheitsnetz für das "Hebel-Problem"
                                     min_hebel = self.abriss_min_hebel 
-                                    grenzwert_abriss = 1.0 # Hartcodiert auf 1.0% als reiner Sanity-Check
+                                    grenzwert_abriss = 4.65 
                                     
-                                    d_cog = np.hypot(cog_x - cx_edge, cog_y - cy_edge)
-                                    if d_cog > min_hebel:
-                                        tcx_cog = int(cx_edge + ((cog_x - cx_edge)/d_cog) * current_caliber_radius)
-                                        tcy_cog = int(cy_edge + ((cog_y - cy_edge)/d_cog) * current_caliber_radius)
-                                        # Nutzt jetzt wieder den hartcodierten grenzwert_abriss
-                                        add_candidate(f"Abriss-{e_idx+1}-CoG", tcx_cog, tcy_cog, min_coverage=grenzwert_abriss, bonus=bonus)
-                                    else:
-                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-CoG ignoriert: Hebel zu kurz ({d_cog:.1f}px < {min_hebel}px). Peilung unsicher!")
+                                    # ---> KANDIDAT 1: CoG (Classic - Riss-Mitte) <---
+                                    d_cog_center = np.hypot(cog_x - cx_edge_center, cog_y - cy_edge_center)
+                                    if d_cog_center > min_hebel:
+                                        tcx = int(cx_edge_center + ((cog_x - cx_edge_center)/d_cog_center) * current_caliber_radius)
+                                        tcy = int(cy_edge_center + ((cog_y - cy_edge_center)/d_cog_center) * current_caliber_radius)
+                                        add_candidate(f"Abriss-{e_idx+1}-CoG (Classic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_center, cy_edge_center), end_pos=(cog_x, cog_y))
                                         
-                                    d_mec = np.hypot(circle_x - cx_edge, circle_y - cy_edge)
-                                    if d_mec > min_hebel:
-                                        tcx_mec = int(cx_edge + ((circle_x - cx_edge)/d_mec) * current_caliber_radius)
-                                        tcy_mec = int(cy_edge + ((circle_y - cy_edge)/d_mec) * current_caliber_radius)
-                                        add_candidate(f"Abriss-{e_idx+1}-MEC", tcx_mec, tcy_mec, min_coverage=grenzwert_abriss, bonus=bonus)
+                                    # ---> KANDIDAT 2: MEC (Classic - Riss-Mitte) <---
+                                    d_mec_center = np.hypot(circle_x - cx_edge_center, circle_y - cy_edge_center)
+                                    if d_mec_center > min_hebel:
+                                        tcx = int(cx_edge_center + ((circle_x - cx_edge_center)/d_mec_center) * current_caliber_radius)
+                                        tcy = int(cy_edge_center + ((circle_y - cy_edge_center)/d_mec_center) * current_caliber_radius)
+                                        add_candidate(f"Abriss-{e_idx+1}-MEC (Classic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_center, cy_edge_center), end_pos=(circle_x, circle_y))
+
+                                    # ---> KANDIDAT 3: CoG (Dynamic - Kürzester Weg) <---
+                                    d_cog_dyn = np.hypot(cog_x - cx_edge_cog, cog_y - cy_edge_cog)
+                                    if d_cog_dyn > min_hebel:
+                                        tcx = int(cx_edge_cog + ((cog_x - cx_edge_cog)/d_cog_dyn) * current_caliber_radius)
+                                        tcy = int(cy_edge_cog + ((cog_y - cy_edge_cog)/d_cog_dyn) * current_caliber_radius)
+                                        add_candidate(f"Abriss-{e_idx+1}-CoG (Dynamic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_cog, cy_edge_cog), end_pos=(cog_x, cog_y))
+
+                                    # ---> KANDIDAT 4: MEC (Dynamic - Kürzester Weg) <---
+                                    d_mec_dyn = np.hypot(circle_x - cx_edge_mec, circle_y - cy_edge_mec)
+                                    if d_mec_dyn > min_hebel:
+                                        tcx = int(cx_edge_mec + ((circle_x - cx_edge_mec)/d_mec_dyn) * current_caliber_radius)
+                                        tcy = int(cy_edge_mec + ((circle_y - cy_edge_mec)/d_mec_dyn) * current_caliber_radius)
+                                        add_candidate(f"Abriss-{e_idx+1}-MEC (Dynamic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_mec, cy_edge_mec), end_pos=(circle_x, circle_y))
                                     else:
-                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-MEC ignoriert: Hebel zu kurz ({d_mec:.1f}px < {min_hebel}px). Peilung unsicher!")
+                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-MEC (Dynamic) ignoriert: Hebel zu kurz ({d_mec_dyn:.1f}px < {min_hebel}px). Peilung unsicher!")
                         else:
                             self.log(side, "⚠️ Abrisskante gescheitert: Berührt kein intaktes Papier.")
                             
@@ -651,7 +695,9 @@ class TargetDetector:
                                 new_shots_found_this_frame[i] = {
                                     'cx': cx, 'cy': cy, 'area': area, 'score': final_shot_score,
                                     'winner_method': winning_method,
-                                    'mec_radius': new_mec_radius
+                                    'mec_radius': new_mec_radius,
+                                    'base_pos': winner.get('base_pos', (cx, cy)),
+                                    'end_pos': winner.get('end_pos', (cx, cy))
                                 }
                             else:
                                 self.log(side, f"⚠️ Treffer ignoriert: Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) verliert Sichel-Duell gegen besseres Fragment ({existing_shot['score']:.1f})!")
@@ -660,12 +706,13 @@ class TargetDetector:
                             break
 
                 if is_new:
-                    # ---> DER FIX: Wir ermitteln den echten MEC-Radius für das Log <---
                     _, mec_radius = cv2.minEnclosingCircle(cnt)
                     new_shots_found_this_frame.append({
-                        'cx': cx, 'cy': cy, 'area': area, 'score': final_shot_score,
-                        'winner_method': winning_method,
-                        'mec_radius': mec_radius # <--- Zettel mit dem Radius anheften!
+                        'cx': winner['cx'], 'cy': winner['cy'], 'area': area, 'score': winner['score'],
+                        'winner_method': winner['name'],
+                        'mec_radius': mec_radius,
+                        'base_pos': winner['base_pos'],
+                        'end_pos': winner.get('end_pos', (winner['cx'], winner['cy'])) # <--- Zielpunkt sichern
                     })
                     self.log(side, f"-> NEUES LOCH BESTÄTIGT: Pos ({cx}, {cy}) | Fläche {area:.1f}px | Score {final_shot_score:.1f}")
                     self.log(side, "------------------------------------------------------------")
@@ -696,7 +743,8 @@ class TargetDetector:
                         s['is_new'] = False
 
                 for sd in new_shots_found_this_frame:
-                    shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'], cv_score=sd.get('score', 0.0))
+                    # ---> HIER MUSS base_pos EXPLIZIT MIT ÜBERGEBEN WERDEN! <---
+                    shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'], cv_score=sd.get('score', 0.0), base_pos=sd.get('base_pos'), end_pos=sd.get('end_pos'))
                     shot['winner_method'] = sd.get('winner_method', 'Unbekannt') 
                     
                     shot_num = sum(1 for s in self.sm.shots if s['side'] == side)
