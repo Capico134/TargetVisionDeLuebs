@@ -733,16 +733,22 @@ class OfflineLaborApp:
             # =================================================================
             # ---> ELA FIX: Echte Originalwerte der Kameras für den Mittelklick sichern <---
             # =================================================================
-            if parser.has_section('Kameras'):
-                self.orig_calib = {
-                    'left_x': parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0),
-                    'left_y': parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0),
-                    'left_fisch': parser.getfloat('Kameras', 'fischaugenkorrektur_links', fallback=0.0), # <--- NEU
-                    'right_x': parser.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0),
-                    'right_y': parser.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0),
-                    'right_fisch': parser.getfloat('Kameras', 'fischaugenkorrektur_rechts', fallback=0.0) # <--- NEU
-                }
-
+            # Wir fangen Fehler ab, falls in uralten ZIPs die Sektion [Kameras] fehlt
+            has_cam = parser.has_section('Kameras')
+            self.orig_calib = {
+                'left_x': parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0) if has_cam else 5.0,
+                'left_y': parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0) if has_cam else 5.0,
+                'left_fisch': parser.getfloat('Kameras', 'fischaugenkorrektur_links', fallback=0.0) if has_cam else 0.0,
+                'right_x': parser.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0) if has_cam else 5.0,
+                'right_y': parser.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0) if has_cam else 5.0,
+                'right_fisch': parser.getfloat('Kameras', 'fischaugenkorrektur_rechts', fallback=0.0) if has_cam else 0.0
+            }
+            
+            # ---> NEU: Initialen Push der Kalibrierungsdaten in die Slider erzwingen, 
+            # BEVOR der Dirty-Marker scharfgeschaltet wird!
+            self.update_calib_sliders()
+            
+            
     def get_img(self, name):
         """Holt ein Bild blitzschnell aus dem vorbereiteten RAM-Speicher"""
         return self.package_data['images'].get(name)
