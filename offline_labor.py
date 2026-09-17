@@ -2386,11 +2386,12 @@ class OfflineLaborApp:
         # ---> NEU: Wir holen uns einfach die Keys aus unserem neuen Dictionary! <---
         ignore_keys = set(self.registered_sliders.keys())
         ignore_keys.add('caliber_radius') # Den alten Legacy-Key manuell verstecken
-        # ---> ELA FIX: Verstecke die 4 dynamischen Kamera-Keys vor dem Pop-up <---
-        ignore_keys.add('px_pro_mm_x_links')
-        ignore_keys.add('px_pro_mm_y_links')
-        ignore_keys.add('px_pro_mm_x_rechts')
-        ignore_keys.add('px_pro_mm_y_rechts')
+        
+        # ---> DER FIX: Die Kamera-spezifischen Slider-Werte manuell aus dem Einstellungsfenster verbannen! <---
+        ignore_keys.update([
+            'px_pro_mm_x_links', 'px_pro_mm_y_links', 'fischaugenkorrektur_links',
+            'px_pro_mm_x_rechts', 'px_pro_mm_y_rechts', 'fischaugenkorrektur_rechts'
+        ])
 
         # Neues Fenster erstellen
         dialog = tk.Toplevel(self.root)
