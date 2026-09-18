@@ -499,13 +499,13 @@ class HighscoreViewer:
             # ---> NEU: Der Log & Config Button <---
             context_menu.add_command(label="📋 Log & Config anzeigen", command=self.show_text_log, font=('Arial', 14))
             # ---> NEU: Der direkte Sprung ins Labor! <---
-            context_menu.add_command(label="🔬 Im Offline-Labor öffnen", command=self.open_in_offline_labor, font=('Arial', 14))
+            context_menu.add_command(label="🔬 Im Labor öffnen", command=self.open_in_labor, font=('Arial', 14))
             context_menu.add_separator()
             context_menu.add_command(label="🗑️ Match löschen", command=self.delete_selected_entries, font=('Arial', 14))
             context_menu.post(event.x_root, event.y_root)
 
-    def open_in_offline_labor(self):
-        """Öffnet das selektierte Match direkt in der Zeitmaschine (Offline-Labor)."""
+    def open_in_labor(self):
+        """Öffnet das selektierte Match direkt in der Zeitmaschine (Labor)."""
         selected = self.tree.selection()
         if not selected: return
         
@@ -518,7 +518,7 @@ class HighscoreViewer:
 
         import subprocess
         # Startet das Labor völlig autark und übergibt direkt den ZIP-Pfad
-        subprocess.Popen(["python", "offline_labor.py", zip_path])
+        subprocess.Popen(["python", "LaborDeLuebs.py", zip_path])
 
     def delete_selected_entries(self):
         selected_items = self.tree.selection()

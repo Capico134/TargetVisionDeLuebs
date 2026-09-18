@@ -684,7 +684,7 @@ class TargetTracker:
         # 5. Match Speichern (Rot)
         self.btn_save_coords, x_cursor = draw_button(combined_view, "Match Speichern", x_cursor, (180, 70, 70))
         
-        # 6. Offline Labor (Lila)
+        # 6. Labor (Lila)
         self.btn_labor_coords, x_cursor = draw_button(combined_view, "Labor & Einstellungen", x_cursor, (150, 50, 150))
         
         # ---> NEU: 7. Zielscheiben-Ringe An/Aus <---
@@ -1117,7 +1117,7 @@ class TargetTracker:
                             self.log("SYSTEM", "Speichern abgebrochen (Keine Treffer).", True)
                     return
 
-            # ---> NEU: Offline Labor Button (Der Brückenschlag) <---
+            # ---> NEU: Labor Button (Der Brückenschlag) <---
             if getattr(self, 'btn_labor_coords', None):
                 lx1, ly1, lx2, ly2 = self.btn_labor_coords
                 if lx1 <= x <= lx2 and ly1 <= y <= ly2:
@@ -1132,7 +1132,7 @@ class TargetTracker:
                     
                     if not ref_l and not ref_r:
                         self.log("SYSTEM", "Labor startet leer (Noch keine Scheibe erkannt).", True)
-                        subprocess.Popen(["python", "offline_labor.py"])
+                        subprocess.Popen(["python", "LaborDeLuebs.py"])
                         self.labor_is_opening = False
                         return
                     
@@ -1165,7 +1165,7 @@ class TargetTracker:
                         cv2.waitKey(50)
                         
                         # 3. DER HERZSCHLAG-TRICK: Parallel starten und Fenster am Leben halten
-                        proc = subprocess.Popen(["python", "offline_labor.py", zip_filepath])
+                        proc = subprocess.Popen(["python", "LaborDeLuebs.py", zip_filepath])
                         
                         while proc.poll() is None:
                             # Hält die GUI reaktionsfähig für Windows (verhindert den "Absturz")
@@ -1202,7 +1202,7 @@ class TargetTracker:
                             
                     else:
                         self.log("SYSTEM", "Fehler beim ZIP-Export. Starte Labor leer.", True)
-                        subprocess.Popen(["python", "offline_labor.py"])
+                        subprocess.Popen(["python", "LaborDeLuebs.py"])
                         
                     # 4. DOPPELKLICK-SCHUTZ AUFHEBEN
                     self.labor_is_opening = False

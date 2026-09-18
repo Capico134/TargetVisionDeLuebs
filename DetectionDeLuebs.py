@@ -362,11 +362,11 @@ class TargetDetector:
                         final_score = score + bonus
                         valid = cov_new >= min_coverage
                         
-                        bp = (int(base_pos[0]), int(base_pos[1])) if base_pos else (int(c_x), int(c_y))
-                        ep = (int(end_pos[0]), int(end_pos[1])) if end_pos else (int(c_x), int(c_y))
+                        bp = (int(round(base_pos[0])), int(round(base_pos[1]))) if base_pos else (int(round(c_x)), int(round(c_y)))
+                        ep = (int(round(end_pos[0])), int(round(end_pos[1]))) if end_pos else (int(round(c_x)), int(round(c_y)))
                         
                         kandidaten.append({
-                            'name': name, 'cx': int(c_x), 'cy': int(c_y), 
+                            'name': name, 'cx': int(round(c_x)), 'cy': int(round(c_y)), 
                             'score': final_score, 'cov_new': cov_new, 'valid': valid,
                             'base_pos': bp, 'end_pos': ep
                         })
@@ -397,6 +397,13 @@ class TargetDetector:
                         cog_x, cog_y = M["m10"] / M["m00"], M["m01"] / M["m00"]
                         base_pos = (int(cog_x), int(cog_y))
                         add_candidate("Schwerpunkt (CoG)", cog_x, cog_y)
+                        
+                        #ALLE PIXEL AUSGEBEN!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                        ## ---> DEBUG-AUSGABE FÜR MICH <---
+                        #pixel_liste = cnt.reshape(-1, 2).tolist()
+                        #self.log(side, f"🔴 DEBUG KONTUR-PIXEL: {pixel_liste}")
+                        #self.log(side, f"🔴 DEBUG BERECHNET: CoG({cog_x:.2f}, {cog_y:.2f})")
+                        
                     else:
                         (circle_x, circle_y), _ = cv2.minEnclosingCircle(cnt)
                         base_pos = (int(circle_x), int(circle_y))
@@ -562,29 +569,29 @@ class TargetDetector:
                                     # ---> KANDIDAT 1: CoG (Classic - Riss-Mitte) <---
                                     d_cog_center = np.hypot(cog_x - cx_edge_center, cog_y - cy_edge_center)
                                     if d_cog_center > min_hebel:
-                                        tcx = int(cx_edge_center + ((cog_x - cx_edge_center)/d_cog_center) * current_caliber_radius)
-                                        tcy = int(cy_edge_center + ((cog_y - cy_edge_center)/d_cog_center) * current_caliber_radius)
+                                        tcx = int(round(cx_edge_center + ((cog_x - cx_edge_center)/d_cog_center) * current_caliber_radius))
+                                        tcy = int(round(cy_edge_center + ((cog_y - cy_edge_center)/d_cog_center) * current_caliber_radius))
                                         add_candidate(f"Abriss-{e_idx+1}-CoG (Classic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_center, cy_edge_center), end_pos=(cog_x, cog_y))
                                         
                                     # ---> KANDIDAT 2: MEC (Classic - Riss-Mitte) <---
                                     d_mec_center = np.hypot(circle_x - cx_edge_center, circle_y - cy_edge_center)
                                     if d_mec_center > min_hebel:
-                                        tcx = int(cx_edge_center + ((circle_x - cx_edge_center)/d_mec_center) * current_caliber_radius)
-                                        tcy = int(cy_edge_center + ((circle_y - cy_edge_center)/d_mec_center) * current_caliber_radius)
+                                        tcx = int(round(cx_edge_center + ((circle_x - cx_edge_center)/d_mec_center) * current_caliber_radius))
+                                        tcy = int(round(cy_edge_center + ((circle_y - cy_edge_center)/d_mec_center) * current_caliber_radius))
                                         add_candidate(f"Abriss-{e_idx+1}-MEC (Classic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_center, cy_edge_center), end_pos=(circle_x, circle_y))
 
                                     # ---> KANDIDAT 3: CoG (Dynamic - Kürzester Weg) <---
                                     d_cog_dyn = np.hypot(cog_x - cx_edge_cog, cog_y - cy_edge_cog)
                                     if d_cog_dyn > min_hebel:
-                                        tcx = int(cx_edge_cog + ((cog_x - cx_edge_cog)/d_cog_dyn) * current_caliber_radius)
-                                        tcy = int(cy_edge_cog + ((cog_y - cy_edge_cog)/d_cog_dyn) * current_caliber_radius)
+                                        tcx = int(round(cx_edge_cog + ((cog_x - cx_edge_cog)/d_cog_dyn) * current_caliber_radius))
+                                        tcy = int(round(cy_edge_cog + ((cog_y - cy_edge_cog)/d_cog_dyn) * current_caliber_radius))
                                         add_candidate(f"Abriss-{e_idx+1}-CoG (Dynamic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_cog, cy_edge_cog), end_pos=(cog_x, cog_y))
 
                                     # ---> KANDIDAT 4: MEC (Dynamic - Kürzester Weg) <---
                                     d_mec_dyn = np.hypot(circle_x - cx_edge_mec, circle_y - cy_edge_mec)
                                     if d_mec_dyn > min_hebel:
-                                        tcx = int(cx_edge_mec + ((circle_x - cx_edge_mec)/d_mec_dyn) * current_caliber_radius)
-                                        tcy = int(cy_edge_mec + ((circle_y - cy_edge_mec)/d_mec_dyn) * current_caliber_radius)
+                                        tcx = int(round(cx_edge_mec + ((circle_x - cx_edge_mec)/d_mec_dyn) * current_caliber_radius))
+                                        tcy = int(round(cy_edge_mec + ((circle_y - cy_edge_mec)/d_mec_dyn) * current_caliber_radius))
                                         add_candidate(f"Abriss-{e_idx+1}-MEC (Dynamic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_mec, cy_edge_mec), end_pos=(circle_x, circle_y))
                                     else:
                                         self.log(side, f"⚠️ Abriss-{e_idx+1}-MEC (Dynamic) ignoriert: Hebel zu kurz ({d_mec_dyn:.1f}px < {min_hebel}px). Peilung unsicher!")
@@ -786,7 +793,7 @@ class TargetDetector:
             self.save_debug_image(f"diff_letzter_treffer_{side}", thresh_new)
             self.save_debug_image(f"letzte_aufnahme_{side}", frame)
             
-            # Die gesammelten Sieger-Kanten für das Offline-Labor bereitstellen
+            # Die gesammelten Sieger-Kanten für das Labor bereitstellen
             self.save_debug_image(f"letzte_abrisskante_{side}", frame_abrisskanten)
             # ---> NEU: Das normalisierte Bild für Paint-Analysen speichern! <--- AUSKOMMENTIERT ABER BITTE NICHT LÖSCHEN!
             #self.save_debug_image(f"letzte_aufnahme_normalized_{side}", current_normalized)

@@ -130,7 +130,7 @@ class DummyDateiManager:
 # ==========================================
 # GUI UND LOGIK
 # ==========================================
-class OfflineLaborApp:
+class LaborApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Labor & Einstellungen")
@@ -1865,7 +1865,7 @@ class OfflineLaborApp:
                 closest_t = 0.0
                 is_edited = False
                 
-                # Wenn wir im Offline-Labor per Slider arbeiten, sind das CV-generierte Schüsse, also "edited=False" 
+                # Wenn wir im Labor per Slider arbeiten, sind das CV-generierte Schüsse, also "edited=False" 
                 # (es sei denn, wir bauen später noch manuelles Schuss-Verschieben per Maus ins Labor ein).
                 
                 # Für den Moment: Einfach als neuen, perfekten Schuss in die Timeline schreiben.
@@ -2556,7 +2556,7 @@ if __name__ == "__main__":
             pass # Auf Linux/Mac oder bei Fehlern ignorieren wir das einfach komplett
             
     root = tk.Tk()
-    app = OfflineLaborApp(root)
+    app = LaborApp(root)
     
     
     # Wurde uns vom Live-System ein ZIP-Pfad in die Hand gedrückt?

@@ -604,7 +604,7 @@ darstellung_ohne_weissabgleich = yes
     def export_match_package(self, filepath, match_data=None, config_string=None, source_folder=None, source_zip=None, apply_diet_filter=False):
         """
         Erstellt ein ZIP-Paket. Zieht die Bilder entweder aus einem Ordner (TargetVision Live-Betrieb) 
-        oder kopiert sie aus einem bestehenden ZIP (Offline-Labor Zeitmaschine).
+        oder kopiert sie aus einem bestehenden ZIP (Labor Zeitmaschine).
         """
         try:
             #ALT:

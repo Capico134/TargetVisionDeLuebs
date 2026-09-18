@@ -41,7 +41,7 @@ Nutze in diesen 15 Sekunden die Pfeiltasten (oder W,A,S,D) auf deiner Tastatur! 
 Drücke im Live-System auf "Labor & Einstellungen". Die Kamera pausiert und du kannst in der rechten Seitenleiste mit den Reglern spielen (z. B. "hit_tolerance" verringern, um empfindlicher zu werden). Klicke auf Übernehmen, und das System lernt sofort dazu.
 """
 
-# Dieses Dictionary wird vom Offline-Labor importiert. 
+# Dieses Dictionary wird vom Labor importiert. 
 # WICHTIG: Die Keys müssen exakt den Namen in der config.ini entsprechen!
 PARAMETER_LEXIKON = {
     "hit_tolerance": "Empfindlichkeit: Wie stark muss sich ein Pixel verändern (Referenz vs. Live), damit es ein Loch ist. Kleinere Werte = empfindlicher (erkennt auch blasse Löcher).",
@@ -105,14 +105,14 @@ Die Datenbank für die Ring-Durchmesser (in Millimetern). Wenn dein Schützenver
 📂 savegames/
 Hier liegen alle deine gespeicherten Erfolge:
 - highscore.json: Die "Bestenliste". Sie speichert nur die reinen Text-Daten (Namen, Ringe, Datum), damit die Highscore-Tabelle blitzschnell laden kann.
-- logs/ (Die Match-Archive): Für jedes gespeicherte Match wird hier ein ZIP (z.B. MATCH000042.zip) abgelegt. Dieses ZIP enthält die Zeitlinie aller Schüsse (match.json), einen Snapshot der Einstellungen und alle Kamerabilder. Das ist die Datei, die du später im Offline-Labor analysieren kannst.
+- logs/ (Die Match-Archive): Für jedes gespeicherte Match wird hier ein ZIP (z.B. MATCH000042.zip) abgelegt. Dieses ZIP enthält die Zeitlinie aller Schüsse (match.json), einen Snapshot der Einstellungen und alle Kamerabilder. Das ist die Datei, die du später im Labor analysieren kannst.
 
 📂 labor_export/ (Die Transit-Zone)
-Der Maschinenraum für das "Live-Tuning". Wenn du aus dem Live-System ins Offline-Labor wechselst, packt das System alle Live-Bilder in eine "Live_Tuning_Bridge.zip" und legt sie hier ab.
+Der Maschinenraum für das "Live-Tuning". Wenn du aus dem Live-System ins Labor wechselst, packt das System alle Live-Bilder in eine "Live_Tuning_Bridge.zip" und legt sie hier ab.
 Klickst du im Labor auf "Übernehmen", generiert es die "Live_Tuning_Handover.zip". Das Live-System wacht auf, schluckt diese neue Datei, aktualisiert sich und löscht die Handover-Datei danach spurlos. Zudem findest du hier automatische Vorher/Nachher-Backups, falls du dich bei den Parametern verrannt hast.
 
 📂 testcases/
-Wenn du im Offline-Labor ein Match absolut perfektionierst und als "Golden Master" (Als Test-Case exportieren) abspeicherst, landet das fertige, unabhängige ZIP-Paket in diesem Ordner.
+Wenn du im Labor ein Match absolut perfektionierst und als "Golden Master" (Als Test-Case exportieren) abspeicherst, landet das fertige, unabhängige ZIP-Paket in diesem Ordner.
 """
 
 
