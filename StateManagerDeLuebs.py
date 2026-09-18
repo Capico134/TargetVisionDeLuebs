@@ -228,8 +228,8 @@ class StateManager:
             'score': score,
             'raw_score': raw_score,
             'cv_score': cv_score,
-            'base_pos': base_pos if base_pos is not None else (int(cx), int(cy)),
-            'end_pos': end_pos if end_pos is not None else (int(cx), int(cy)), # <--- HIER KORRIGIERT
+            'base_pos': base_pos if base_pos is not None else (float(cx), float(cy)),
+            'end_pos': end_pos if end_pos is not None else (float(cx), float(cy)),
             'timestamp': time.time(),
             't_mono': time.monotonic() - getattr(self, 'match_start_mono', time.monotonic()), 
             'is_new': True
@@ -365,14 +365,14 @@ class StateManager:
             timeline.append({
                 "t": round(float(s['t_mono']), 3),
                 "s": "l" if s['side'] == 'left' else "r",
-                "x": int(s['pos'][0]),
-                "y": int(s['pos'][1]),
+                "x": round(float(s['pos'][0]), 2),
+                "y": round(float(s['pos'][1]), 2),
                 "a": round(float(s['area']), 1),
                 "score": float(s.get('score', 0.0)),
                 "cv_score": round(float(s.get('cv_score', 0.0)), 1),
                 "winner_method": str(s.get('winner_method', 'Unbekannt')),
-                "base_pos": [int(s.get('base_pos', s['pos'])[0]), int(s.get('base_pos', s['pos'])[1])],
-                "end_pos": [int(s.get('end_pos', s['pos'])[0]), int(s.get('end_pos', s['pos'])[1])], # <--- NEU IN DER JSON
+                "base_pos": [round(float(s.get('base_pos', s['pos'])[0]), 2), round(float(s.get('base_pos', s['pos'])[1]), 2)],
+                "end_pos": [round(float(s.get('end_pos', s['pos'])[0]), 2), round(float(s.get('end_pos', s['pos'])[1]), 2)],
                 "edited": bool(s.get('is_edited', False))
             })
 

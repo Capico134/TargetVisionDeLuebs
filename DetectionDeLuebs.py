@@ -82,7 +82,7 @@ class TargetDetector:
         Berechnet die Qualität eines potenziellen Schusslochs (Score 0 bis 200).
         """
         circle_mask = np.zeros_like(thresh_new)
-        cv2.circle(circle_mask, (int(cx), int(cy)), int(radius), 255, -1)
+        cv2.circle(circle_mask, (int(round(cx)), int(round(cy))), int(round(radius)), 255, -1)
         
         pixels_in_circle = cv2.countNonZero(circle_mask)
         if pixels_in_circle == 0: 
@@ -362,11 +362,11 @@ class TargetDetector:
                         final_score = score + bonus
                         valid = cov_new >= min_coverage
                         
-                        bp = (int(round(base_pos[0])), int(round(base_pos[1]))) if base_pos else (int(round(c_x)), int(round(c_y)))
-                        ep = (int(round(end_pos[0])), int(round(end_pos[1]))) if end_pos else (int(round(c_x)), int(round(c_y)))
+                        bp = (float(base_pos[0]), float(base_pos[1])) if base_pos else (float(c_x), float(c_y))
+                        ep = (float(end_pos[0]), float(end_pos[1])) if end_pos else (float(c_x), float(c_y))
                         
                         kandidaten.append({
-                            'name': name, 'cx': int(round(c_x)), 'cy': int(round(c_y)), 
+                            'name': name, 'cx': float(c_x), 'cy': float(c_y), 
                             'score': final_score, 'cov_new': cov_new, 'valid': valid,
                             'base_pos': bp, 'end_pos': ep
                         })
@@ -379,9 +379,9 @@ class TargetDetector:
                         # =====================================================================
                         if "Abriss" in name:
                             # Zeigt den genauen Weg: Start (Kante) -> Anker (CoG/MEC) -> Endpunkt (Zentrum)
-                            pos_str = f"Kante {bp} ➔ Rumpf {ep} ➔ Ziel ({int(c_x)}, {int(c_y)})"
+                            pos_str = f"Kante ({bp[0]:.2f}, {bp[1]:.2f}) ➔ Rumpf ({ep[0]:.2f}, {ep[1]:.2f}) ➔ Ziel ({c_x:.2f}, {c_y:.2f})"
                         else:
-                            pos_str = f"Ziel X:{int(c_x)} Y:{int(c_y)}"
+                            pos_str = f"Ziel X:{c_x:.2f} Y:{c_y:.2f}"
                             
                         prefix = f"Kandidat [{name}]: {pos_str} "
                         padded_prefix = f"{prefix:-<85}>" # Etwas mehr Platz für den langen String
@@ -398,7 +398,7 @@ class TargetDetector:
                         base_pos = (int(cog_x), int(cog_y))
                         add_candidate("Schwerpunkt (CoG)", cog_x, cog_y)
                         
-                        #ALLE PIXEL AUSGEBEN!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                        ##ALLE PIXEL AUSGEBEN!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                         ## ---> DEBUG-AUSGABE FÜR MICH <---
                         #pixel_liste = cnt.reshape(-1, 2).tolist()
                         #self.log(side, f"🔴 DEBUG KONTUR-PIXEL: {pixel_liste}")
@@ -448,15 +448,16 @@ class TargetDetector:
                                                minRadius=min_r, maxRadius=max_r)
                                                
                     if circles is not None:
-                        found_circles = np.round(circles[0, :]).astype("int")
+                        # ---> WIEDER BEFREIT: Keine Integer-Rundung mehr! <---
+                        found_circles = circles[0, :]
                         self.log(side, f"🔎 Hough hat {len(found_circles)} Kandidaten gefunden. Evaluiere den Besten...")
                         
                         best_hough_score = -1.0
-                        best_h_cx, best_h_cy = 0, 0
+                        best_h_cx, best_h_cy = 0.0, 0.0
                         for (hx, hy, hr) in found_circles:
                             h_score, _, _ = self.calculate_hole_score(hx, hy, current_caliber_radius, thresh_new, thresh_raw)
                             if h_score > best_hough_score:
-                                best_hough_score, best_h_cx, best_h_cy = h_score, hx, hy
+                                best_hough_score, best_h_cx, best_h_cy = h_score, float(hx), float(hy)
                                 
                         #grenzwert_hough = 7.0 
                         add_candidate("Hough-Sieger", best_h_cx, best_h_cy, min_coverage=self.grenzwert_hough)
@@ -564,34 +565,34 @@ class TargetDetector:
                                     
                                     # Das Sicherheitsnetz für das "Hebel-Problem"
                                     min_hebel = self.abriss_min_hebel 
-                                    grenzwert_abriss = 4.65 
+                                    grenzwert_abriss = 4.70 
                                     
                                     # ---> KANDIDAT 1: CoG (Classic - Riss-Mitte) <---
                                     d_cog_center = np.hypot(cog_x - cx_edge_center, cog_y - cy_edge_center)
                                     if d_cog_center > min_hebel:
-                                        tcx = int(round(cx_edge_center + ((cog_x - cx_edge_center)/d_cog_center) * current_caliber_radius))
-                                        tcy = int(round(cy_edge_center + ((cog_y - cy_edge_center)/d_cog_center) * current_caliber_radius))
+                                        tcx = cx_edge_center + ((cog_x - cx_edge_center)/d_cog_center) * current_caliber_radius
+                                        tcy = cy_edge_center + ((cog_y - cy_edge_center)/d_cog_center) * current_caliber_radius
                                         add_candidate(f"Abriss-{e_idx+1}-CoG (Classic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_center, cy_edge_center), end_pos=(cog_x, cog_y))
                                         
                                     # ---> KANDIDAT 2: MEC (Classic - Riss-Mitte) <---
                                     d_mec_center = np.hypot(circle_x - cx_edge_center, circle_y - cy_edge_center)
                                     if d_mec_center > min_hebel:
-                                        tcx = int(round(cx_edge_center + ((circle_x - cx_edge_center)/d_mec_center) * current_caliber_radius))
-                                        tcy = int(round(cy_edge_center + ((circle_y - cy_edge_center)/d_mec_center) * current_caliber_radius))
+                                        tcx = cx_edge_center + ((circle_x - cx_edge_center)/d_mec_center) * current_caliber_radius
+                                        tcy = cy_edge_center + ((circle_y - cy_edge_center)/d_mec_center) * current_caliber_radius
                                         add_candidate(f"Abriss-{e_idx+1}-MEC (Classic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_center, cy_edge_center), end_pos=(circle_x, circle_y))
 
                                     # ---> KANDIDAT 3: CoG (Dynamic - Kürzester Weg) <---
                                     d_cog_dyn = np.hypot(cog_x - cx_edge_cog, cog_y - cy_edge_cog)
                                     if d_cog_dyn > min_hebel:
-                                        tcx = int(round(cx_edge_cog + ((cog_x - cx_edge_cog)/d_cog_dyn) * current_caliber_radius))
-                                        tcy = int(round(cy_edge_cog + ((cog_y - cy_edge_cog)/d_cog_dyn) * current_caliber_radius))
+                                        tcx = cx_edge_cog + ((cog_x - cx_edge_cog)/d_cog_dyn) * current_caliber_radius
+                                        tcy = cy_edge_cog + ((cog_y - cy_edge_cog)/d_cog_dyn) * current_caliber_radius
                                         add_candidate(f"Abriss-{e_idx+1}-CoG (Dynamic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_cog, cy_edge_cog), end_pos=(cog_x, cog_y))
 
                                     # ---> KANDIDAT 4: MEC (Dynamic - Kürzester Weg) <---
                                     d_mec_dyn = np.hypot(circle_x - cx_edge_mec, circle_y - cy_edge_mec)
                                     if d_mec_dyn > min_hebel:
-                                        tcx = int(round(cx_edge_mec + ((circle_x - cx_edge_mec)/d_mec_dyn) * current_caliber_radius))
-                                        tcy = int(round(cy_edge_mec + ((circle_y - cy_edge_mec)/d_mec_dyn) * current_caliber_radius))
+                                        tcx = cx_edge_mec + ((circle_x - cx_edge_mec)/d_mec_dyn) * current_caliber_radius
+                                        tcy = cy_edge_mec + ((circle_y - cy_edge_mec)/d_mec_dyn) * current_caliber_radius
                                         add_candidate(f"Abriss-{e_idx+1}-MEC (Dynamic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_mec, cy_edge_mec), end_pos=(circle_x, circle_y))
                                     else:
                                         self.log(side, f"⚠️ Abriss-{e_idx+1}-MEC (Dynamic) ignoriert: Hebel zu kurz ({d_mec_dyn:.1f}px < {min_hebel}px). Peilung unsicher!")
@@ -648,15 +649,15 @@ class TargetDetector:
                 elif self.erkennungs_methode == 'B':
                     M = cv2.moments(cnt)
                     if M["m00"] != 0:
-                        cx = int(M["m10"] / M["m00"])
-                        cy = int(M["m01"] / M["m00"])
+                        cx = M["m10"] / M["m00"]
+                        cy = M["m01"] / M["m00"]
                         final_shot_score, _, _ = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw)     
                         winning_method = "Schwerpunkt (Mode B)" # <--- HIER EINFÜGEN
                     else:
                         continue 
                 else:
                     (circle_x, circle_y), _ = cv2.minEnclosingCircle(cnt)
-                    cx, cy = int(circle_x), int(circle_y)
+                    cx, cy = float(circle_x), float(circle_y)
                     # HIER FEHLTE DIE ZUWEISUNG:
                     final_shot_score, _, _ = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw)
                     winning_method = "MinCircle (Mode A)" # <--- UND HIER EINFÜGEN
@@ -721,7 +722,7 @@ class TargetDetector:
                         'base_pos': winner['base_pos'],
                         'end_pos': winner.get('end_pos', (winner['cx'], winner['cy'])) # <--- Zielpunkt sichern
                     })
-                    self.log(side, f"-> NEUES LOCH BESTÄTIGT: Pos ({cx}, {cy}) | Fläche {area:.1f}px | Score {final_shot_score:.1f}")
+                    self.log(side, f"---> NEUES LOCH BESTÄTIGT: Pos ({cx:.2f}, {cy:.2f}) | Fläche: {area:.1f}px | Score: {final_shot_score:.1f} | Riss-Anteil: {winner['cov_new']:.1f}%")
                     self.log(side, "------------------------------------------------------------")
                     
         # =========================================================================
@@ -764,7 +765,7 @@ class TargetDetector:
                     mec_radius = sd.get('mec_radius', 0.0)
                     durchmesser_mm = (mec_radius * 2) / avg_px_pro_mm if avg_px_pro_mm > 0 else 0
                     
-                    self.log(side, f"█ 💥 SCHUSS #{shot_num} 💥 █ Pos X:{int(sd['cx'])}, Y:{int(sd['cy'])} | {shot['score']:.1f} Ringe (Roh: {shot.get('raw_score', 0.0):.3f}) | CV-Score: {sd.get('score', 0.0):.1f} | Fläche: {sd.get('area', 0.0):.1f}px | MEC-Ø: {durchmesser_mm:.2f}mm")
+                    self.log(side, f"█ 💥 SCHUSS #{shot_num} 💥 █ Pos X:{sd['cx']:.2f}, Y:{sd['cy']:.2f} | {shot['score']:.1f} Ringe (Roh: {shot.get('raw_score', 0.0):.3f}) | CV-Score: {sd.get('score', 0.0):.1f} | Fläche: {sd.get('area', 0.0):.1f}px | MEC-Ø: {durchmesser_mm:.2f}mm")
                     
                 self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!", True)
             

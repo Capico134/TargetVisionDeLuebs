@@ -1216,6 +1216,10 @@ class LaborApp:
         # =====================================================================
         self.current_side = side 
         
+        # ---> DER FIX: Alte Treffer-Merkliste sofort löschen, damit bei Kamerawechsel 
+        # oder Referenzbildern (Bild 0) keine alten Geister-Kreise übrig bleiben! <---
+        self.last_orig_shots_to_draw = []
+        
         side_origs = self.get_current_side_origs()
         
         # =========================================================================
@@ -1402,8 +1406,11 @@ class LaborApp:
         # --- LAYER 1: Alte Treffer (Grün) ---
         for shot in d_sm.shots:
             if shot['side'] == side and not shot.get('is_new', False):
-                cv2.circle(live_img, shot['pos'], r_erkennung, (0, 255, 0), 1)
+                draw_pos = (int(round(shot['pos'][0])), int(round(shot['pos'][1])))
+                cv2.circle(live_img, draw_pos, r_erkennung, (0, 255, 0), 1)
                 
+        self.last_orig_shots_to_draw = [] # <--- NEU: Vorab leeren
+        
         # --- LAYER 2: Original-Treffer aus match.json (Gelb) ---
         if getattr(self, 'show_orig_hits_var', None) and self.show_orig_hits_var.get() and getattr(self, 'original_match_data', None):
             side_char = 'l' if side == 'left' else 'r'
@@ -1427,13 +1434,17 @@ class LaborApp:
             else:
                 shots_to_draw = orig_shots_side[:target_idx + 1]
             
+            # ---> NEU: Trefferliste für die hochauflösende GUI-Ebene merken <---
+            self.last_orig_shots_to_draw = shots_to_draw 
+            
             for s in shots_to_draw:
-                cv2.circle(live_img, (s['x'], s['y']), r_offiziell, (0, 255, 255), 1)
+                cv2.circle(live_img, (int(round(s['x'])), int(round(s['y']))), r_offiziell, (0, 255, 255), 1)
 
         # --- LAYER 3: Neue Treffer (Rot - Immer ganz oben!) ---
         for shot in d_sm.shots:
             if shot['side'] == side and shot.get('is_new', False):
-                cv2.circle(live_img, shot['pos'], r_erkennung, (0, 0, 255), 1)
+                draw_pos = (int(round(shot['pos'][0])), int(round(shot['pos'][1])))
+                cv2.circle(live_img, draw_pos, r_erkennung, (0, 0, 255), 1)
         
         
         
@@ -1601,7 +1612,7 @@ class LaborApp:
         
         # ---> NEU: DPI-Awareness für 4K-TVs <---
         sf = self.root.winfo_fpixels('1i') / 96.0
-        w, h = int(1100 * sf), int(750 * sf)
+        w, h = int(1200 * sf), int(750 * sf)
         comp_win.geometry(f"{w}x{h}")
         
         comp_win.transient(self.root)  # Zwingt das Unterfenster über das Labor-Hauptfenster
@@ -1681,7 +1692,7 @@ class LaborApp:
             txt.insert(tk.END, "Legende: 'E' = Manuell editiert | '*' = Methode hat sich zum Original geändert\n")
             
             # ---> NEU: Breiten optimiert für perfekten Tabellen-Look <---
-            header = f"{'Nr':>3} | {'Bild':>4} | {'Methode / Sieger':<25} | {'Orig (X,Y)':<14} | {'Neu (X,Y)':<14} | {'Dist':>6} | {'O-CV':>6} | {'N-CV':>6} | {'% Kal':<10}\n"
+            header = f"{'Nr':>3} | {'Bild':>4} | {'Methode / Sieger':<25} | {'Orig (X,Y)':<20} | {'Neu (X,Y)':<20} | {'Dist':>6} | {'O-CV':>6} | {'N-CV':>6} | {'% Kal':<10}\n"
             txt.insert(tk.END, header)
             txt.insert(tk.END, "-"*105 + "\n")
             
@@ -1695,8 +1706,8 @@ class LaborApp:
                 if orig_idx is not None and curr_idx is not None:
                     orig = orig_shots[orig_idx]
                     curr = curr_shots[curr_idx]
-                    ox, oy = orig['x'], orig['y']
-                    cx, cy = int(curr['pos'][0]), int(curr['pos'][1])
+                    ox, oy = float(orig['x']), float(orig['y'])
+                    cx, cy = float(curr['pos'][0]), float(curr['pos'][1])
                     dx = cx - ox
                     dy = cy - oy
                     dist = np.hypot(dx, dy)
@@ -1712,8 +1723,8 @@ class LaborApp:
                     is_edited = orig.get('edited', False)
                     edit_marker = "E" if is_edited else " "
                     
-                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>3},{oy:>3}"
-                    curr_str = f"N:{curr_idx+1:02d}  {cx:>3},{cy:>3}"
+                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>6.2f},{oy:>6.2f}"
+                    curr_str = f"N:{curr_idx+1:02d}  {cx:>6.2f},{cy:>6.2f}"
                     
                     f_num = curr.get('frame_num', 0)
                     curr_method = curr.get('winner_method', 'Std')
@@ -1730,7 +1741,7 @@ class LaborApp:
                     pct_str = f"{pct:.1f}% {warn}"
                     
                     # ---> NEU: Angepasste Format-Breiten <---
-                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {display_method:<25} | {orig_str:<14} | {curr_str:<14} | {dist:6.1f}p | {orig_cv:6.1f} | {curr_cv:6.1f} | {pct_str:<10}\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {display_method:<25} | {orig_str:<20} | {curr_str:<20} | {dist:6.1f}p | {orig_cv:6.1f} | {curr_cv:6.1f} | {pct_str:<10}\n")
                     
                 elif orig_idx is not None:
                     orig = orig_shots[orig_idx]
@@ -1739,7 +1750,7 @@ class LaborApp:
                     orig_str = f"O:{orig_idx+1:02d}{edit_marker} {orig['x']:>3},{orig['y']:>3}"
                     orig_cv = orig.get('cv_score', 0.0)
                     # ---> NEU: Dynamische Formatierung für Fehlende (Orig) <---
-                    txt.insert(tk.END, f"{idx+1:3d} | {'--':>4} | {'--- FEHLT ---':<22} | {orig_str:<14} | {'--- FEHLT ---':<14} | {'--':>6} | {orig_cv:6.1f} | {'--':>6} | {'-- ❌':<10}\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | {'--':>4} | {'--- FEHLT ---':<22} | {orig_str:<20} | {'--- FEHLT ---':<20} | {'--':>6} | {orig_cv:6.1f} | {'--':>6} | {'-- ❌':<10}\n")
                     
                 elif curr_idx is not None:
                     curr = curr_shots[curr_idx]
@@ -1749,7 +1760,7 @@ class LaborApp:
                     f_num = curr.get('frame_num', 0)
                     display_method = curr.get('winner_method', 'Std')
                     # ---> NEU: Dynamische Formatierung für Fehlende (Neu) <---
-                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {display_method:<22} | {'--- FEHLT ---':<14} | {curr_str:<14} | {'--':>6} | {'--':>6} | {curr_cv:6.1f} | {'-- 🆕':<10}\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {display_method:<22} | {'--- FEHLT ---':<20} | {curr_str:<20} | {'--':>6} | {'--':>6} | {curr_cv:6.1f} | {'-- 🆕':<10}\n")
 
             if match_count > 0:
                 avg_dist = total_dist / match_count
@@ -2237,16 +2248,20 @@ class LaborApp:
                     # Ende = die beim Gewinner hinterlegte rohe CoG-/MEC-Position
                     ex, ey = shot.get('end_pos', (0, 0))
 
+                    # ---> DER FIX: Für OpenCV wieder runden! <---
+                    start_pt = (int(round(bx)), int(round(by)))
+                    end_pt = (int(round(ex)), int(round(ey)))
+
                     hellblau = (255, 200, 0)  # BGR: hellblau
                     gruen = (0, 255, 0) 
                     
-                    if (bx, by) != (ex, ey):
+                    if start_pt != end_pt:
                         # Verbindung nur in Ansicht 4 zeichnen
-                        cv2.line(right_img, (bx, by), (ex, ey), gruen, 1, cv2.LINE_AA)
+                        cv2.line(right_img, start_pt, end_pt, gruen, 1, cv2.LINE_AA)
 
                     # Beide Endpunkte: Abrisskante + gefundener CoG/MEC-Punkt
-                    cv2.circle(right_img, (bx, by), 2, hellblau, -1)
-                    cv2.circle(right_img, (ex, ey), 2, hellblau, -1)
+                    cv2.circle(right_img, start_pt, 2, hellblau, -1)
+                    cv2.circle(right_img, end_pt, 2, hellblau, -1)
 
         # Zoom-Faktor einrechnen
         self.current_scale = (550 / h) * self.zoom_factor
@@ -2327,6 +2342,26 @@ class LaborApp:
                         ry = round((r_mm_draw * px_y) * self.current_scale)
                         draw_dashed_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, ring_color)
         
+        # =========================================================================
+        # ---> NEU: Original-Treffer als hochauflösende GUI-Kreise im rechten Bild <---
+        # =========================================================================
+        if getattr(self, 'show_orig_hits_var', None) and self.show_orig_hits_var.get():
+            orig_shots = getattr(self, 'last_orig_shots_to_draw', [])
+            if orig_shots:
+                # Offiziellen Radius passend zum aktuellen Zoom skalieren
+                base_r = getattr(self, 'official_radius_px', 15)
+                scaled_r = round(base_r * self.current_scale)
+                
+                for s in orig_shots:
+                    hx, hy = s['x'], s['y']
+                    # Skalieren und um die linke Bildbreite nach rechts verschieben
+                    scaled_x = round(hx * self.current_scale) + self.current_img_w
+                    scaled_y = round(hy * self.current_scale)
+                    
+                    # Haardünner gelber Kreis (BGR: 0, 255, 255) mit Kantenglättung (LINE_AA)
+                    cv2.circle(combined, (scaled_x, scaled_y), scaled_r, (0, 255, 255), 1, cv2.LINE_AA)
+                    # Optional: Ein winziger, kaum sichtbarer Mittelpunkt, um das absolute Zentrum zu sehen
+                    cv2.circle(combined, (scaled_x, scaled_y), 1, (0, 255, 255), -1, cv2.LINE_AA)
         
         # =========================================================================
         # ---> NEU: Das präzise, dünne Treffer-Highlight (Röntgen-Klick) <---
