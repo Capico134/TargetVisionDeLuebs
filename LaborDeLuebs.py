@@ -757,14 +757,15 @@ class LaborApp:
         """Lädt die lokale config.ini im Stand-Alone Modus."""
         parser = self.dm.load_or_create_config()
         
-        # ---> NEU: Fehlende Keys auch bei lokaler Config ergänzen! <---
-        if parser:
-            if not parser.has_section('Erkennung'):
-                parser.add_section('Erkennung')
-            for key, tk_var in self.registered_sliders.items():
-                if not parser.has_option('Erkennung', key):
-                    # Key fehlt -> mit GUI-Wert ergänzen
-                    parser.set('Erkennung', key, str(tk_var.get()))
+        #Das macht jetzt schon AuditedConfig.py
+        ## ---> NEU: Fehlende Keys auch bei lokaler Config ergänzen! <---
+        #if parser:
+        #    if not parser.has_section('Erkennung'):
+        #        parser.add_section('Erkennung')
+        #    for key, tk_var in self.registered_sliders.items():
+        #        if not parser.has_option('Erkennung', key):
+        #            # Key fehlt -> mit GUI-Wert ergänzen
+        #            parser.set('Erkennung', key, str(tk_var.get()))
         
         self.package_data = {
             'config': parser,
@@ -839,21 +840,22 @@ class LaborApp:
             # 1. ZUERST BILD LADEN UND LOG LÖSCHEN
             self.process_and_display()
 
-            # 2. DANN DEN MIGRATOR-LOG SCHREIBEN (Damit er sichtbar bleibt!)
-            # ---> NEU: Alte Test-Case-Configs automatisch mit allen aktuellen Slider-Keys vervollständigen! <---
-            if parser:
-                if not parser.has_section('Erkennung'):
-                    parser.add_section('Erkennung')
-                added_keys = []
-                for key, tk_var in self.registered_sliders.items():
-                    if not parser.has_option('Erkennung', key):
-                        # Key fehlt in der geladenen Config -> Virtuell im RAM mit aktuellem GUI-Wert ergänzen
-                        parser.set('Erkennung', key, str(tk_var.get()))
-                        added_keys.append(key)
-                if added_keys:
-                    keys_str = ", ".join(added_keys)
-                    self.print_log("SYSTEM", f"🔧 Legacy-Migrator: {len(added_keys)} fehlende Parameter für diese Analyse-Sitzung ergänzt (nur im RAM):")
-                    self.print_log("SYSTEM", f"   -> {keys_str}")
+            #ACHTUNG IST DAS WIRKLICH NICHT MEHR WICHTIG!!??????????????????????????????????????????????????????????????????
+            ## 2. DANN DEN MIGRATOR-LOG SCHREIBEN (Damit er sichtbar bleibt!)
+            ## ---> NEU: Alte Test-Case-Configs automatisch mit allen aktuellen Slider-Keys vervollständigen! <---
+            #if parser:
+            #    if not parser.has_section('Erkennung'):
+            #        parser.add_section('Erkennung')
+            #    added_keys = []
+            #    for key, tk_var in self.registered_sliders.items():
+            #        if not parser.has_option('Erkennung', key):
+            #            # Key fehlt in der geladenen Config -> Virtuell im RAM mit aktuellem GUI-Wert ergänzen
+            #            parser.set('Erkennung', key, str(tk_var.get()))
+            #            added_keys.append(key)
+            #    if added_keys:
+            #        keys_str = ", ".join(added_keys)
+            #        self.print_log("SYSTEM", f"🔧 Legacy-Migrator: {len(added_keys)} fehlende Parameter für diese Analyse-Sitzung ergänzt (nur im RAM):")
+            #        self.print_log("SYSTEM", f"   -> {keys_str}")
 
     def prev_shot(self):
         if self.current_index > 0:

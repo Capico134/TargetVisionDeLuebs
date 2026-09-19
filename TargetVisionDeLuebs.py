@@ -59,14 +59,9 @@ class TargetTracker:
             self.cap_right.set(cv2.CAP_PROP_FRAME_HEIGHT, height_r)
         
         
-        # --- Nur noch Variablen, die wir explizit für die GUI/Steuerung brauchen ---
-        #self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius')
-        self.ausloeser_durch_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
-        self.poll_ms = config.getint('Timing', 'poll_ms', fallback=33)
-        self.vollbild = config.getboolean('Anzeige', 'vollbild', fallback=False)
-        self.darstellung_ohne_weissabgleich = config.getboolean('Anzeige', 'darstellung_ohne_weissabgleich', fallback=True)
-        self.ringwertung_aktiv = config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
-        self.serien_gruppierung = config.getint('Anzeige', 'serien_gruppierung', fallback=0)
+        # ---> Ersetze den langen Block in der __init__ durch: <---
+        # --- GUI-Variablen einmalig initialisieren ---
+        self.refresh_gui_settings_from_config()
         
         # ---> NEU: Wir instanziieren den Detector und übergeben unsere log-Funktion als Callback! <---
         self.detector = TargetDetector(config, datei_manager, state_manager, self.log)
@@ -111,6 +106,19 @@ class TargetTracker:
         
         self.show_all_rings = False
         self.btn_rings_coords = None
+
+    def refresh_gui_settings_from_config(self):
+        """Aktualisiert alle GUI-spezifischen Attribute live aus dem Config-Objekt im RAM."""
+        self.nutze_kamera_links = self.config.getboolean('Kameras', 'nutze_kamera_links', fallback=True)
+        self.nutze_kamera_rechts = self.config.getboolean('Kameras', 'nutze_kamera_rechts', fallback=False)
+        self.ausloeser_durch_erschuetterung = self.config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
+        self.poll_ms = self.config.getint('Timing', 'poll_ms', fallback=33)
+        self.vollbild = self.config.getboolean('Anzeige', 'vollbild', fallback=False)
+        self.darstellung_ohne_weissabgleich = self.config.getboolean('Anzeige', 'darstellung_ohne_weissabgleich', fallback=True)
+        self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+        self.serien_gruppierung = self.config.getint('Anzeige', 'serien_gruppierung', fallback=0)
+        self.fischaugenkorrektur_links = self.config.getfloat('Kameras', 'fischaugenkorrektur_links', fallback=0.0)
+        self.fischaugenkorrektur_rechts = self.config.getfloat('Kameras', 'fischaugenkorrektur_rechts', fallback=0.0)
         
     # ---> NEU: Der Parameter show_gui=False <---
     def log(self, side, text, show_gui=False):
@@ -215,61 +223,43 @@ class TargetTracker:
         package = self.dm.import_match_package(zip_path)
         if not package: return
         
-        # =========================================================================
-        # ---> DER FIX: Wir müssen die alten Bilder ERST retten! <---
-        # =========================================================================
-        old_ref_l = self.detector.ref_left if self.detector else None
-        old_ref_r = self.detector.ref_right if self.detector else None
-        
         # 1. Config.ini NEU in den RAM laden und GUI-Variablen updaten
         self.config.read(self.dm.CONFIG_FILE, encoding='utf-8')
         
-        # =========================================================================
-        # ---> NEU: Hardware-Check (Muss TargetVision neu starten?) <---
-        # =========================================================================
         neu_links = self.config.getboolean('Kameras', 'nutze_kamera_links', fallback=True)
         neu_rechts = self.config.getboolean('Kameras', 'nutze_kamera_rechts', fallback=True)
         
         if neu_links != self.nutze_kamera_links or neu_rechts != self.nutze_kamera_rechts:
             self.log("SYSTEM", "⚠️ Kamera-Änderung erkannt. Neustart erforderlich!", True)
-            
-            # Die Puffer leeren und das saubere Schließen vorbereiten
             self.dm.flush_image_queue()
-            
-            # Deine nette Hinweis-Box
             messagebox.showinfo("Neustart erforderlich", "Du hast die Kamera-Aktivierung in den Einstellungen geändert.\n\nDas System wird nun sicher beendet, um die Hardware-Verbindung neu aufzubauen.\nBitte starte TargetVision danach einfach neu!")
-            
-            # Setzt den Exit-Befehl für die Main-Loop und bricht das Handover ab
             self.trigger_exit = True
             return
             
-        # Wenn sich an den Kameras nichts geändert hat, geht es hier ganz normal weiter:
-        self.ausloeser_durch_erschuetterung = self.config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
-        self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
-        
-        # 2. Engine neu starten, damit sie die neuen Config-Werte frisst
-        self.detector = TargetDetector(self.config, self.dm, self.sm, self.log)
-        
-        # 3. Referenzen wieder einpflanzen und Feedback für die GUI aktualisieren
-        if old_ref_l is not None:
-            self.calib_feedback_left = self.detector.set_reference_image(old_ref_l, 'left')
-        if old_ref_r is not None:
-            self.calib_feedback_right = self.detector.set_reference_image(old_ref_r, 'right')
+        # =========================================================================
+        # 2. DIE MAGIE: Single Source of Truth aktualisieren
+        # =========================================================================
+        # GUI updaten
+        self.refresh_gui_settings_from_config()
+        # Engine updaten (ohne ihre Referenzbilder zu löschen!)
+        self.detector.refresh_settings_from_config()
 
-        # 4. Alle Bilder aus dem Labor physisch auf die Festplatte legen
+        # 3. Referenz-Feedback für die GUI neu berechnen (falls Parameter geändert wurden)
+        if self.detector.ref_left is not None:
+            self.calib_feedback_left = self.detector.ninja_kalibrierungs_check(self.detector.ref_left, 'left')
+        if self.detector.ref_right is not None:
+            self.calib_feedback_right = self.detector.ninja_kalibrierungs_check(self.detector.ref_right, 'right')
+
+        # =========================================================================
+        # 4. BILDER & MASKEN: Die Labor-Wahrheit einpflanzen
+        # =========================================================================
         for img_name, img_data in package['images'].items():
             base_name = os.path.basename(img_name)
-            
-            # ---> NEU: ZZZ-Snapshots beim Re-Import ignorieren! <---
             if base_name.startswith("ZZZ_Live_Snapshot"):
                 continue
-                
             clean_name = base_name.replace('.png', '').replace('.jpg', '')
             self.dm.save_debug_image(clean_name, img_data)
             
-        # =========================================================================
-        # 5. DIE NEUE WAHRHEIT AKZEPTIEREN (JSON & Diff-Gesamt übernehmen!)
-        # =========================================================================
         if package['match_data']:
             self.sm.load_match_state(package['match_data'])
             
@@ -277,17 +267,16 @@ class TargetTracker:
             state = self.sm.state_left if s == 'left' else self.sm.state_right
             if not state: continue
             
-            # ---> NEU: Kurzzeitgedächtnis löschen! Verhindert Absturz und macht Crop-Änderungen live-fähig! <---
+            # Kurzzeitgedächtnis flushen
             state.prev_gray = None
             state.is_moving = False
             state.still_counter = 0
             
-            # Das korrigierte Diff-Gesamt aus dem Labor suchen und einpflanzen!
+            # Diff-Gesamt (Die "Pflicht"-Maske) des Labors hart übernehmen
             mask_name = next((f for f in package['images'] if f"diff_gesamt_{s}" in f or f"cumulative_startmask_{s}" in f), None)
             if mask_name:
                 mask_bgr = package['images'][mask_name]
                 state.cumulative_mask = cv2.cvtColor(mask_bgr, cv2.COLOR_BGR2GRAY)
-                # Direkt als Startmaske für den laufenden Prozess sichern
                 self.dm.save_debug_image(f"cumulative_startmask_{s}", state.cumulative_mask)
                 state.is_fortsetzung = True
     
@@ -579,7 +568,7 @@ class TargetTracker:
                             seite_str = "links" if s == 'left' else "rechts"
                             px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
                             px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-                            korrektur = self.config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) # <--- NEU
+                            korrektur = self.fischaugenkorrektur_links if s == 'left' else self.fischaugenkorrektur_rechts
                             
                             for d_mm in aeusserste_zwei:
                                 r_mm_base = d_mm / 2.0
@@ -611,7 +600,7 @@ class TargetTracker:
                         seite_str = "links" if s == 'left' else "rechts"
                         px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
                         px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-                        korrektur = self.config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) # <--- NEU
+                        korrektur = self.fischaugenkorrektur_links if s == 'left' else self.fischaugenkorrektur_rechts
                         
                         def draw_dashed_ellipse_perm(img, center, rx, ry, color):
                             for angle in range(0, 360, 6):
@@ -766,16 +755,17 @@ class TargetTracker:
                 cv2.putText(combined_view, gesamt_val, (box_x + 45, y_total), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (50, 200, 255), 2, cv2.LINE_AA)
 
         # =========================================================================
-        # ---> NEU: Prominenter Serien-Balken (Footer) <---
+        # ---> NEU: Prominenter Serien-Balken (Footer) mit Hintergrund <---
         # =========================================================================
         if self.ringwertung_aktiv and self.serien_gruppierung > 0:
             
-            # ---> DER FIX: Exakt an die Kamerabild-Unterkante koppeln <---
-            # Das skalierte Bild endet bei pad_y + new_h. Die Buttons belegen die 
-            # unteren 40 Pixel. Wir platzieren den Text exakt 15 Pixel darüber.
             scaled_h = int(orig_h * self.scale_y)
-            footer_y = getattr(self, 'pad_y', 0) + scaled_h - 55
+            footer_y = getattr(self, 'pad_y', 0) + scaled_h - 65
             
+            # ---> SCHRITT 1: Hintergrund vorbereiten <---
+            overlay = combined_view.copy()
+            
+            # Wir müssen erst den Hintergrund für alle aktiven Seiten zeichnen
             for side in ['left', 'right']:
                 if side == 'left' and not self.nutze_kamera_links: continue
                 if side == 'right' and not self.nutze_kamera_rechts: continue
@@ -783,7 +773,6 @@ class TargetTracker:
                 side_shots = self.sm.get_shots_for_side(side)
                 if not side_shots: continue
                 
-                # Basis-Berechnung für die horizontale Position
                 if side == 'left':
                     start_x = getattr(self, 'pad_x', 0)
                     available_w = int(self.w_left_displayed * self.scale_x)
@@ -791,12 +780,45 @@ class TargetTracker:
                     start_x = getattr(self, 'pad_x', 0) + int(self.w_left_displayed * self.scale_x)
                     available_w = int((orig_w - self.w_left_displayed) * self.scale_x)
 
-                # Serien bilden
                 serien = [side_shots[i:i + self.serien_gruppierung] for i in range(0, len(side_shots), self.serien_gruppierung)]
-                max_serien = 5 # Maximale Anzahl an Serien-Blöcken nebeneinander
+                max_serien = 5 
                 anzeige_serien = serien[-max_serien:]
                 
-                # Wir zentrieren die Anzeige im Kamerabild
+                block_w = 110
+                total_blocks_w = len(anzeige_serien) * block_w
+                cursor_x = start_x + (available_w - total_blocks_w) // 2
+                
+                padding = 15
+                box_x1 = cursor_x - padding
+                box_x2 = cursor_x + total_blocks_w - block_w + 90 + padding
+                box_y1 = footer_y - 25
+                box_y2 = footer_y + 10
+                
+                # Nur das Rechteck auf das Overlay malen!
+                cv2.rectangle(overlay, (box_x1, box_y1), (box_x2, box_y2), (20, 20, 20), -1)
+                
+            # ---> SCHRITT 2: Overlay einblenden BEVOR der Text kommt <---
+            cv2.addWeighted(overlay, 0.4, combined_view, 0.6, 0, combined_view)
+
+            # ---> SCHRITT 3: Text knackscharf auf das fertige Bild schreiben <---
+            for side in ['left', 'right']:
+                if side == 'left' and not self.nutze_kamera_links: continue
+                if side == 'right' and not self.nutze_kamera_rechts: continue
+                
+                side_shots = self.sm.get_shots_for_side(side)
+                if not side_shots: continue
+                
+                if side == 'left':
+                    start_x = getattr(self, 'pad_x', 0)
+                    available_w = int(self.w_left_displayed * self.scale_x)
+                else:
+                    start_x = getattr(self, 'pad_x', 0) + int(self.w_left_displayed * self.scale_x)
+                    available_w = int((orig_w - self.w_left_displayed) * self.scale_x)
+
+                serien = [side_shots[i:i + self.serien_gruppierung] for i in range(0, len(side_shots), self.serien_gruppierung)]
+                max_serien = 6 
+                anzeige_serien = serien[-max_serien:]
+                
                 block_w = 110
                 total_blocks_w = len(anzeige_serien) * block_w
                 cursor_x = start_x + (available_w - total_blocks_w) // 2
@@ -807,7 +829,6 @@ class TargetTracker:
                     
                     is_active = (i == len(anzeige_serien) - 1) and (len(serie) < self.serien_gruppierung or len(side_shots) % self.serien_gruppierung == 0)
                     
-                    # Warme, große Farb-Hervorhebung
                     color_label = (255, 255, 255) if is_active else (180, 180, 180)
                     color_val = (50, 220, 255) if is_active else (220, 220, 220)
                     

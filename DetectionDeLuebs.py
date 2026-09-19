@@ -16,49 +16,53 @@ class TargetDetector:
         # Das ist die magische Verbindung zur GUI, damit der Detector in dein Fenster loggen kann
         self.log = log_callback  
         
-        # Alle Schwellenwerte und Einstellungen für die Erkennung
-        self.min_hole_area = config.getint('Erkennung', 'min_hole_area')
-        #self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius')
-        #self.caliber_durchmesser = config.getfloat('Erkennung', 'caliber_durchmesser') #NICHT NOTWENDIG
-        self.hit_tolerance = config.getint('Erkennung', 'hit_tolerance', fallback=25)
-        self.erkennungs_methode = config.get('Erkennung', 'erkennungs_methode', fallback='C').upper()
-        #self.hybrid_riss_faktor = config.getfloat('Erkennung', 'hybrid_riss_faktor', fallback=1.175)
-        #self.hybrid_sichel_faktor = config.getfloat('Erkennung', 'hybrid_sichel_faktor', fallback=1.05)
-        self.hybrid_discard_faktor = config.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5)
-        self.hough_min_faktor = config.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85)
-        self.hough_max_faktor = config.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15)
-        self.ausloeser_durch_erschuetterung = config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
-        self.max_image_change_percent = config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
-        self.debug_alle_bilder_speichern = config.getboolean('Erkennung', 'debug_alle_bilder_speichern', fallback=False)
-        self.ringwertung_aktiv = config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
-        self.hough_param1 = config.getint('Erkennung', 'hough_param1', fallback=25)
-        self.hough_param2 = config.getint('Erkennung', 'hough_param2', fallback=4)
-        self.morph_kernel_size = config.getint('Erkennung', 'morph_kernel_size', fallback=5)
-        self.max_aspect_ratio = config.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5)
-        # ---> NEU: Die Gewichtung für den 200-Punkte-Score <---
-        self.gesamt_anteil_am_200score = config.getfloat('Erkennung', 'gesamt_anteil_am_200score', fallback=0.667)
-        # ---> NEU: Extrahierte Magic Numbers <---
-        self.abriss_max_edge_percent = config.getfloat('Erkennung', 'abriss_max_edge_percent', fallback=0.75)
-        self.abriss_base_bonus = config.getfloat('Erkennung', 'abriss_base_bonus', fallback=10.0)
-        #self.early_exit_min_score = config.getfloat('Erkennung', 'early_exit_min_score', fallback=145.0)
-        #self.early_exit_perfect_score = config.getfloat('Erkennung', 'early_exit_perfect_score', fallback=196.0)
-        self.min_score_valid = config.getfloat('Erkennung', 'min_score_valid', fallback=70.0)
-        self.clipping_factor_history = config.getfloat('Erkennung', 'clipping_factor_history', fallback=0.15)
-        self.clipping_factor_current = config.getfloat('Erkennung', 'clipping_factor_current', fallback=0.95)
-        self.max_treffer_je_frame = config.getint('Erkennung', 'max_treffer_je_frame', fallback=0)
-        self.randaufschlag_cumulative = config.getint('Erkennung', 'randaufschlag_cumulative', fallback=0)
-        # ---> NEU: Farb-Bonus System (Anti-Weiß Filter) <---
-        self.farb_bonus_aktiv = config.getboolean('Erkennung', 'farb_bonus_aktiv', fallback=False)
-        self.farb_bonus_limit = config.getfloat('Erkennung', 'farb_bonus_limit', fallback=150.0)
-        self.farb_bonus_kurve = self.config.getfloat('Erkennung', 'farb_bonus_kurve', fallback=2.0)
-        self.grenzwert_hough =  self.config.getfloat('Erkennung', 'grenzwert_hough', fallback=7.0)
-        self.abriss_min_hebel = self.config.getfloat('Erkennung', 'abriss_min_hebel', fallback=0.0)
+        # ---> NEU: Einmaliges Laden aller Erkennungs-Parameter in schnelle RAM-Attribute <---
+        self.refresh_settings_from_config()
 
         # Internes Gedächtnis des Detectors
         self.ref_left = None
         self.ref_right = None
         #self.calib_feedback_left = None #JETZT IN DER GUI
         #self.calib_feedback_right = None #JETZT IN DER GUI
+
+    def refresh_settings_from_config(self):
+        """Lädt alle performance-kritischen Parameter aus der Config in schnelle Objekt-Attribute."""
+        self.min_hole_area = self.config.getint('Erkennung', 'min_hole_area')
+        self.hit_tolerance = self.config.getint('Erkennung', 'hit_tolerance', fallback=25)
+        self.erkennungs_methode = self.config.get('Erkennung', 'erkennungs_methode', fallback='C').upper()
+        self.hybrid_discard_faktor = self.config.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5)
+        self.hough_min_faktor = self.config.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85)
+        self.hough_max_faktor = self.config.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15)
+        self.ausloeser_durch_erschuetterung = self.config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
+        self.max_image_change_percent = self.config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
+        self.debug_alle_bilder_speichern = self.config.getboolean('Erkennung', 'debug_alle_bilder_speichern', fallback=False)
+        self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+        self.hough_param1 = self.config.getint('Erkennung', 'hough_param1', fallback=25)
+        self.hough_param2 = self.config.getint('Erkennung', 'hough_param2', fallback=4)
+        self.morph_kernel_size = self.config.getint('Erkennung', 'morph_kernel_size', fallback=5)
+        self.max_aspect_ratio = self.config.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5)
+        self.gesamt_anteil_am_200score = self.config.getfloat('Erkennung', 'gesamt_anteil_am_200score', fallback=0.667)
+        self.abriss_max_edge_percent = self.config.getfloat('Erkennung', 'abriss_max_edge_percent', fallback=0.75)
+        self.abriss_base_bonus = self.config.getfloat('Erkennung', 'abriss_base_bonus', fallback=10.0)
+        self.min_score_valid = self.config.getfloat('Erkennung', 'min_score_valid', fallback=70.0)
+        self.clipping_factor_history = self.config.getfloat('Erkennung', 'clipping_factor_history', fallback=0.15)
+        self.clipping_factor_current = self.config.getfloat('Erkennung', 'clipping_factor_current', fallback=0.95)
+        self.max_treffer_je_frame = self.config.getint('Erkennung', 'max_treffer_je_frame', fallback=0)
+        self.randaufschlag_cumulative = self.config.getint('Erkennung', 'randaufschlag_cumulative', fallback=0)
+        
+        # Farb-Bonus System
+        self.farb_bonus_aktiv = self.config.getboolean('Erkennung', 'farb_bonus_aktiv', fallback=False)
+        self.farb_bonus_limit = self.config.getfloat('Erkennung', 'farb_bonus_limit', fallback=150.0)
+        self.farb_bonus_kurve = self.config.getfloat('Erkennung', 'farb_bonus_kurve', fallback=2.0)
+        self.grenzwert_hough = self.config.getfloat('Erkennung', 'grenzwert_hough', fallback=7.0)
+        self.abriss_min_hebel = self.config.getfloat('Erkennung', 'abriss_min_hebel', fallback=0.0)
+        
+        # ---> NEU: Optische Parameter cachen <---
+        self.caliber_durchmesser = self.config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
+        self.px_x_links = self.config.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0)
+        self.px_y_links = self.config.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0)
+        self.px_x_rechts = self.config.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0)
+        self.px_y_rechts = self.config.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0)
 
     def save_debug_image(self, name, image):
         # Der Live-Manager schiebt das Bild in die Warteschlange.
@@ -179,23 +183,11 @@ class TargetDetector:
 
     def get_caliber_radius(self, side):
         """Berechnet den dynamischen Pixel-Radius anhand der optischen Linsen-Kalibrierung."""
-        # 1. Der physikalische Weg (Millimeter) -> Automatisch linsenkorrigiert!
-        if self.config.has_option('Erkennung', 'caliber_durchmesser'):
-            durchmesser_mm = self.config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
-            radius_mm = durchmesser_mm / 2.0
-            seite_str = "links" if side == 'left' else "rechts"
-            px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-            px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-            
-            # Skaliert den Radius perfekt in Pixel um, basierend auf der aktuellen Kamera
-            return radius_mm * ((px_x + px_y) / 2.0)
-            
-        # 2. ABWÄRTSKOMPATIBILITÄT: Der alte, starre Legacy-Pixel-Radius
+        radius_mm = self.caliber_durchmesser / 2.0
+        if side == 'left':
+            return radius_mm * ((self.px_x_links + self.px_y_links) / 2.0)
         else:
-            return self.config.getfloat('Erkennung', 'caliber_radius', fallback=15.0)
-            
-            
-
+            return radius_mm * ((self.px_x_rechts + self.px_y_rechts) / 2.0)
 
     def detect_new_shot(self, frame, side):
         current_caliber_radius = self.get_caliber_radius(side)
@@ -233,9 +225,8 @@ class TargetDetector:
 
         
         if self.farb_bonus_aktiv:
-            #print(f"self.farb_bonus_aktiv {self.farb_bonus_aktiv}")
-            farb_bonus_limit = self.config.getfloat('Erkennung', 'farb_bonus_limit', fallback=150.0)
-            farb_bonus_kurve = self.config.getfloat('Erkennung', 'farb_bonus_kurve', fallback=2.0)
+            farb_bonus_limit = self.farb_bonus_limit
+            farb_bonus_kurve = self.farb_bonus_kurve
             
             bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
             r_tgt = self.config.getint(bg_sec, 'rgb_r')

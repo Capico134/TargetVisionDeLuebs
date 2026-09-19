@@ -9,13 +9,24 @@ class AuditedConfigParser(configparser.ConfigParser):
     def _check_fallback(self, section, option, kwargs):
         # Wenn ein Fallback übergeben wurde UND der Wert nicht in der INI steht:
         if 'fallback' in kwargs and not self.has_option(section, option):
-            msg = f"SYSTEM-WARNUNG: Parameter '{option}' in [{section}] fehlt! Nutze Fallback: {kwargs['fallback']}"
-            # NEU: Immer in die Konsole printen, egal was passiert!
-            print(msg) 
+            # 1. Den Typ des Fallbacks herausfinden und als sauberen String verpacken
+            val = kwargs['fallback']
+            if isinstance(val, bool):
+                val_str = "yes" if val else "no"
+            else:
+                val_str = str(val)
+                
+            # 2. Den Wert sofort, still und leise ins RAM-Dictionary injizieren!
+            if not self.has_section(section):
+                self.add_section(section)
+            self.set(section, option, val_str)
+            
+            # 3. Nur EINMAL loggen!
+            msg = f"SYSTEM-AUTO-HEILUNG: Parameter '{option}' in [{section}] fehlte. Wurde im RAM mit Fallback '{val_str}' ergänzt."
             if self.log_callback:
                 self.log_callback(msg)
             else:
-                print(msg) # Fallback für Standalone-Module wie den HighscoreViewer
+                print(msg) 
 
     # Wir kapern die Standard-Methoden, checken den Fallback und geben die Arbeit dann an die Original-Methoden (super()) zurück!
     def get(self, section, option, **kwargs):
