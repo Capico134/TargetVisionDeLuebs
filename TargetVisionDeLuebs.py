@@ -66,6 +66,7 @@ class TargetTracker:
         self.vollbild = config.getboolean('Anzeige', 'vollbild', fallback=False)
         self.darstellung_ohne_weissabgleich = config.getboolean('Anzeige', 'darstellung_ohne_weissabgleich', fallback=True)
         self.ringwertung_aktiv = config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+        self.serien_gruppierung = config.getint('Anzeige', 'serien_gruppierung', fallback=0)
         
         # ---> NEU: Wir instanziieren den Detector und übergeben unsere log-Funktion als Callback! <---
         self.detector = TargetDetector(config, datei_manager, state_manager, self.log)
@@ -709,12 +710,10 @@ class TargetTracker:
                 if side == 'left' and not self.nutze_kamera_links: continue
                 if side == 'right' and not self.nutze_kamera_rechts: continue
 
-                # ---> NEU: Liste umdrehen und Zählung anpassen <---
                 total_shots = len(side_shots)
                 display_shots = side_shots[-max_items:] if total_shots > max_items else side_shots
                 display_shots_rev = list(reversed(display_shots)) 
                 
-                # Links dockt links an, rechts dockt rechts an!
                 if side == 'left':
                     box_x = max(10, scaled_w_left - box_w - 10)
                 else:
@@ -730,7 +729,6 @@ class TargetTracker:
                 cv2.putText(combined_view, titel, (box_x - 5, start_y_hud - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
                 cv2.line(combined_view, (box_x - 5, start_y_hud - 2), (box_x + box_w - 5, start_y_hud - 2), (100, 100, 100), 1)
                 
-                # ---> NEU: Die umgedrehte Liste iterieren <---
                 for i, shot in enumerate(display_shots_rev):
                     shot_num = total_shots - i  # Zählt jetzt rückwärts (z.B. 17, 16, 15...)
                     score_val = shot.get('score', 0.0)
@@ -739,7 +737,6 @@ class TargetTracker:
                     score_str = f"{score_val:.1f}"
                     y_pos = start_y_hud + 20 + (i * line_h)
                     
-                    # ---> NEU: Den aktuellsten Schuss als Headliner hervorheben <---
                     if i == 0:
                         f_scale_num = 0.55
                         f_scale_score = 0.65
@@ -754,18 +751,74 @@ class TargetTracker:
                     cv2.putText(combined_view, text, (box_x - 5, y_pos), cv2.FONT_HERSHEY_SIMPLEX, f_scale_num, color_num, thick, cv2.LINE_AA)
                     cv2.putText(combined_view, score_str, (box_x + 50, y_pos), cv2.FONT_HERSHEY_SIMPLEX, f_scale_score, text_color, thick, cv2.LINE_AA)
                     
-                    # ---> NEU: Dezente Trennlinie unter dem ersten Treffer <---
                     if i == 0 and len(display_shots_rev) > 1:
                         cv2.line(combined_view, (box_x - 5, y_pos + 8), (box_x + box_w - 5, y_pos + 8), (70, 70, 70), 1)
 
-                cv2.line(combined_view, (box_x - 5, start_y_hud + 8 + len(display_shots_rev) * line_h), (box_x + box_w - 5, start_y_hud + 8 + len(display_shots_rev) * line_h), (100, 100, 100), 1)
+                y_sum = start_y_hud + 8 + len(display_shots_rev) * line_h
+                cv2.line(combined_view, (box_x - 5, y_sum), (box_x + box_w - 5, y_sum), (100, 100, 100), 1)
+                
                 gesamt = sum(s.get('score', 0.0) for s in side_shots)
                 gesamt_text = "Ges.:"
                 gesamt_val = f"{gesamt:.1f}"
-                y_sum = start_y_hud + 28 + len(display_shots_rev) * line_h
+                y_total = y_sum + 20
                 
-                cv2.putText(combined_view, gesamt_text, (box_x - 5, y_sum), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-                cv2.putText(combined_view, gesamt_val, (box_x + 45, y_sum), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (50, 200, 255), 2, cv2.LINE_AA)
+                cv2.putText(combined_view, gesamt_text, (box_x - 5, y_total), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.putText(combined_view, gesamt_val, (box_x + 45, y_total), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (50, 200, 255), 2, cv2.LINE_AA)
+
+        # =========================================================================
+        # ---> NEU: Prominenter Serien-Balken (Footer) <---
+        # =========================================================================
+        if self.ringwertung_aktiv and self.serien_gruppierung > 0:
+            
+            # ---> DER FIX: Exakt an die Kamerabild-Unterkante koppeln <---
+            # Das skalierte Bild endet bei pad_y + new_h. Die Buttons belegen die 
+            # unteren 40 Pixel. Wir platzieren den Text exakt 15 Pixel darüber.
+            scaled_h = int(orig_h * self.scale_y)
+            footer_y = getattr(self, 'pad_y', 0) + scaled_h - 55
+            
+            for side in ['left', 'right']:
+                if side == 'left' and not self.nutze_kamera_links: continue
+                if side == 'right' and not self.nutze_kamera_rechts: continue
+                
+                side_shots = self.sm.get_shots_for_side(side)
+                if not side_shots: continue
+                
+                # Basis-Berechnung für die horizontale Position
+                if side == 'left':
+                    start_x = getattr(self, 'pad_x', 0)
+                    available_w = int(self.w_left_displayed * self.scale_x)
+                else:
+                    start_x = getattr(self, 'pad_x', 0) + int(self.w_left_displayed * self.scale_x)
+                    available_w = int((orig_w - self.w_left_displayed) * self.scale_x)
+
+                # Serien bilden
+                serien = [side_shots[i:i + self.serien_gruppierung] for i in range(0, len(side_shots), self.serien_gruppierung)]
+                max_serien = 5 # Maximale Anzahl an Serien-Blöcken nebeneinander
+                anzeige_serien = serien[-max_serien:]
+                
+                # Wir zentrieren die Anzeige im Kamerabild
+                block_w = 110
+                total_blocks_w = len(anzeige_serien) * block_w
+                cursor_x = start_x + (available_w - total_blocks_w) // 2
+                
+                for i, serie in enumerate(anzeige_serien):
+                    serien_index = len(serien) - len(anzeige_serien) + i + 1
+                    summe = sum(s.get('score', 0.0) for s in serie)
+                    
+                    is_active = (i == len(anzeige_serien) - 1) and (len(serie) < self.serien_gruppierung or len(side_shots) % self.serien_gruppierung == 0)
+                    
+                    # Warme, große Farb-Hervorhebung
+                    color_label = (255, 255, 255) if is_active else (180, 180, 180)
+                    color_val = (50, 220, 255) if is_active else (220, 220, 220)
+                    
+                    text_l = f"S{serien_index}:"
+                    text_r = f"{summe:.1f}"
+                    
+                    cv2.putText(combined_view, text_l, (cursor_x, footer_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_label, 1, cv2.LINE_AA)
+                    cv2.putText(combined_view, text_r, (cursor_x + 35, footer_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_val, 2, cv2.LINE_AA)
+                    
+                    cursor_x += block_w
+                    
         cv2.imshow(self.window_name, combined_view)
 
     def check_keys(self):

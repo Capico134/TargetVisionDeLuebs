@@ -37,8 +37,29 @@ class DummyDateiManager:
     def save_debug_image(self, name, image): pass
     def load_targets(self): return {}
 
-def silent_logger(side, msg, show_gui=False):
-    pass 
+
+# ==========================================
+# DER INTELLIGENTE SPIONAGE-LOGGER
+# ==========================================
+class SmartTestLogger:
+    def __init__(self, track_keywords):
+        self.log_lines = []
+        # Baut automatisch ein Dictionary: {'⚖️ GLEICHSTAND': 0, '🚫 Fehlalarm': 0, ...}
+        self.stats = {kw: 0 for kw in track_keywords}
+        self.total_shots = 0
+
+    def log_callback(self, side, msg, show_gui=False):
+        self.log_lines.append(f"[{side.upper()}] {msg}")
+        
+        # Zähle die Gesamtschüsse
+        if "BATTLE ROYALE SIEGER:" in msg:
+            self.total_shots += 1
+            
+        # Zähle alle registrierten Keywords
+        for keyword in self.stats:
+            if keyword in msg:
+                self.stats[keyword] += 1
+
 
 # ==========================================
 # HAUPT-TEST-LOGIK
@@ -46,6 +67,7 @@ def silent_logger(side, msg, show_gui=False):
 def run_all_tests():
     test_dir = "testcases"
     report_file = "test_report.txt"
+    treffer_log_file = "treffer_log.txt"
     
     if not os.path.exists(test_dir):
         print(f"❌ Ordner '{test_dir}' nicht gefunden. Keine Tests ausgeführt.")
@@ -64,6 +86,15 @@ def run_all_tests():
     
     report_lines = []
 
+    # Welche Begriffe sollen global gezählt werden?
+    suchbegriffe = [
+        "⚖️ GLEICHSTAND",
+        "🚫 Fehlalarm",
+        "🔄 Sichel-Duell",
+        "⚠️ Abrisskante gescheitert"
+    ]
+    smart_logger = SmartTestLogger(suchbegriffe)
+
     def log(msg):
         """Druckt in die Konsole und speichert eine saubere Version (ohne Farbcodes) für den Report."""
         print(msg)
@@ -80,6 +111,10 @@ def run_all_tests():
 
     for zip_file in zip_files:
         zip_path = os.path.join(test_dir, zip_file)
+        
+        smart_logger.log_lines.append("\n" + "="*80)
+        smart_logger.log_lines.append(f"TESTLAUF FÜR: {zip_file}")
+        smart_logger.log_lines.append("="*80 + "\n")
         
         try:
             with zipfile.ZipFile(zip_path, 'r') as zf:
@@ -122,7 +157,7 @@ def run_all_tests():
                 # 3. Engine aufbauen
                 d_dm = DummyDateiManager()
                 d_sm = DummyStateManager()
-                detector = TargetDetector(config, d_dm, d_sm, silent_logger)
+                detector = TargetDetector(config, d_dm, d_sm, smart_logger.log_callback)
                 
                 # 4. Bilder durch die Engine jagen
                 for s in ['left', 'right']:
@@ -191,15 +226,28 @@ def run_all_tests():
         log(f"{C_RED}Fehlgeschlagen (FAIL): {failed_count}{C_END}")
     else:
         log(f"{C_GREEN}🎉 ALLE TESTS BESTANDEN! Dein Code ist bereit für die Produktion.{C_END}")
+        
+    log("-" * 70)
+    log(f"📈 ENGINE STATISTIKEN (Gesamt ausgewertete Treffer-Kandidaten: {smart_logger.total_shots}):")
+    for keyword, count in smart_logger.stats.items():
+        rate = (count / smart_logger.total_shots * 100) if smart_logger.total_shots > 0 else 0
+        log(f"   {keyword:<30} {count}x aufgetreten (Rate: {rate:.1f}%)")
     log("="*70 + "\n")
 
-    # REPORT IN DATEI SCHREIBEN
+    # REPORTS IN DATEIEN SCHREIBEN
     try:
         with open(report_file, 'w', encoding='utf-8') as f:
             f.write("\n".join(report_lines))
-        print(f"\n💾 Ein detaillierter Bericht wurde in '{report_file}' gespeichert.")
+        print(f"💾 Ein detaillierter Bericht wurde in '{report_file}' gespeichert.")
     except Exception as e:
-        print(f"\n⚠️ Konnte Report nicht speichern: {e}")
+        print(f"⚠️ Konnte Report nicht speichern: {e}")
+
+    try:
+        with open(treffer_log_file, 'w', encoding='utf-8') as f:
+            f.write("\n".join(smart_logger.log_lines))
+        print(f"💾 Das gesammelte Erkennungs-Log liegt in '{treffer_log_file}'.\n")
+    except Exception as e:
+        print(f"⚠️ Konnte Treffer-Log nicht speichern: {e}")
 
     # =======================================================
     # EXIT-CODE AN DAS BETRIEBSSYSTEM / GITHUB ACTIONS MELDEN

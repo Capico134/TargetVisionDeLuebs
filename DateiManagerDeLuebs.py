@@ -340,6 +340,9 @@ cut_right = 20
 vollbild = no
 # Hübscht das Bild für das Auge auf (mehr Farbe/Kontrast), ohne die Erkennung zu beeinflussen
 darstellung_ohne_weissabgleich = yes
+# Fasst die Ringwertung im Live-Bild in Serien zusammen (z.B. 3 für 3er-Serien). 
+# Bei 0 ist das Feature deaktiviert.
+serien_gruppierung = 3
 """)
             self.write_log("SYSTEM: 🆕 Standard config.ini erstellt.")
 
@@ -479,43 +482,48 @@ darstellung_ohne_weissabgleich = yes
         #         print(f"🔧 Führe Auto-Patch aus: Füge '{key} = {default_val}' hinzu...")
         #         self.update_ini_value('Erkennung', key, default_val)
         #         needs_reload = True
-
-        if config.has_option('Erkennung', 'abriss_base_bonus'):
-            try:
-                current_value = config.getfloat('Erkennung', 'abriss_base_bonus')
-                if current_value < 11.0:  
-                    print(f"🔧 Führe Auto-Patch aus: Aktualisiere 'abriss_base_bonus' von {current_value} auf 15.0...")
-                    self.update_ini_value('Erkennung', 'abriss_base_bonus', '15.0')
-                    needs_reload = True
-            except ValueError:
-                pass
-
-        if config.has_option('Erkennung', 'abriss_base_bonus'):
-            try:
-                current_value = config.getfloat('Erkennung', 'abriss_base_bonus')
-                if current_value > 16.0:  
-                    print(f"🔧 Führe Auto-Patch aus: Aktualisiere 'abriss_base_bonus' von {current_value} auf 15.0...")
-                    self.update_ini_value('Erkennung', 'abriss_base_bonus', '15.0')
-                    needs_reload = True
-            except ValueError:
-                pass
-
-        if not config.has_option('Erkennung', 'max_treffer_je_frame'):
-            print("🔧 Führe Auto-Patch aus: Füge 'max_treffer_je_frame = 0' hinzu...")
-            self.update_ini_value('Erkennung', 'max_treffer_je_frame', '0')
-            needs_reload = True
-
-        if not config.has_option('Erkennung', 'randaufschlag_cumulative'):
-            print("🔧 Führe Auto-Patch aus: Füge 'randaufschlag_cumulative = 0' hinzu...")
-            self.update_ini_value('Erkennung', 'randaufschlag_cumulative', '0')
-            needs_reload = True
-
-        # --- AUTO-PATCH: Kahlschlag! Early-Exit Parameter restlos entfernen ---
-        for key in ['hybrid_sichel_faktor', 'hybrid_riss_faktor', 'early_exit_min_score', 'early_exit_perfect_score']:
-            if config.has_option('Erkennung', key):
-                print(f"🔧 Führe Auto-Patch aus: Entferne obsoleten Parameter '{key}'...")
-                self.remove_ini_value('Erkennung', key)
-                needs_reload = True
+        #
+        #if config.has_option('Erkennung', 'abriss_base_bonus'):
+        #    try:
+        #        current_value = config.getfloat('Erkennung', 'abriss_base_bonus')
+        #        if current_value < 11.0:  
+        #            print(f"🔧 Führe Auto-Patch aus: Aktualisiere 'abriss_base_bonus' von {current_value} auf 15.0...")
+        #            self.update_ini_value('Erkennung', 'abriss_base_bonus', '15.0')
+        #            needs_reload = True
+        #    except ValueError:
+        #        pass
+        #
+        #if config.has_option('Erkennung', 'abriss_base_bonus'):
+        #    try:
+        #        current_value = config.getfloat('Erkennung', 'abriss_base_bonus')
+        #        if current_value > 16.0:  
+        #            print(f"🔧 Führe Auto-Patch aus: Aktualisiere 'abriss_base_bonus' von {current_value} auf 15.0...")
+        #            self.update_ini_value('Erkennung', 'abriss_base_bonus', '15.0')
+        #            needs_reload = True
+        #    except ValueError:
+        #        pass
+        #
+        #if not config.has_option('Erkennung', 'max_treffer_je_frame'):
+        #    print("🔧 Führe Auto-Patch aus: Füge 'max_treffer_je_frame = 0' hinzu...")
+        #    self.update_ini_value('Erkennung', 'max_treffer_je_frame', '0')
+        #    needs_reload = True
+        #
+        #if not config.has_option('Erkennung', 'randaufschlag_cumulative'):
+        #    print("🔧 Führe Auto-Patch aus: Füge 'randaufschlag_cumulative = 0' hinzu...")
+        #    self.update_ini_value('Erkennung', 'randaufschlag_cumulative', '0')
+        #    needs_reload = True
+        #
+        ## --- AUTO-PATCH: Kahlschlag! Early-Exit Parameter restlos entfernen ---
+        #for key in ['hybrid_sichel_faktor', 'hybrid_riss_faktor', 'early_exit_min_score', 'early_exit_perfect_score']:
+        #    if config.has_option('Erkennung', key):
+        #        print(f"🔧 Führe Auto-Patch aus: Entferne obsoleten Parameter '{key}'...")
+        #        self.remove_ini_value('Erkennung', key)
+        #        needs_reload = True
+        #
+        if not config.has_option('Anzeige', 'serien_gruppierung'):
+            print("🔧 Führe Auto-Patch aus: Füge 'serien_gruppierung = 3' hinzu...")
+            self.update_ini_value('Anzeige', 'serien_gruppierung', '3')
+            needs_reload = True  
 
 
         

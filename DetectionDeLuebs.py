@@ -407,17 +407,11 @@ class TargetDetector:
                     else:
                         (circle_x, circle_y), _ = cv2.minEnclosingCircle(cnt)
                         base_pos = (int(circle_x), int(circle_y))
+                        cog_x, cog_y = float(circle_x), float(circle_y) # Fallback für dynamische Abrisskante
                         
                     (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
                     add_candidate("MinCircle (MEC)", circle_x, circle_y)
 
-                    M = cv2.moments(cnt)
-                    if M["m00"] != 0:
-                        cog_x, cog_y = M["m10"] / M["m00"], M["m01"] / M["m00"]
-                        add_candidate("Schwerpunkt (CoG)", cog_x, cog_y)
-                    else:
-                        cog_x, cog_y = circle_x, circle_y
-                        
                     # Besten Base-Score für Limit-Checks ermitteln
                     best_base = max(kandidaten, key=lambda x: x['score'])
                     base_score = best_base['score']
@@ -492,20 +486,23 @@ class TargetDetector:
                                 max_edge_percent = self.abriss_max_edge_percent
                                 limit_len = expected_circ * max_edge_percent
                                 
-                                # ---> NEU: Dynamischer Bonus basierend auf der Riss-Größe <---
-                                # Bei einem perfekten Loch ist der Faktor ~1.0 (Bonus bleibt nah an 7.5).
-                                # Bei einem riesigen Riss (z.B. Faktor 1.8) wächst der Bonus linear mit!
                                 
-                                #LINEAR
-                                #area_ratio = area / expected_area if expected_area > 0 else 1.0
-                                #dynamic_bonus = self.abriss_base_bonus * area_ratio
-                                
-                                #Quadratisch
+                                # =========================================================================
+                                # ---> DYNAMISCHER ABRISS-BONUS (Die "Scharnier"-Logik) <---
+                                # =========================================================================
+                                # Physischer Hintergrund: Schlägt ein Diabolo nah an einem alten Loch ein, 
+                                # reißt oft ein massives Stück Papier weg, das nur noch an einem kleinen 
+                                # Steg (der eigentlichen Einschlagstelle) gehalten wurde.
+                                # 
+                                # Ein reiner Flächen-Algorithmus (CoG/MEC) würde fälschlicherweise die Mitte 
+                                # dieses riesigen Risses als Treffer werten. Wir wollen aber exakt den Steg!
+                                # 
+                                # Quadratischer Multiplikator: 
+                                # Je gigantischer die weggerissene Fläche im Verhältnis zur normalen Kaliber-
+                                # fläche (area_ratio) ist, desto extremer pushen wir den Score der Abrisskante.
+                                # So gewinnt die Kante das Battle Royale bei fetten Rissen garantiert gegen CoG, 
+                                # während saubere Einzellöcher (area_ratio ~ 1.0) kaum Bonus erhalten.
                                 area_ratio = area / expected_area if expected_area > 0 else 1.0
-                                # Nur der Bereich über 0.9 wird gewertet (verhindert negative Werte)
-                                # Ein perfektes Loch (1.0) liefert: (1.0 - 0.9)^2 = 0.01 (Fast 0 Bonus!)
-                                # Ein großer Riss (2.0) liefert:   (2.0 - 0.9)^2 = 1.21 (Voller Bonus)
-                                # Ein Riesen-Riss (3.0) liefert:   (3.0 - 0.9)^2 = 4.41 (Extremer Bonus!)
                                 faktor = max(0.0, area_ratio + 0.0) ** 2
                                 dynamic_bonus = self.abriss_base_bonus * faktor
                                 
@@ -614,22 +611,21 @@ class TargetDetector:
                     # ---> NEU: Die ELA Tie-Breaker Logik (Hierarchie bei Gleichstand) <---
                     # =========================================================================
                     def tie_breaker_key(cand):
-                        # 1. Wir vergleichen nur die 1. Nachkommastelle (wie im Log)
                         rounded_score = round(cand['score'], 1)
-                        
-                        # 2. Die feste Hierarchie: Je höher die Zahl, desto bevorzugter
                         name = cand['name']
-                        if name == "Schwerpunkt (CoG)": 
-                            prio = 4
-                        elif name == "MinCircle (MEC)": 
-                            prio = 3
-                        elif "Hough" in name: 
-                            prio = 2
-                        else: 
-                            prio = 1 # Fallback für Abrisskanten
-                            
-                        # Python sortiert Tuples nacheinander: Erst Score, dann Priorität
+                        if name == "Schwerpunkt (CoG)": prio = 4
+                        elif name == "MinCircle (MEC)": prio = 3
+                        elif "Hough" in name: prio = 2
+                        else: prio = 1 
                         return (rounded_score, prio)
+
+                    # ---> NEU: Gleichstand direkt in der Engine loggen! <---
+                    highest_score = round(max(c['score'] for c in valid_candidates), 1)
+                    tied_candidates = [c for c in valid_candidates if round(c['score'], 1) == highest_score]
+                    
+                    if len(tied_candidates) > 1:
+                        names = [c['name'] for c in tied_candidates]
+                        self.log(side, f"⚖️ GLEICHSTAND: {len(tied_candidates)} Kandidaten mit Score {highest_score:.1f} -> Tie-Breaker entscheidet zwischen {', '.join(names)}!")
 
                     winner = max(valid_candidates, key=tie_breaker_key)
                     
