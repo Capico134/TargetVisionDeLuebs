@@ -787,7 +787,7 @@ class LaborApp:
         if filepath:
             self.current_zip_path = filepath
             # Vorläufiger Titel (damit was dasteht, falls das Laden einer Riesen-ZIP kurz dauert)
-            self.root.title(f"Labor & Einstellungen - {os.path.basename(filepath)}")
+            self.root.title(f"Labor & Einstellungen  -  {os.path.basename(filepath)}")
             
             self.package_data = self.dm.import_match_package(filepath)
             if not self.package_data:
@@ -800,21 +800,31 @@ class LaborApp:
             self.original_match_data = self.package_data.get('match_data')
             
             # =========================================================================
-            # ---> NEU: Fenster-Titel mit Version und Zeitstempel aufhübschen <---
+            # ---> NEU: Fenster-Titel mit Version, Zeitstempel UND Spieler aufhübschen <---
             # =========================================================================
             if self.original_match_data and "metadata" in self.original_match_data:
                 meta = self.original_match_data["metadata"]
                 
-                # 1. Version auslesen (Fallback auf '???', falls bei ganz alten ZIPs nicht vorhanden)
+                # 1. Basis-Teile: Name und Version
                 version = meta.get("version", "???")
+                titel_teile = [
+                    f"Labor & Einstellungen  -  {os.path.basename(filepath)}",
+                    f"v{version}"
+                ]
                 
-                # 2. Exakten Zeitstempel auslesen (Fallback auf 'start_zeit', falls 'timestamp' fehlt)
+                # 2. Zeitstempel (Sekunden mit [:-3] abschneiden, aus z.B. "18.09.26 19:21:34" wird "18.09.26 19:21")
                 zeit = meta.get("timestamp", meta.get("start_zeit", ""))
-                    
-                zeit_str = f" | 🕒 {zeit}" if zeit else ""
+                if zeit:
+                    zeit_ohne_sekunden = zeit[:-3] if len(zeit) > 10 else zeit
+                    titel_teile.append(f"🕒 {zeit_ohne_sekunden}")
                 
-                # 3. Den finalen Titel setzen
-                self.root.title(f"Labor & Einstellungen - {os.path.basename(filepath)}   [v{version}{zeit_str}]")
+                # 3. Spieler
+                spieler = meta.get("spieler", "")
+                if spieler:
+                    titel_teile.append(f"👤 {spieler}")
+                
+                # 4. Alles konsequent mit doppeltem Leerzeichen um das Pipe-Symbol verbinden
+                self.root.title("  |  ".join(titel_teile))
 
             self.all_files = list(self.package_data['images'].keys())
             # ---> DER FIX: Nur cumulative_orig filtern! ZZZ_ wird für die Live-Tuning Bridge zwingend gebraucht! <---
