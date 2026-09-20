@@ -515,14 +515,16 @@ class HighscoreViewer:
     def show_context_menu(self, event):
         item = self.tree.identify_row(event.y)
         if item:
-            self.tree.selection_set(item)
+            # ---> DER FIX: Nur neu markieren, wenn die Zeile nicht schon Teil einer Mehrfachauswahl ist! <---
+            if item not in self.tree.selection():
+                self.tree.selection_set(item)
+                
             context_menu = tk.Menu(self.root, tearoff=0)
             context_menu.add_command(label="🎯 Treffer-Bilder anzeigen", command=self.show_hit_images, font=('Arial', 14))
-            # ---> NEU: Der Log & Config Button <---
             context_menu.add_command(label="📋 Log & Config anzeigen", command=self.show_text_log, font=('Arial', 14))
-            # ---> NEU: Der direkte Sprung ins Labor! <---
             context_menu.add_command(label="🔬 Im Labor öffnen", command=self.open_in_labor, font=('Arial', 14))
             context_menu.add_separator()
+            # ---> Dieser Befehl schnappt sich nun alle markierten Zeilen! <---
             context_menu.add_command(label="🗑️ Match löschen", command=self.delete_selected_entries, font=('Arial', 14))
             context_menu.post(event.x_root, event.y_root)
 
