@@ -341,6 +341,33 @@ class TargetTracker:
             self.execute_manual_reset('right', frame_r)
             self.trigger_reset_right = False
 
+    def show_pause_screen(self, message):
+        """Zeigt einen sauberen Wartebildschirm an und erzwingt eine normale Fenstergröße."""
+        # 1. Erstelle ein dunkles 1280x720 Bild
+        pause_frame = np.full((720, 1280, 3), (35, 35, 35), dtype=np.uint8)
+        
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        
+        # Text 1: Hauptnachricht (Zentriert)
+        (w1, h1), _ = cv2.getTextSize(message, font, 1.2, 2)
+        cv2.putText(pause_frame, message, ((1280 - w1) // 2, 320), font, 1.2, (50, 200, 255), 2, cv2.LINE_AA)
+        
+        # Text 2: Sub-Nachricht (Zentriert)
+        text2 = "Bitte schließe das andere Fenster, um hier fortzufahren."
+        (w2, h2), _ = cv2.getTextSize(text2, font, 0.8, 1)
+        cv2.putText(pause_frame, text2, ((1280 - w2) // 2, 400), font, 0.8, (180, 180, 180), 1, cv2.LINE_AA)
+        
+        # 2. Fenster auf Normalmodus zwingen (falls Vollbild aktiv)
+        if self.vollbild:
+            cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+            
+        # 3. Zwinge das Fenster auf 1280x720 (beseitigt die wilden Deformationen!)
+        cv2.resizeWindow(self.window_name, 1280, 720)
+        
+        # 4. Bild anzeigen und rendern lassen, BEVOR die Schleife alles einfriert
+        cv2.imshow(self.window_name, pause_frame)
+        cv2.waitKey(100)
+
     def draw_camera_overlay(self, view, side, start_x, frame_w, total_h):
         cv2.rectangle(view, (start_x, total_h - 40), (start_x + frame_w, total_h), (30, 30, 30), -1)
         msg = self.msg_left if side == 'left' else self.msg_right
@@ -1092,9 +1119,20 @@ class TargetTracker:
                 hx1, hy1, hx2, hy2 = self.btn_highscore_coords
                 if hx1 <= x <= hx2 and hy1 <= y <= hy2:
                     self.log("SYSTEM", "Öffne Highscore-Tabelle...", True)
-                    subprocess.Popen(["python", "HighscoreViewDeLuebs.py"])
-                    return
+                    
+                    # ---> NEU: Zeige den sauberen Wartebildschirm! <---
+                    self.show_pause_screen("Highscore-Tabelle geöffnet")
                         
+                    proc = subprocess.Popen(["python", "HighscoreViewDeLuebs.py"])
+                    while proc.poll() is None:
+                        cv2.waitKey(100)
+                        
+                    # Nach Rückkehr Vollbild wiederherstellen
+                    if self.vollbild:
+                        cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                        cv2.waitKey(50)
+                    return
+                    
             # Match Speichern Button (mit Single/Multiplayer Logik)
             if getattr(self, 'btn_save_coords', None):
                 sx1, sy1, sx2, sy2 = self.btn_save_coords
@@ -1230,7 +1268,6 @@ class TargetTracker:
                 lx1, ly1, lx2, ly2 = self.btn_labor_coords
                 if lx1 <= x <= lx2 and ly1 <= y <= ly2:
                     
-                    # 1. DOPPELKLICK-SCHUTZ: Ignoriere weitere Klicks, solange das Labor lädt
                     if getattr(self, 'labor_is_opening', False): 
                         return
                     self.labor_is_opening = True
@@ -1240,14 +1277,27 @@ class TargetTracker:
                     
                     if not ref_l and not ref_r:
                         self.log("SYSTEM", "Labor startet leer (Noch keine Scheibe erkannt).", True)
-                        subprocess.Popen(["python", "LaborDeLuebs.py"])
+                        
+                        # ---> NEU: Wartebildschirm aufrufen <---
+                        self.show_pause_screen("Labor & Einstellungen geöffnet")
+                            
+                        proc = subprocess.Popen(["python", "LaborDeLuebs.py"])
+                        while proc.poll() is None:
+                            cv2.waitKey(100)
+                            
+                        if self.vollbild:
+                            cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                            
                         self.labor_is_opening = False
                         return
                     
-                    # 2. LOG SETZEN UND SOFORTIGES NEUZEICHNEN ERZWINGEN!
                     self.log("SYSTEM", "Generiere Live-Snapshot und pausiere System...", True)
+                    # Den letzten Stand noch einmal kurz komplett rendern lassen...
                     self.update_gui(self.last_frame_l, self.last_frame_r, True)
-                    cv2.waitKey(50) # Gibt OpenCV Zeit, das Bild wirklich auf den Monitor zu schieben
+                    cv2.waitKey(50) 
+                    
+                    # ---> NEU: Und danach direkt in den Wartebildschirm wechseln! <---
+                    self.show_pause_screen("Labor & Einstellungen geöffnet")
                     
                     if self.nutze_kamera_links and self.last_frame_l is not None:
                         self.dm.save_debug_image("ZZZ_Live_Snapshot_left_orig", self.last_frame_l)
@@ -1269,32 +1319,26 @@ class TargetTracker:
                     
                     if success:
                         self.log("SYSTEM", f"Labor gestartet. TargetVision pausiert!", True)
-                        self.update_gui(self.last_frame_l, self.last_frame_r, True)
-                        cv2.waitKey(50)
                         
-                        # 3. DER HERZSCHLAG-TRICK: Parallel starten und Fenster am Leben halten
                         proc = subprocess.Popen(["python", "LaborDeLuebs.py", zip_filepath])
-                        
                         while proc.poll() is None:
-                            # Hält die GUI reaktionsfähig für Windows (verhindert den "Absturz")
                             cv2.waitKey(100) 
+                            
+                        # ---> NEU: Vollbild nach Rückkehr reaktivieren <---
+                        if self.vollbild:
+                            cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                            cv2.waitKey(50)
                         
-                        # =========================================================
-                        # ---> DAS AUFWACHEN (Staffelstab greifen) <---
-                        # =========================================================
                         handover_path = os.path.join(export_dir, "Live_Tuning_Handover.zip")
                         if os.path.exists(handover_path):
                             self.log("SYSTEM", "Labor-Handover gefunden! Lade Parameter...", True)
                             self.apply_handover(handover_path)
-                            os.remove(handover_path) # Beweise vernichten!
+                            os.remove(handover_path)
                             self.log("SYSTEM", "Live-System erfolgreich aktualisiert!", True)
                         else:
                             self.log("SYSTEM", "Labor ohne Übernahme geschlossen.", True)
                             
-                        # =========================================================
-                        # ---> NEU: MÜLLABFUHR FÜR DIE ZZZ-SNAPSHOTS <---
-                        # =========================================================
-                        self.dm.flush_image_queue() # Erst sicherstellen, dass alles auf der Platte ist
+                        self.dm.flush_image_queue() 
                         try:
                             if hasattr(self.dm, 'DEBUG_FOLDER') and os.path.exists(self.dm.DEBUG_FOLDER):
                                 for f in os.listdir(self.dm.DEBUG_FOLDER):
@@ -1303,7 +1347,6 @@ class TargetTracker:
                         except Exception:
                             pass
                             
-                        # Kleine Pause für die Kameras, um Puffer-Müll (Standbilder) zu leeren
                         for _ in range(10): 
                             if self.nutze_kamera_links: self.cap_left.read()
                             if self.nutze_kamera_rechts: self.cap_right.read()
@@ -1312,7 +1355,6 @@ class TargetTracker:
                         self.log("SYSTEM", "Fehler beim ZIP-Export. Starte Labor leer.", True)
                         subprocess.Popen(["python", "LaborDeLuebs.py"])
                         
-                    # 4. DOPPELKLICK-SCHUTZ AUFHEBEN
                     self.labor_is_opening = False
                     return
             
@@ -1321,8 +1363,24 @@ class TargetTracker:
                 hx1, hy1, hx2, hy2 = self.btn_hilfe_coords
                 if hx1 <= x <= hx2 and hy1 <= y <= hy2:
                     self.log("SYSTEM", "Öffne Handbuch...", True)
+                    
+                    # =========================================================================
+                    # ---> DIE LÖSUNG (Idee B): Vollbild für das Handbuch verlassen! <---
+                    # =========================================================================
+                    self.show_pause_screen("Handbuch geöffnet")
+                    
                     # WICHTIG: Dateiname angepasst!
-                    subprocess.Popen(["python", "HandbuchDeLuebs.py"]) 
+                    proc = subprocess.Popen(["python", "HandbuchDeLuebs.py"]) 
+                    
+                    # Warten, bis das Handbuch geschlossen wird
+                    while proc.poll() is None:
+                        cv2.waitKey(100)
+                        
+                    # Nach Rückkehr Vollbild wiederherstellen
+                    if self.vollbild:
+                        cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                        cv2.waitKey(50)
+                        
                     return
                     
             # ---> NEU: Zielscheiben-Ringe Button <---
@@ -1348,13 +1406,18 @@ class TargetTracker:
             self.log("SYSTEM", f"Keine Treffer auf {'links' if side=='left' else 'rechts'} zum Editieren.", True)
             return
 
+        # ---> NEU: Pause-Screen und Vollbild verlassen! <---
+        self.show_pause_screen(f"Treffer bearbeiten - {'Links' if side=='left' else 'Rechts'}")
+
         # Basis-Dialog erstellen
         root_dialog = tk.Tk()
         root_dialog.withdraw()
         dialog = tk.Toplevel(root_dialog)
         dialog.title(f"Treffer bearbeiten - {'Links' if side=='left' else 'Rechts'}")
         dialog.geometry("550x450")
-        dialog.attributes('-topmost', True)
+        
+        # ---> LÖSCHEN: dialog.attributes('-topmost', True) <---
+        dialog.focus_force()
 
         # "Alle markieren" Kopfzeile
         top_frame = tk.Frame(dialog)
@@ -1500,6 +1563,11 @@ class TargetTracker:
         # Dialog blockierend ausführen
         root_dialog.wait_window(dialog)
         root_dialog.destroy()
+        
+        # ---> NEU: Vollbild wiederherstellen <---
+        if self.vollbild:
+            cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+            cv2.waitKey(50)
         
         # Kamera-Puffer nach dem Blockieren kurz leeren (verhindert Framestau)
         for _ in range(5): 

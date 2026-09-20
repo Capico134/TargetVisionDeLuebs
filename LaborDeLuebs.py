@@ -1,4 +1,5 @@
-
+import sys
+import math 
 import os
 import time
 import json
@@ -342,6 +343,12 @@ class LaborApp:
         self.btn_pick_color = tk.Button(top_frame, text="🎨 Farbe picken", command=self.toggle_color_picker, bg="#f39c12", fg="white", font=("Arial", 10, "bold"))
         self.btn_pick_color.pack(side=tk.LEFT, padx=(20, 0))
         
+        # ---> NEU: Der Kalibrierungs-Assistent <---
+        self.calib_mode_active = False
+        self.calib_points = []
+        self.btn_calib_assist = tk.Button(top_frame, text="📏 Kalibrierung", command=self.start_calibration_assist, bg="#8e44ad", fg="white", font=("Arial", 10, "bold"))
+        self.btn_calib_assist.pack(side=tk.LEFT, padx=(20, 0))
+        
         # ---> lbl_file wurde hier komplett gelöscht! <---
         
         self.btn_compare = tk.Button(top_frame, text="📊 Abweichungen", command=self.show_comparison, font=("Arial", 10, "bold"))
@@ -502,20 +509,19 @@ class LaborApp:
         # --- Hier kommen die Slider in das neue scrollbare param_frame ---
         
         # =====================================================================
-        # ---> NEU: Dynamische Kamera-Kalibrierung (ELA-Style) <---
+        # ---> NEU: Dynamische Kamera-Kalibrierung (Separiert!) <---
         # =====================================================================
-        tk.Label(param_frame, text="--- Kamera Kalibrierung (Live) ---", fg="#3498db").pack(pady=(5, 5))
+        self.calib_outer_frame = tk.LabelFrame(param_frame, text=" Kalibrierung: Kamera Links ", pady=5, padx=5, fg="#2980b9", font=("Arial", 10, "bold"))
+        self.calib_outer_frame.pack(fill=tk.X, pady=(5, 10))
+        
         self.calib_x_var = tk.DoubleVar(value=5.0)
         self.calib_y_var = tk.DoubleVar(value=5.0)
         
-        # key=None trennt die Slider vom Standard-Spion!
-        # ---> ELA FIX: Wir geben explizit den tooltip_key an! <---
-        self.make_slider(param_frame, "Pixel pro mm (X):", self.calib_x_var, 1.0, 15.0, 0.01, key=None, tooltip_key="px_pro_mm")
-        self.make_slider(param_frame, "Pixel pro mm (Y):", self.calib_y_var, 1.0, 15.0, 0.01, key=None, tooltip_key="px_pro_mm")
+        self.make_slider(self.calib_outer_frame, "Pixel pro mm (X):", self.calib_x_var, 1.0, 15.0, 0.001, key=None, tooltip_key="px_pro_mm")
+        self.make_slider(self.calib_outer_frame, "Pixel pro mm (Y):", self.calib_y_var, 1.0, 15.0, 0.001, key=None, tooltip_key="px_pro_mm")
 
-        # ---> NEU: Der Fischaugen-Slider <---
         self.calib_fischauge_var = tk.DoubleVar(value=0.0)
-        self.make_slider(param_frame, "Fischaugen-Korr.:", self.calib_fischauge_var, -0.01, 0.01, 0.0001, key=None, tooltip_key="fischaugenkorrektur")
+        self.make_slider(self.calib_outer_frame, "Fischaugen-Korr.:", self.calib_fischauge_var, -0.01, 0.01, 0.00001, key=None, tooltip_key="fischaugenkorrektur")
 
         def sync_calib_config(*args):
             if getattr(self, 'package_data', None) and self.package_data.get('config'):
@@ -527,19 +533,24 @@ class LaborApp:
                 
                 parser.set('Kameras', f'px_pro_mm_x_{seite_str}', str(self.calib_x_var.get()))
                 parser.set('Kameras', f'px_pro_mm_y_{seite_str}', str(self.calib_y_var.get()))
-                parser.set('Kameras', f'fischaugenkorrektur_{seite_str}', str(self.calib_fischauge_var.get())) # <--- NEU
+                parser.set('Kameras', f'fischaugenkorrektur_{seite_str}', str(self.calib_fischauge_var.get()))
                 
                 self.on_param_change()
                 
         self.calib_x_var.trace_add("write", sync_calib_config)
         self.calib_y_var.trace_add("write", sync_calib_config)
-        self.calib_fischauge_var.trace_add("write", sync_calib_config) # <--- NEU
+        self.calib_fischauge_var.trace_add("write", sync_calib_config)
+        
+        # Der Trenner für die eigentlichen System-Parameter
+        tk.Label(param_frame, text="--- Engine Parameter ---", fg="#3498db").pack(pady=(5, 5))
+        
+        
         
         self.make_slider(param_frame, "hit_tolerance:", self.hit_tolerance_var, 1, 100, key="hit_tolerance")
         self.make_slider(param_frame, "min_hole_area:", self.min_hole_area_var, 5, 500, key="min_hole_area")
         #self.make_slider(param_frame, "caliber_radius:", self.caliber_radius_var, 5.0, 50.0, res=0.1, key="caliber_radius")
         self.make_slider(param_frame, "caliber_durchmesser (mm):", self.caliber_durchmesser_var, 3.00, 10.00, res=0.01, key="caliber_durchmesser")
-        tk.Label(param_frame, text="--- Hybrid & Hough Faktoren ---", fg="gray").pack(pady=(10, 5))
+        tk.Label(param_frame, text="--- Hybrid & Hough Faktoren ---", fg="#3498db").pack(pady=(10, 5))
         #self.make_slider(param_frame, "hybrid_sichel_faktor:", self.hybrid_sichel_faktor_var, 0.1, 1.5, 0.01, key="hybrid_sichel_faktor")
         #self.make_slider(param_frame, "hybrid_riss_faktor:", self.hybrid_riss_faktor_var, 1.0, 3.0, 0.001, key="hybrid_riss_faktor")
         self.make_slider(param_frame, "hybrid_discard_faktor:", self.hybrid_discard_faktor_var, 1.5, 5.0, 0.1, key="hybrid_discard_faktor")
@@ -548,26 +559,26 @@ class LaborApp:
         self.make_slider(param_frame, "hough_max_faktor:", self.hough_max_faktor_var, 1.0, 2.0, 0.01, key="hough_max_faktor")
         self.make_slider(param_frame, "hough_param1 (Kanten):", self.hough_param1_var, 10, 100, key="hough_param1")
         self.make_slider(param_frame, "hough_param2 (Strenge):", self.hough_param2_var, 1, 20, key="hough_param2")
-        tk.Label(param_frame, text="--- Bild-Filterung ---", fg="gray").pack(pady=(10, 5))
+        tk.Label(param_frame, text="--- Bild-Filterung ---", fg="#3498db").pack(pady=(10, 5))
         self.make_slider(param_frame, "blur_kernel_size:", self.blur_kernel_size_var, 1, 31, key="blur_kernel_size", odd_only=True)
         self.make_slider(param_frame, "randaufschlag_cumulative:", self.randaufschlag_cumulative_var, 0, 10, key="randaufschlag_cumulative")
         self.make_slider(param_frame, "morph_kernel_size:", self.morph_kernel_var, 0, 15, key="morph_kernel_size", odd_only=True)
         self.make_slider(param_frame, "max_aspect_ratio (Sichel):", self.max_aspect_ratio_var, 1.5, 6.0, 0.1, key="max_aspect_ratio")
-        tk.Label(param_frame, text="--- Score-Gewichtung ---", fg="gray").pack(pady=(10, 5))
+        tk.Label(param_frame, text="--- Score-Gewichtung ---", fg="#3498db").pack(pady=(10, 5))
         self.make_slider(param_frame, "gesamt_anteil (Raw):", self.gesamt_anteil_am_200score_var, 0.1, 0.9, 0.001, key="gesamt_anteil_am_200score")
-        tk.Label(param_frame, text="--- Heuristik & Limits ---", fg="gray").pack(pady=(10, 5))
+        tk.Label(param_frame, text="--- Heuristik & Limits ---", fg="#3498db").pack(pady=(10, 5))
         self.make_slider(param_frame, "abriss_max_edge_percent:", self.abriss_max_edge_percent_var, 0.4, 1.5, 0.01, key="abriss_max_edge_percent")
         self.make_slider(param_frame, "abriss_base_bonus:", self.abriss_base_bonus_var, 0.0, 30.0, 0.5, key="abriss_base_bonus")
         self.make_slider(param_frame, "abriss_min_hebel (px):", self.abriss_min_hebel_var, 0.0, 10.0, 0.5, key="abriss_min_hebel") #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         #self.make_slider(param_frame, "early_exit_min_score:", self.early_exit_min_score_var, 100.0, 201.0, 1.0, key="early_exit_min_score")
         #self.make_slider(param_frame, "early_exit_perfect_score:", self.early_exit_perfect_score_var, 150.0, 201.0, 1.0, key="early_exit_perfect_score")
         self.make_slider(param_frame, "min_score_valid (Discard):", self.min_score_valid_var, 10.0, 150.0, 1.0, key="min_score_valid")
-        tk.Label(param_frame, text="--- Anti-Doppelzählung ---", fg="gray").pack(pady=(10, 5))
+        tk.Label(param_frame, text="--- Anti-Doppelzählung ---", fg="#3498db").pack(pady=(10, 5))
         self.make_slider(param_frame, "clipping_factor_history:", self.clipping_factor_history_var, 0.05, 0.5, 0.01, key="clipping_factor_history")
         self.make_slider(param_frame, "clipping_factor_current:", self.clipping_factor_current_var, 0.5, 1.5, 0.01, key="clipping_factor_current")
         # ---> NEU: Slider für das Limit <---
         self.make_slider(param_frame, "max_treffer_je_frame:", self.max_treffer_je_frame_var, 0, 10, key="max_treffer_je_frame")
-        tk.Label(param_frame, text="--- Anti-Weiß Filter (Farb-Bonus) ---", fg="gray").pack(pady=(10, 5))
+        tk.Label(param_frame, text="--- Anti-Weiß Filter (Farb-Bonus) ---", fg="#3498db").pack(pady=(10, 5))
         
         # Checkbutton
         base_text_farb = "🟢 farb_bonus_aktiv"
@@ -665,6 +676,10 @@ class LaborApp:
             parser = self.package_data['config']
             side = self.active_camera_var.get()
             seite_str = "links" if side == 'left' else "rechts"
+            
+            # ---> NEU: LabelFrame Titel anpassen <---
+            if hasattr(self, 'calib_outer_frame'):
+                self.calib_outer_frame.config(text=f" Kalibrierung: Kamera {seite_str.capitalize()} ")
             
             # ---> NEU: Sektion sicherstellen, anstatt bei Fehlen abzubrechen! <---
             if not parser.has_section('Kameras'):
@@ -1061,17 +1076,22 @@ class LaborApp:
 
     def on_drag_start(self, event):
         """Merkt sich die Startkoordinaten beim Klicken ODER pickt die Wandfarbe"""
-        # ---> DER FIX: Wir merken uns IMMER die Mauskoordinaten, egal in welchem Modus.
-        # Das verhindert den "Teleport-Bug", falls man beim Klicken die Maus minimal bewegt!
         self.drag_start_x = event.x_root
         self.drag_start_y = event.y_root
         self.start_pan_x = self.pan_x
         self.start_pan_y = self.pan_y
 
+        # ---> Wenn der Kalibrierungs-Assistent aktiv ist, fangen wir den Klick ab! <---
+        if getattr(self, 'calib_mode_active', False):
+            # Der Klick darf nur verarbeitet werden, wenn er auf das Bild (Label) geht!
+            if event.widget == self.lbl_image:
+                 self.handle_calibration_click(event)
+            return
+
         # ---> Wenn die Pipette aktiv ist, fangen wir den Klick ab! <---
         if getattr(self, 'color_picker_active', False):
             self.pick_color_from_event(event)
-            self.toggle_color_picker() # Nach dem Klick sofort wieder deaktivieren
+            self.toggle_color_picker() 
             return
 
     def toggle_color_picker(self):
@@ -1124,6 +1144,312 @@ class LaborApp:
                 # Engine sofort mit den neuen Farben zwingen neuzustarten!
                 self.on_param_change(force=True)
 
+    def start_calibration_assist(self):
+        """Startet den Kalibrierungs-Assistenten ODER bricht ihn ab."""
+        if not getattr(self, 'package_data', None):
+            messagebox.showwarning("Fehler", "Bitte lade zuerst ein ZIP-Paket!")
+            return
+            
+        # ---> DER FIX: Wenn der Modus schon aktiv ist, dient der Button als Abbruch! <---
+        if getattr(self, 'calib_mode_active', False):
+            self.cancel_calibration()
+            return
+            
+        self.calib_mode_active = True
+        self.calib_points = []
+        self.btn_calib_assist.config(bg="#e74c3c", text="🔴 Assistent aktiv (Abbrechen)")
+        self.lbl_image.config(cursor="crosshair")
+        
+        # ---> NEU: Backspace für "Rückgängig" binden <---
+        self.root.bind('<BackSpace>', self.undo_calibration_click)
+        
+        # =========================================================================
+        # ---> NEU: Extrem auffällige Warnung für das Zielprofil! <---
+        # =========================================================================
+        d_config = self.package_data['config']
+        aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+        
+        self.print_log("KALIB", "▼" * 60, show_gui=True)
+        self.print_log("KALIB", f"🛑  !!! AKTIVES PROFIL: {aktive_scheibe.upper()} !!!  🛑", show_gui=True)
+        self.print_log("KALIB", "▲" * 60, show_gui=True)
+        
+        if "Laufende" in aktive_scheibe:
+            self.print_log("KALIB", "⚠️ Achtung: Es ist ein Profil für Laufende Scheiben aktiv!", show_gui=True)
+            
+        self.update_calibration_instruction()
+        
+    def undo_calibration_click(self, event=None):
+        """Macht den letzten Klick im Assistenten rückgängig."""
+        if not getattr(self, 'calib_mode_active', False) or not self.calib_points:
+            return
+            
+        # Letzten Punkt abstrakt entfernen
+        removed_pt = self.calib_points.pop()
+        self.print_log("KALIB", f"Letzter Klick rückgängig gemacht (noch {len(self.calib_points)}/16 Punkte).", show_gui=True)
+        
+        # ---> DER ELA-FIX: Pipeline zeichnet einfach den neuen Zustand ohne den Punkt! <---
+        self.update_image_display()
+        self.update_calibration_instruction()  
+
+    def cancel_calibration(self):
+        """Bricht den Assistenten ab."""
+        self.calib_mode_active = False
+        self.calib_points = []
+        self.btn_calib_assist.config(bg="#8e44ad", text="📏 Kalibrierungs-Assistent")
+        self.lbl_image.config(cursor="")
+        self.root.unbind('<BackSpace>') # Binding wieder lösen
+        self.print_log("KALIB", "Assistent manuell abgebrochen.", show_gui=True)
+        self.update_image_display()
+
+    def update_calibration_instruction(self):
+        """Aktualisiert die Anweisungen für den Benutzer, je nachdem, wie viele Klicks schon erfolgt sind."""
+        steps = [
+            "1/16: Klicke auf den LINKEN Rand des schwarzen Spiegels",
+            "2/16: Klicke auf den RECHTEN Rand des schwarzen Spiegels",
+            "3/16: Klicke auf den OBEREN Rand des schwarzen Spiegels",
+            "4/16: Klicke auf den UNTEREN Rand des schwarzen Spiegels",
+            "5/16: Klicke DIAGONAL LINKS OBEN am schwarzen Spiegel",
+            "6/16: Klicke DIAGONAL RECHTS UNTEN am schwarzen Spiegel",
+            "7/16: Klicke DIAGONAL RECHTS OBEN am schwarzen Spiegel",
+            "8/16: Klicke DIAGONAL LINKS UNTEN am schwarzen Spiegel",
+            "9/16: Klicke auf den LINKEN Rand des 9er-Rings",
+            "10/16: Klicke auf den RECHTEN Rand des 9er-Rings",
+            "11/16: Klicke auf den OBEREN Rand des 9er-Rings",
+            "12/16: Klicke auf den UNTEREN Rand des 9er-Rings",
+            "13/16: Klicke auf den LINKEN Rand des äußersten Rings",
+            "14/16: Klicke auf den RECHTEN Rand des äußersten Rings",
+            "15/16: Klicke auf den OBEREN Rand des äußersten Rings",
+            "16/16: Klicke auf den UNTEREN Rand des äußersten Rings"
+        ]
+        
+        if len(self.calib_points) < len(steps):
+            self.print_log("KALIBRIERUNG", steps[len(self.calib_points)], show_gui=True)
+            self.lbl_coords.config(text=f"Aktion: {steps[len(self.calib_points)]}")
+        else:
+            self.finish_calibration()
+
+    def handle_calibration_click(self, event):
+        """Sammelt die Klicks des Benutzers und löst ein Neuzeichnen aus."""
+        if getattr(self, 'base_combined_img', None) is None or not hasattr(self, 'current_scale'):
+            return
+            
+        x, y = event.x, event.y
+        img_h, img_w = self.base_combined_img.shape[:2]
+        if x < 0 or y < 0 or x >= img_w or y >= img_h: return
+
+        is_left = (x < self.current_img_w)
+        raw_x = x if is_left else (x - self.current_img_w)
+        real_x = int(raw_x / self.current_scale)
+        real_y = int(y / self.current_scale)
+        
+        self.calib_points.append((real_x, real_y))
+        
+        schritt = len(self.calib_points)
+        self.print_log("KALIB", f"✓ Punkt {schritt}/16 gesetzt bei (X: {real_x}, Y: {real_y})", show_gui=True)
+        
+        # ---> DER ELA-FIX: Wir malen nicht mehr selbst, wir rufen die Pipeline! <---
+        self.update_image_display()
+        self.update_calibration_instruction()
+
+    def finish_calibration(self):
+        """Berechnet aus den gesammelten Punkten die Empfehlungen inkl. Best-Fit Validierung."""
+        
+        
+        self.root.unbind('<BackSpace>')
+        self.calib_mode_active = False
+        self.btn_calib_assist.config(bg="#8e44ad", text="📏 Kalibrierung")
+        self.lbl_image.config(cursor="")
+        
+        if len(self.calib_points) != 16:
+            self.print_log("KALIB", "Zu wenige Punkte gesammelt. Abbruch.", show_gui=True)
+            return
+            
+        d_config = self.package_data['config']
+        aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+        targets = self.dm.load_targets()
+        
+        if aktive_scheibe not in targets:
+            messagebox.showerror("Fehler", f"Scheibe '{aktive_scheibe}' nicht in zielscheiben.json gefunden!")
+            return
+            
+        target_data = targets[aktive_scheibe]
+        
+        # 1. Reale Millimeter-Maße
+        try:
+            spiegel_mm = float(target_data.get('spiegel_durchmesser_mm', 30.5))
+            ringe_mm = target_data.get('ringe_durchmesser_mm', {})
+            neun_mm = float(ringe_mm.get('9', spiegel_mm * 0.5))
+            
+            if '1' in ringe_mm:
+                aussen_mm = float(ringe_mm['1'])
+            else:
+                 aussen_mm = max([float(v) for v in ringe_mm.values()]) if ringe_mm else spiegel_mm * 2.0
+        except ValueError:
+            messagebox.showerror("Fehler", "Ungültige Millimeter-Werte in der zielscheiben.json!")
+            return
+
+        # 2. Punkte entpacken
+        pts = self.calib_points
+        spiegel_l, spiegel_r, spiegel_o, spiegel_u = pts[0], pts[1], pts[2], pts[3]
+        diag1_o, diag1_u, diag2_o, diag2_u = pts[4], pts[5], pts[6], pts[7]
+        neun_l, neun_r, neun_o, neun_u = pts[8], pts[9], pts[10], pts[11]
+        aussen_l, aussen_r, aussen_o, aussen_u = pts[12], pts[13], pts[14], pts[15]
+
+        # 3. Das exakte Zentrum auf Basis des 9er Rings ermitteln (am zuverlässigsten)
+        cx = (neun_l[0] + neun_r[0]) / 2.0
+        cy = (neun_o[1] + neun_u[1]) / 2.0
+
+        # A) Basis-Skalierung (px_pro_mm) ausschließlich am zentralen 9er-Ring messen
+        neun_px_x = abs(neun_r[0] - neun_l[0])
+        neun_px_y = abs(neun_u[1] - neun_o[1])
+        
+        px_mm_x = neun_px_x / neun_mm if neun_mm > 0 else 0
+        px_mm_y = neun_px_y / neun_mm if neun_mm > 0 else 0
+        
+        # B) Hilfsfunktion zur Ermittlung der Fischaugenkorrektur
+        def calc_korrektur(px_measured, mm_real, px_base):
+            if mm_real <= 0 or px_base <= 0: return 0.0
+            r_mm = mm_real / 2.0
+            gemessen_mm = (px_measured / 2.0) / px_base
+            return ((gemessen_mm / r_mm) - 1.0) / r_mm
+
+        # C) Gemessene Pixel-Distanzen für Spiegel und Außenring
+        spiegel_px_x = abs(spiegel_r[0] - spiegel_l[0])
+        spiegel_px_y = abs(spiegel_u[1] - spiegel_o[1])
+        aussen_px_x = abs(aussen_r[0] - aussen_l[0])
+        aussen_px_y = abs(aussen_u[1] - aussen_o[1])
+        
+        # D) Korrekturwerte ermitteln
+        korr_spiegel_x = calc_korrektur(spiegel_px_x, spiegel_mm, px_mm_x)
+        korr_spiegel_y = calc_korrektur(spiegel_px_y, spiegel_mm, px_mm_y)
+        korr_aussen_x = calc_korrektur(aussen_px_x, aussen_mm, px_mm_x)
+        korr_aussen_y = calc_korrektur(aussen_px_y, aussen_mm, px_mm_y)
+        
+        # E) Die finale Fischaugenkorrektur als sanfter Durchschnitt
+        avg_korrektur = (korr_spiegel_x + korr_spiegel_y + korr_aussen_x + korr_aussen_y) / 4.0
+        
+        dist_diag1 = math.hypot(diag1_o[0] - diag1_u[0], diag1_o[1] - diag1_u[1])
+        dist_diag2 = math.hypot(diag2_o[0] - diag2_u[0], diag2_o[1] - diag2_u[1])
+        
+        # =========================================================================
+        # NEU: VALIDIERUNGS-CHECK & MONSTER-LOG
+        # =========================================================================
+        log_lines = []
+        log_lines.append("\n" + "="*70)
+        log_lines.append("🎯 KALIBRIERUNGS-PROTOKOLL")
+        log_lines.append("="*70)
+        
+        log_lines.append("\n1. ROHE MAUSKLICKS (Pixel-Koordinaten):")
+        log_lines.append(f"  Spiegel : L{spiegel_l}, R{spiegel_r}, O{spiegel_o}, U{spiegel_u}")
+        log_lines.append(f"  Diagonal: LO{diag1_o}, RU{diag1_u}, RO{diag2_o}, LU{diag2_u}")
+        log_lines.append(f"  9er-Ring: L{neun_l}, R{neun_r}, O{neun_o}, U{neun_u}")
+        log_lines.append(f"  Außen   : L{aussen_l}, R{aussen_r}, O{aussen_o}, U{aussen_u}")
+        
+        log_lines.append(f"\n2. ERMITTELTE KONTROLL-DISTANZEN:")
+        log_lines.append(f"  Spiegel Diagonale 1: {dist_diag1:.1f} px")
+        log_lines.append(f"  Spiegel Diagonale 2: {dist_diag2:.1f} px")
+
+        log_lines.append(f"\n3. BERECHNETE PARAMETER:")
+        log_lines.append(f"  Zentrum (X/Y) : {cx:.2f} / {cy:.2f}")
+        log_lines.append(f"  px_pro_mm (X) : {px_mm_x:.3f}")
+        log_lines.append(f"  px_pro_mm (Y) : {px_mm_y:.3f}")
+        log_lines.append(f"  Fischaugenkorr: {avg_korrektur:.5f}")
+
+        def validate_point(name, pt, mm_real):
+            r_mm_base = mm_real / 2.0
+            r_mm_draw = r_mm_base * (1.0 + (r_mm_base * avg_korrektur))
+            
+            dx_px = pt[0] - cx
+            dy_px = pt[1] - cy
+            
+            dx_mm = dx_px / px_mm_x if px_mm_x else 0
+            dy_mm = dy_px / px_mm_y if px_mm_y else 0
+            dist_mm = math.hypot(dx_mm, dy_mm)
+            
+            err_mm = dist_mm - r_mm_draw
+            
+            act_dist_px = math.hypot(dx_px, dy_px)
+            px_per_mm_ray = act_dist_px / dist_mm if dist_mm > 0 else 0
+            err_px = err_mm * px_per_mm_ray
+            
+            return err_px, err_mm
+
+        log_lines.append("\n4. BEST-FIT VALIDIERUNG (Theorie vs. Klick):")
+        log_lines.append("  (Minus = Klick war näher am Zentrum als berechnet)")
+        
+        def add_validation(section_name, mm_real, labels, points):
+            log_lines.append(f"\n  ▶ {section_name} ({mm_real} mm):")
+            for lbl, pt in zip(labels, points):
+                err_px, err_mm = validate_point(lbl, pt, mm_real)
+                log_lines.append(f"    {lbl:<12} -> Abweichung: {err_px:>+5.1f} px  |  {err_mm:>+6.2f} mm")
+
+        add_validation("9er-Ring", neun_mm, ["Links", "Rechts", "Oben", "Unten"], [neun_l, neun_r, neun_o, neun_u])
+        add_validation("Spiegel (Achsen)", spiegel_mm, ["Links", "Rechts", "Oben", "Unten"], [spiegel_l, spiegel_r, spiegel_o, spiegel_u])
+        add_validation("Spiegel (Diag)", spiegel_mm, ["Links-Oben", "Rechts-Unten", "Rechts-Oben", "Links-Unten"], [diag1_o, diag1_u, diag2_o, diag2_u])
+        add_validation("Außenring", aussen_mm, ["Links", "Rechts", "Oben", "Unten"], [aussen_l, aussen_r, aussen_o, aussen_u])
+
+        log_lines.append("="*70 + "\n")
+        
+        # ... [Dein bestehender Code, log_lines.append("="*70 + "\n") etc.] ...
+
+        # Einmal direkt vorab ins Log schreiben (zur Vorschau)
+        for line in log_lines:
+            self.print_log("KALIB", line, show_gui=True)
+            
+        # UI-Ergebnis ausgeben
+        report = (
+            "🎯 Kalibrierung Abgeschlossen!\n\n"
+            "Vorgeschlagene Werte:\n"
+            f"▶ px_pro_mm (X): {px_mm_x:.3f}\n"
+            f"▶ px_pro_mm (Y): {px_mm_y:.3f}\n"
+            f"▶ Fischaugenkorr.: {avg_korrektur:.5f}\n\n"
+            "💡 Ein extrem detailliertes Protokoll (inkl. aller Koordinaten "
+            "und Millimeter-Abweichungen) findest du jetzt unten im Log!"
+        )
+        
+        def apply_values():
+             self.calib_x_var.set(round(px_mm_x, 2))
+             self.calib_y_var.set(round(px_mm_y, 2))
+             self.calib_fischauge_var.set(round(avg_korrektur, 4))
+             
+             # Erzwingt den Neuaufbau der Bilder
+             self.on_param_change(force=True)
+             
+             # Verzögertes Schreiben des Logs
+             def write_log_delayed():
+                 for line in log_lines:
+                     self.print_log("KALIB", line, show_gui=True)
+                 self.print_log("SYSTEM", "✅ Kalibrierungswerte erfolgreich übernommen und Bilder neu berechnet!", show_gui=True)
+                 
+             self.root.after(400, write_log_delayed)
+             info_win.destroy()
+
+        # =========================================================================
+        # ---> NEU: Zwischenablage-Funktion <---
+        # =========================================================================
+        def copy_to_clipboard():
+            full_log = "\n".join(log_lines)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(full_log)
+            # Kurzes Feedback, damit man weiß, dass es geklappt hat
+            tk.messagebox.showinfo("Kopiert", "Das komplette Protokoll wurde in die Zwischenablage kopiert!", parent=info_win)
+             
+        info_win = tk.Toplevel(self.root)
+        info_win.title("Kalibrierungs-Ergebnis")
+        info_win.attributes('-topmost', True)
+        
+        tk.Label(info_win, text=report, justify=tk.LEFT, padx=20, pady=20, font=("Arial", 11)).pack()
+        
+        btn_frame = tk.Frame(info_win)
+        btn_frame.pack(pady=10)
+        
+        # ---> NEU: Der mittlere Button in blau <---
+        tk.Button(btn_frame, text="Werte übernehmen", command=apply_values, bg="#27ae60", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="📋 Log kopieren", command=copy_to_clipboard, bg="#3498db", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Abbrechen", command=info_win.destroy).pack(side=tk.LEFT, padx=5)
+        
+        self.update_image_display()
+        
     def on_drag_stop(self, event):
         """Entscheidet beim Loslassen: War es Drag&Drop oder ein Röntgen-Klick?"""
         if getattr(self, 'color_picker_active', False): return
@@ -1233,7 +1559,7 @@ class LaborApp:
         self.on_mouse_move(event)   
 
     def process_and_display(self):
-        self.root.focus()
+        #self.root.focus()
         if not self.current_zip_path: return
         
         side = self.active_camera_var.get()
@@ -2443,6 +2769,28 @@ class LaborApp:
                 # ---> NEU: Auf der rechten Seite noch einen Tick größer (Scale 1.5, Dicke 3) <---
                 cv2.putText(combined, f"#{f_num}", (scaled_x2 - 30, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_AA)
         
+        # =========================================================================
+        # ---> NEU: Dynamischer ELA-Layer für den Kalibrierungs-Assistenten <---
+        # =========================================================================
+        if getattr(self, 'calib_mode_active', False) and hasattr(self, 'calib_points'):
+            side = self.active_camera_var.get()
+            for pt in self.calib_points:
+                # pt[0] und pt[1] sind die ECHTEN, unskalierten Bildkoordinaten
+                scaled_x = round(pt[0] * self.current_scale)
+                scaled_y = round(pt[1] * self.current_scale)
+                
+                # Globale Skalierung und Fenster-Offset addieren
+                final_x = scaled_x + getattr(self, 'pad_x', 0)
+                final_y = scaled_y + getattr(self, 'pad_y', 0)
+                
+                # Wenn wir im rechten Bild kalibrieren, um die linke Bildbreite nach rechts rücken
+                if side == 'right':
+                    final_x += self.current_img_w
+                    
+                # Leuchtend roter Punkt mit leichtem schwarzen Rand für Kontrast
+                cv2.circle(combined, (final_x, final_y), 4, (0, 0, 0), -1)
+                cv2.circle(combined, (final_x, final_y), 3, (0, 0, 255), -1)
+        
         # ---> NEU: Das nackte Bild ohne Maus-Overlay als Base-Image merken <---
         self.base_combined_img = combined.copy()
         
@@ -2489,7 +2837,7 @@ class LaborApp:
         # ---> DER FIX: Die Hierarchie für Windows & Tkinter klarstellen <---
         # =========================================================================
         dialog.transient(self.root)  # Zwingt das Unterfenster über das Labor-Hauptfenster
-        dialog.attributes('-topmost', True)
+        # WICHTIG: KEIN dialog.attributes('-topmost', True) hier!
         dialog.focus_force()         # Holt den Cursor aktiv in das neue Fenster
 
         # =========================================================================
@@ -2616,37 +2964,33 @@ class LaborApp:
         dialog.bind("<Button-5>", _on_mousewheel)
 
 if __name__ == "__main__":
-    import sys # Für sys.argv
+    import sys 
     
-    # =========================================================================
-    # ---> NEU: DPI-Awareness für gestochen scharfe GUI auf 4K Monitoren <---
-    # =========================================================================
     try:
         import ctypes
-        # Versuche die moderne Windows 10/11 Methode
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         try:
-            # Fallback für ältere Windows-Versionen
             ctypes.windll.user32.SetProcessDPIAware()
         except Exception:
-            pass # Auf Linux/Mac oder bei Fehlern ignorieren wir das einfach komplett
+            pass 
             
     root = tk.Tk()
     app = LaborApp(root)
     
-    
-    # Wurde uns vom Live-System ein ZIP-Pfad in die Hand gedrückt?
     if len(sys.argv) > 1:
         zip_path = sys.argv[1]
         
-        # ---> NEU: Labor zwingend im Vordergrund halten (Always-On-Top) <---
-        root.attributes('-topmost', True)
+        # =========================================================================
+        # ---> DER FIX: Wir verzichten KOMPLETT auf topmost! <---
+        # Das Live-System macht sich stattdessen selbst klein (Idee B).
+        # Wir rufen das Fenster nur freundlich nach vorne.
+        # =========================================================================
+        root.lift()
+        root.focus_force()
         
-        # Wir warten 100ms, damit die GUI erst kurz aufploppt, bevor sie rechnet
         root.after(100, lambda: app.load_zip(zip_path))
     else:
-        # ---> NEU: Das Labor wurde manuell gestartet! Lade die lokale Config <---
         root.after(100, lambda: app.load_local_config())
         
     root.mainloop()
