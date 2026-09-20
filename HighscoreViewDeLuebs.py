@@ -17,13 +17,9 @@ from DateiManagerDeLuebs import DateiManager
 class MatchDetailWindow(tk.Toplevel):
     def __init__(self, parent, match_id, zip_path):
         super().__init__(parent)
-        self.title(f"TargetVision Detailauswertung - MATCH {match_id}")
+        self.match_id = match_id
         self.geometry("1400x800")
         self.configure(bg="#2c3e50")
-        
-        #config = configparser.ConfigParser()
-        #config.read("config.ini")
-        #self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius', fallback=10.5)
         
         self.zoom_factor = 1.0
         self.zip_path = zip_path
@@ -31,40 +27,53 @@ class MatchDetailWindow(tk.Toplevel):
         self.orig_img_l = None
         self.orig_img_r = None
         self.timeline = []
-        self.photo_l = None
-        self.photo_r = None
+        self.match_metadata = {}
+        self.match_config = None
         
         self.load_data()
+        
+        # ---> NEU: Aufgehübschter Titel (Muss nach load_data kommen, da wir die Metadaten brauchen) <---
+        self.update_window_title()
+        
         self.build_gui()
         self.update_images()
+
+    def update_window_title(self):
+        """Setzt den eleganten Fenstertitel aus den Metadaten der JSON zusammen."""
+        version = self.match_metadata.get("version", "???")
+        titel_teile = [
+            f"TargetVision Detailauswertung  -  MATCH {self.match_id:06d}",
+            f"v{version}"
+        ]
+        
+        zeit = self.match_metadata.get("timestamp", self.match_metadata.get("start_zeit", ""))
+        if zeit:
+            zeit_ohne_sekunden = zeit[:-3] if len(zeit) > 10 else zeit
+            titel_teile.append(f"🕒 {zeit_ohne_sekunden}")
+            
+        spieler = self.match_metadata.get("spieler", "")
+        if spieler:
+            titel_teile.append(f"👤 {spieler}")
+            
+        self.title("  |  ".join(titel_teile))
 
     def load_data(self):
         try:
             with zipfile.ZipFile(self.zip_path, 'r') as zipf:
                 match_data = json.loads(zipf.read("match.json").decode('utf-8'))
                 self.timeline = match_data.get("timeline", [])
+                self.match_metadata = match_data.get("metadata", {}) # <--- NEU: Metadaten sichern!
                 
                 config = configparser.ConfigParser()
-                #try:
-                #    config_str = zipf.read("config.ini").decode('utf-8')
-                #    config.read_string(config_str)
-                #    self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius', fallback=10.5)
-                #except KeyError:
-                #    config.read("config.ini")
-                #    self.caliber_radius = config.getfloat('Erkennung', 'caliber_radius', fallback=10.5)
-                
                 config.optionxform = str
                 try:
                     config_str = zipf.read("config.ini").decode('utf-8')
                     config.read_string(config_str)
                 except KeyError:
                     config.read("config.ini")
+                    
+                self.match_config = config # <--- NEU: Config im RAM sichern!
                 
-                # =========================================================================
-                # ---> NEU: ELA-Optimierung! Wir berechnen den Radius direkt aus der JSON!
-                # 1. Prio: Die historische zielscheiben.json aus dem ZIP
-                # 2. Fallback: Die lokale zielscheiben.json von der Festplatte
-                # =========================================================================
                 try:
                     targets = json.loads(zipf.read("zielscheiben.json").decode('utf-8'))
                 except KeyError:
@@ -74,7 +83,6 @@ class MatchDetailWindow(tk.Toplevel):
                 ringwertung_aktiv = config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
                 aktive_scheibe = config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
                 
-                # Weiche: Offizielle Wettkampf-Wahrheit vs. Custom Optik
                 if ringwertung_aktiv and aktive_scheibe in targets:
                     offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
                 else:
@@ -82,117 +90,183 @@ class MatchDetailWindow(tk.Toplevel):
                     if str(val).strip().lower() == 'auto':
                         offizielles_kaliber_mm = float(targets.get(aktive_scheibe, {}).get('kaliber_mm', 4.5))
                     else:
-                        try:
-                            offizielles_kaliber_mm = float(val)
-                        except ValueError:
-                            offizielles_kaliber_mm = 4.5
+                        try: offizielles_kaliber_mm = float(val)
+                        except ValueError: offizielles_kaliber_mm = 4.5
                 
-                # Pixel-Umrechnung für Links
                 px_x_l = config.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0)
                 px_y_l = config.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0)
                 avg_px_l = (px_x_l + px_y_l) / 2.0
                 self.radius_left = (offizielles_kaliber_mm / 2.0) * avg_px_l
                 
-                # Pixel-Umrechnung für Rechts
                 px_x_r = config.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0)
                 px_y_r = config.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0)
                 avg_px_r = (px_x_r + px_y_r) / 2.0
                 self.radius_right = (offizielles_kaliber_mm / 2.0) * avg_px_r
-                # =========================================================================
                 
-                # ---> NEU: Erst PNG versuchen (neue Version), dann Fallback auf JPG (alte Version) <---
-                try:
-                    self.orig_img_l = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_left.png")))
+                try: self.orig_img_l = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_left.png")))
                 except KeyError:
-                    try:
-                        self.orig_img_l = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_left.jpg")))
-                    except KeyError:
-                        pass
+                    try: self.orig_img_l = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_left.jpg")))
+                    except KeyError: pass
                 
-                try:
-                    self.orig_img_r = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_right.png")))
+                try: self.orig_img_r = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_right.png")))
                 except KeyError:
-                    try:
-                        self.orig_img_r = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_right.jpg")))
-                    except KeyError:
-                        pass
+                    try: self.orig_img_r = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_right.jpg")))
+                    except KeyError: pass
                 
         except Exception as e:
             messagebox.showerror("Fehler beim Lesen", f"Das ZIP konnte nicht gelesen werden:\n{e}")
 
     def build_gui(self):
-        self.list_frame = tk.Frame(self, bg="#34495e", width=350)
-        self.list_frame.pack(side="right", fill="y", padx=10, pady=10)
-        self.list_frame.pack_propagate(False) 
-        
-        cols = ("Nr", "Ringe")
-        
-        # ---> TABELLE LINKS <---
-        tk.Label(self.list_frame, text="Treffer Links", font=('Arial', 14, 'bold'), bg="#34495e", fg="white").pack(pady=(5,0))
-        self.tree_l = ttk.Treeview(self.list_frame, columns=cols, show="headings", height=10)
-        self.tree_l.heading("Nr", text="#")
-        self.tree_l.heading("Ringe", text="Ringe")
-        self.tree_l.column("Nr", width=60, anchor="center")
-        self.tree_l.column("Ringe", width=120, anchor="center")
-        self.tree_l.tag_configure("high_score", foreground="#00aa00") 
-        self.tree_l.pack(fill="x", padx=5, pady=2)
-        
-        self.lbl_sum_l = tk.Label(self.list_frame, text="Gesamt: 0.0", font=('Arial', 14, 'bold'), bg="#34495e", fg="#00ff00")
-        self.lbl_sum_l.pack(pady=(0, 10))
+        main_container = tk.Frame(self, bg="#2c3e50")
+        main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # ---> TABELLE RECHTS <---
-        tk.Label(self.list_frame, text="Treffer Rechts", font=('Arial', 14, 'bold'), bg="#34495e", fg="white").pack(pady=(5,0))
-        self.tree_r = ttk.Treeview(self.list_frame, columns=cols, show="headings", height=10)
-        self.tree_r.heading("Nr", text="#")
-        self.tree_r.heading("Ringe", text="Ringe")
-        self.tree_r.column("Nr", width=60, anchor="center")
-        self.tree_r.column("Ringe", width=120, anchor="center")
-        self.tree_r.tag_configure("high_score", foreground="#00aa00") 
-        self.tree_r.pack(fill="x", padx=5, pady=2)
-        
-        self.lbl_sum_r = tk.Label(self.list_frame, text="Gesamt: 0.0", font=('Arial', 14, 'bold'), bg="#34495e", fg="#00ff00")
-        self.lbl_sum_r.pack(pady=(0, 10))
-        
-        tk.Label(self.list_frame, text="Mausrad: Zoomen | Klick+Ziehen: Pannen", font=('Arial', 10), bg="#34495e", fg="#bdc3c7").pack(side="bottom", pady=5)
+        has_l = self.orig_img_l is not None
+        has_r = self.orig_img_r is not None
 
-        # Events binden (mit Seitenzuordnung)
-        self.tree_l.bind("<<TreeviewSelect>>", lambda e: self.on_tree_select(e, 'l'))
-        self.tree_r.bind("<<TreeviewSelect>>", lambda e: self.on_tree_select(e, 'r'))
-        
-        # Daten einfüllen
+        # =====================================================================
+        # ---> Die dynamische Layout-Weiche für 1 vs. 2 Kameras <---
+        # =====================================================================
+        if has_l and has_r:
+            self.paned = tk.PanedWindow(main_container, orient=tk.HORIZONTAL, sashwidth=8, sashrelief=tk.RAISED, bg="#555555")
+            self.paned.pack(fill=tk.BOTH, expand=True)
+            parent_l = tk.Frame(self.paned, bg="#2c3e50")
+            parent_r = tk.Frame(self.paned, bg="#2c3e50")
+            self.paned.add(parent_l, stretch="always")
+            self.paned.add(parent_r, stretch="always")
+        elif has_l:
+            parent_l = tk.Frame(main_container, bg="#2c3e50")
+            parent_l.pack(fill=tk.BOTH, expand=True)
+            parent_r = None
+        elif has_r:
+            parent_r = tk.Frame(main_container, bg="#2c3e50")
+            parent_r.pack(fill=tk.BOTH, expand=True)
+            parent_l = None
+        else:
+            tk.Label(main_container, text="Keine Bilder im ZIP gefunden.", font=('Arial', 14), fg="white", bg="#2c3e50").pack(pady=50)
+            return
+
+        # =====================================================================
+        # ---> Schablonen-Funktion für das Bauen einer Seite <---
+        # =====================================================================
+        def build_side(parent, title_text):
+            if not parent: return None, None, None, None
+
+            # Rechts das schlanke Info-Panel (Wird zuerst gepackt, damit es an der Seite klebt)
+            side_panel = tk.Frame(parent, bg="#34495e", width=200) 
+            side_panel.pack(side=tk.RIGHT, fill=tk.Y)
+            side_panel.pack_propagate(False)
+
+            # Links der Hauptbereich für Bild (oben) UND Serien (unten)
+            main_left_area = tk.Frame(parent, bg="#2c3e50")
+            main_left_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+
+            # Container für die Serien unten im Bild-Bereich
+            series_container = tk.Frame(main_left_area, bg="#1a252f")
+            series_container.pack(side=tk.BOTTOM, fill=tk.X, pady=(5, 0))
+
+            # Links das Canvas (Nimmt den restlichen Platz oben ein)
+            canvas = tk.Canvas(main_left_area, bg="#1a252f", highlightthickness=0, cursor="fleur")
+            canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+            self.setup_canvas_bindings(canvas)
+
+            # --- Das rechte Panel (Tabellen) befüllen ---
+            tk.Label(side_panel, text=title_text, font=('Arial', 14, 'bold'), bg="#34495e", fg="white").pack(pady=(5,0))
+
+            tree_frame = tk.Frame(side_panel)
+            tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=2)
+
+            scrollbar = ttk.Scrollbar(tree_frame, orient="vertical")
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+            tree = ttk.Treeview(tree_frame, columns=("Nr", "Ringe"), show="headings", yscrollcommand=scrollbar.set)
+            scrollbar.config(command=tree.yview)
+
+            tree.heading("Nr", text="#")
+            tree.heading("Ringe", text="Ringe")
+            tree.column("Nr", width=50, anchor="center")
+            tree.column("Ringe", width=100, anchor="center")
+            tree.tag_configure("high_score", foreground="#00aa00")
+            tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+            lbl_sum = tk.Label(side_panel, text="Gesamt: 0.0", font=('Arial', 14, 'bold'), bg="#34495e", fg="#00ff00")
+            lbl_sum.pack(pady=(5, 5))
+
+            return canvas, tree, lbl_sum, series_container
+
+        self.canvas_l, self.tree_l, self.lbl_sum_l, self.series_cont_l = build_side(parent_l, "Treffer Links")
+        self.canvas_r, self.tree_r, self.lbl_sum_r, self.series_cont_r = build_side(parent_r, "Treffer Rechts")
+
+        if getattr(self, 'tree_l', None): self.tree_l.bind("<<TreeviewSelect>>", lambda e: self.on_tree_select(e, 'l'))
+        if getattr(self, 'tree_r', None): self.tree_r.bind("<<TreeviewSelect>>", lambda e: self.on_tree_select(e, 'r'))
+
+        tk.Label(self, text="Mausrad: Zoomen | Klick+Ziehen: Pannen", font=('Arial', 10), bg="#2c3e50", fg="#bdc3c7").pack(side=tk.BOTTOM, pady=5)
+
+        self.populate_data()
+
+    def populate_data(self):
         total_l, total_r = 0.0, 0.0
         idx_l, idx_r = 1, 1
-        
+        hits_l, hits_r = [], []
+
         for i, hit in enumerate(self.timeline):
             score = hit.get('score', 0.0)
             tag = ("high_score",) if score >= 10.0 else ()
-            
-            # Wir nutzen die versteckte iid, um den Index aus der Timeline zu speichern!
-            if hit['s'] == 'l':
+
+            if hit['s'] == 'l' and getattr(self, 'tree_l', None):
                 self.tree_l.insert("", "end", iid=str(i), values=(idx_l, f"{score:.1f}"), tags=tag)
                 total_l += score
                 idx_l += 1
-            else:
+                hits_l.append(score)
+            elif hit['s'] == 'r' and getattr(self, 'tree_r', None):
                 self.tree_r.insert("", "end", iid=str(i), values=(idx_r, f"{score:.1f}"), tags=tag)
                 total_r += score
                 idx_r += 1
-                
-        self.lbl_sum_l.config(text=f"Gesamt: {total_l:.1f}")
-        self.lbl_sum_r.config(text=f"Gesamt: {total_r:.1f}")
+                hits_r.append(score)
 
-        # Canvas Setup
-        self.img_frame = tk.Frame(self, bg="#2c3e50")
-        self.img_frame.pack(side="left", fill="both", expand=True)
+        if getattr(self, 'lbl_sum_l', None): self.lbl_sum_l.config(text=f"Gesamt: {total_l:.1f}")
+        if getattr(self, 'lbl_sum_r', None): self.lbl_sum_r.config(text=f"Gesamt: {total_r:.1f}")
 
-        if self.orig_img_l:
-            self.canvas_l = tk.Canvas(self.img_frame, bg="#1a252f", highlightthickness=0, cursor="fleur")
-            self.canvas_l.pack(side="left", fill="both", expand=True, padx=5, pady=5)
-            self.setup_canvas_bindings(self.canvas_l)
-            
-        if self.orig_img_r:
-            self.canvas_r = tk.Canvas(self.img_frame, bg="#1a252f", highlightthickness=0, cursor="fleur")
-            self.canvas_r.pack(side="left", fill="both", expand=True, padx=5, pady=5)
-            self.setup_canvas_bindings(self.canvas_r)
+        # =====================================================================
+        # ---> Serien-Auswertung einbinden <---
+        # =====================================================================
+        ringwertung_aktiv = self.match_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+        serien_grp = self.match_config.getint('Anzeige', 'serien_gruppierung', fallback=0)
+
+        if ringwertung_aktiv and serien_grp > 0:
+            if getattr(self, 'series_cont_l', None) and hits_l:
+                self.build_series(self.series_cont_l, hits_l, serien_grp)
+            if getattr(self, 'series_cont_r', None) and hits_r:
+                self.build_series(self.series_cont_r, hits_r, serien_grp)
+
+    def build_series(self, series_container, hits, serien_grp):
+        """Erzeugt ein flaches, einzeiliges Textfeld für die Serien unter dem Bild."""
+        # Padding für eine schöne Optik setzen
+        series_container.config(padx=10, pady=5)
+
+        tk.Label(series_container, text="Serien:", font=('Arial', 12, 'bold'), bg="#1a252f", fg="white").pack(side=tk.LEFT, padx=(0, 10))
+
+        txt_frame = tk.Frame(series_container, bg="#1a252f")
+        txt_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        #scrollbar = ttk.Scrollbar(txt_frame, orient="horizontal")
+        #scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # ---> NEU: Einzeiliges Textfeld (height=1), wrap="none" für horizontale Scrollbar <---
+        text_series = tk.Text(txt_frame, height=1, wrap="none", bg="#1e1e1e", fg="#00ff00", 
+                              font=("Consolas", 12, "bold"), bd=0, highlightthickness=0, pady=4, padx=5)
+#                              xscrollcommand=scrollbar.set, 
+        text_series.pack(side=tk.TOP, fill=tk.X, expand=True)
+        #scrollbar.config(command=text_series.xview)
+
+        lines = []
+        for i in range(0, len(hits), serien_grp):
+            serie_hits = hits[i:i+serien_grp]
+            serie_sum = sum(serie_hits)
+            lines.append(f"{i+1:02d}-{i+len(serie_hits):02d}: {serie_sum:.1f}")
+
+        # Horizontal mit Pipe-Symbolen aneinanderreihen
+        text_series.insert(tk.END, "   |   ".join(lines))
+        text_series.config(state=tk.DISABLED)
 
     def setup_canvas_bindings(self, canvas):
         canvas.bind("<MouseWheel>", self.on_zoom)      
@@ -224,7 +298,7 @@ class MatchDetailWindow(tk.Toplevel):
             try: font = ImageFont.truetype("arial.ttf", int(14 * (self.zoom_factor * 0.7)))
             except: font = ImageFont.load_default()
 
-        if self.orig_img_l:
+        if getattr(self, 'orig_img_l', None) and getattr(self, 'canvas_l', None):
             new_w = int(self.orig_img_l.width * self.zoom_factor)
             new_h = int(self.orig_img_l.height * self.zoom_factor)
             img_l = self.orig_img_l.resize((new_w, new_h), Image.LANCZOS)
@@ -236,7 +310,7 @@ class MatchDetailWindow(tk.Toplevel):
             self.canvas_l.create_image(0, 0, anchor="nw", image=self.photo_l)
             self.canvas_l.config(scrollregion=self.canvas_l.bbox("all"))
             
-        if self.orig_img_r:
+        if getattr(self, 'orig_img_r', None) and getattr(self, 'canvas_r', None):
             new_w = int(self.orig_img_r.width * self.zoom_factor)
             new_h = int(self.orig_img_r.height * self.zoom_factor)
             img_r = self.orig_img_r.resize((new_w, new_h), Image.LANCZOS)
@@ -295,67 +369,55 @@ class MatchDetailWindow(tk.Toplevel):
                 idx += 1
 
     def on_tree_select(self, event, side):
+        # 1. Dummy-Aufrufe abfangen
+        if side not in ('l', 'r'):
+            return
+            
+        tree = self.tree_l if side == 'l' else self.tree_r
+        if not tree: 
+            return # Sicherheitscheck, falls der Baum gar nicht existiert
+        
+        selected = tree.selection()
+        if not selected: 
+            return
+
+        # Das zusätzliche Schutzschild gegen Endlosschleifen
+        if getattr(self, '_ignore_selection', False):
+            return
+
+        if getattr(self, 'orig_img_l', None) and getattr(self, 'canvas_l', None): 
+            self.canvas_l.delete("highlight")
+        if getattr(self, 'orig_img_r', None) and getattr(self, 'canvas_r', None): 
+            self.canvas_r.delete("highlight")
+
+        self._ignore_selection = True
         try:
-            # ---> NEU: Das Schutzschild gegen den Ping-Pong-Absturz! <---
-            if getattr(self, '_ignore_selection', False):
-                return
+            # =====================================================================
+            # ---> DER FIX: Vorher prüfen, ob die ANDERE Tabelle überhaupt existiert!
+            # =====================================================================
+            if side == 'l' and getattr(self, 'tree_r', None) and self.tree_r.selection():
+                self.tree_r.selection_remove(self.tree_r.selection())
+            elif side == 'r' and getattr(self, 'tree_l', None) and self.tree_l.selection():
+                self.tree_l.selection_remove(self.tree_l.selection())
+        finally:
+            self._ignore_selection = False
 
-            if self.orig_img_l: self.canvas_l.delete("highlight")
-            if self.orig_img_r: self.canvas_r.delete("highlight")
+        # Timeline-Index aus der versteckten IID auslesen!
+        timeline_idx = int(selected[0])
+        if timeline_idx < 0 or timeline_idx >= len(self.timeline): return
 
-            # Wir schalten das Schutzschild ein, BEVOR wir die andere Tabelle anfassen
-            self._ignore_selection = True
-            try:
-                # Selektion bereinigen (Wer in Tabelle L klickt, hebt R auf)
-                if side == 'l':
-                    self.tree_r.selection_remove(self.tree_r.selection())
-                    tree = self.tree_l
-                elif side == 'r':
-                    self.tree_l.selection_remove(self.tree_l.selection())
-                    tree = self.tree_r
-                else:
-                    return
-            finally:
-                # Schutzschild wieder aus, egal was passiert
-                self._ignore_selection = False
-
-            selected = tree.selection()
-            if not selected: return
-
-            # Timeline-Index aus der versteckten IID auslesen!
-            timeline_idx = int(selected[0])
-            if timeline_idx < 0 or timeline_idx >= len(self.timeline): return
-
-            hit = self.timeline[timeline_idx]
-            
-            # ---> MIT RUNDUNGS-FIX AUS DEM VORHERIGEN SCHRITT! <---
-            cx = int(round(hit['x'] * self.zoom_factor))
-            cy = int(round(hit['y'] * self.zoom_factor))
-            
-            # Holt den perfekten Radius für die jeweilige Seite
-            base_r = self.radius_left if hit['s'] == 'l' else self.radius_right
-            r = int(round(base_r * self.zoom_factor))
-            
-            canvas = self.canvas_l if hit['s'] == 'l' else self.canvas_r
-            if canvas:
-                canvas.create_oval(cx - r, cy - r, cx + r, cy + r, outline="#00ffff", width=7, tags="highlight")
-                
-        except Exception as e:
-            import traceback
-            err_msg = traceback.format_exc()
-            
-            # 1. Sofort als "Blackbox" auf die Festplatte retten (falls die GUI komplett stirbt)
-            try:
-                with open("crash_log_tabelle.txt", "w", encoding="utf-8") as f:
-                    f.write(err_msg)
-            except:
-                pass
-                
-            # 2. In die Konsole drucken
-            print(err_msg)
-            
-            # 3. Messagebox für den Anwender aufpoppen lassen
-            messagebox.showerror("Kritischer Fehler", f"Absturz in der Tabelle abgefangen!\nLog wurde als 'crash_log_tabelle.txt' gespeichert.\n\nFehler:\n{str(e)}")
+        hit = self.timeline[timeline_idx]
+        
+        # ---> KORREKTES RUNDEN FÜR SUBPIXEL-PRÄZISION <---
+        cx = int(round(hit['x'] * self.zoom_factor))
+        cy = int(round(hit['y'] * self.zoom_factor))
+        
+        base_r = self.radius_left if hit['s'] == 'l' else self.radius_right
+        r = int(round(base_r * self.zoom_factor))
+        
+        canvas = self.canvas_l if hit['s'] == 'l' else self.canvas_r
+        if canvas:
+            canvas.create_oval(cx - r, cy - r, cx + r, cy + r, outline="#00ffff", width=7, tags="highlight")
 
 class HighscoreViewer:
     def __init__(self, root):
@@ -427,7 +489,14 @@ class HighscoreViewer:
 
         self.tree.bind("<Button-3>", self.show_context_menu)
         self.tree.bind("<Delete>", lambda event: self.delete_selected_entries())
-
+        # ---> NEU: Doppelklick öffnet die Bildansicht direkt! <---
+        self.tree.bind("<Double-1>", self.on_double_click)
+    
+    def on_double_click(self, event):
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.show_hit_images()
+    
     def load_and_display_data(self):
         try:
             with open(self.file_path, "r", encoding="utf-8") as file:
