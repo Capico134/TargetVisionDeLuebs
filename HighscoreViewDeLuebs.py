@@ -265,7 +265,7 @@ class MatchDetailWindow(tk.Toplevel):
             lines.append(f"{i+1:02d}-{i+len(serie_hits):02d}: {serie_sum:.1f}")
 
         # Horizontal mit Pipe-Symbolen aneinanderreihen
-        text_series.insert(tk.END, "   |   ".join(lines))
+        text_series.insert(tk.END, "  |  ".join(lines))
         text_series.config(state=tk.DISABLED)
 
     def setup_canvas_bindings(self, canvas):
@@ -339,7 +339,7 @@ class MatchDetailWindow(tk.Toplevel):
                 # Auch den Radius sauber runden
                 r = int(round(base_r * self.zoom_factor))
                 
-                draw.ellipse((cx-r, cy-r, cx+r, cy+r), outline="red", width=4)
+                draw.ellipse((cx-r, cy-r, cx+r, cy+r), outline="red", width=1)
                 
                 id_str = str(idx)
                 
@@ -417,7 +417,7 @@ class MatchDetailWindow(tk.Toplevel):
         
         canvas = self.canvas_l if hit['s'] == 'l' else self.canvas_r
         if canvas:
-            canvas.create_oval(cx - r, cy - r, cx + r, cy + r, outline="#00ffff", width=7, tags="highlight")
+            canvas.create_oval(cx - r, cy - r, cx + r, cy + r, outline="#00ffff", width=3, tags="highlight")
 
 class HighscoreViewer:
     def __init__(self, root):
