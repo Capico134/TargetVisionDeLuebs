@@ -126,11 +126,19 @@ class TargetTracker:
 
     def show_config_alert(self):
         """Zeigt eine einmalige Warnung, falls beim Start Parameter mit Fallbacks gerettet wurden."""
-        count = len(self.config.healed_parameters)
+        healed_list = self.config.healed_parameters
+        count = len(healed_list)
+        
+        # Liste für die Ausgabe formatieren (max. 10 anzeigen, damit die Box lesbar bleibt)
+        display_list = "\n".join([f"• {p}" for p in healed_list[:10]])
+        if count > 10:
+            display_list += f"\n• ... und {count - 10} weitere."
+            
         titel = "Neue Einstellungen verfügbar"
         text = (
-            f"Es wurden {count} neue oder fehlende Konfigurations-Parameter entdeckt.\n"
-            "Das System verwendet vorübergehend sichere Standardwerte.\n\n"
+            f"Es wurden {count} neue oder fehlende Konfigurations-Parameter entdeckt "
+            "und vorübergehend mit sicheren Standardwerten ergänzt:\n\n"
+            f"{display_list}\n\n"
             "Tipp: Öffne bei Gelegenheit das 'Labor & Einstellungen' "
             "und klicke dort auf 'Einstellungen speichern', um die neuen Werte "
             "dauerhaft in deine config.ini zu übernehmen."
