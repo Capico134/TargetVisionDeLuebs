@@ -106,6 +106,10 @@ class TargetTracker:
         
         self.show_all_rings = False
         self.btn_rings_coords = None
+        
+        # ---> NEU: Die elegante Messagebox-Prüfung ganz am Ende des Startvorgangs <---
+        if hasattr(self.config, 'healed_parameters') and self.config.healed_parameters:
+            self.show_config_alert()
 
     def refresh_gui_settings_from_config(self):
         """Aktualisiert alle GUI-spezifischen Attribute live aus dem Config-Objekt im RAM."""
@@ -119,7 +123,28 @@ class TargetTracker:
         self.serien_gruppierung = self.config.getint('Anzeige', 'serien_gruppierung', fallback=0)
         self.fischaugenkorrektur_links = self.config.getfloat('Kameras', 'fischaugenkorrektur_links', fallback=0.0)
         self.fischaugenkorrektur_rechts = self.config.getfloat('Kameras', 'fischaugenkorrektur_rechts', fallback=0.0)
+
+    def show_config_alert(self):
+        """Zeigt eine einmalige Warnung, falls beim Start Parameter mit Fallbacks gerettet wurden."""
+        count = len(self.config.healed_parameters)
+        titel = "Neue Einstellungen verfügbar"
+        text = (
+            f"Es wurden {count} neue oder fehlende Konfigurations-Parameter entdeckt.\n"
+            "Das System verwendet vorübergehend sichere Standardwerte.\n\n"
+            "Tipp: Öffne bei Gelegenheit das 'Labor & Einstellungen' "
+            "und klicke dort auf 'Einstellungen speichern', um die neuen Werte "
+            "dauerhaft in deine config.ini zu übernehmen."
+        )
         
+        temp_root = tk.Tk()
+        temp_root.withdraw()
+        temp_root.attributes('-topmost', True)
+        messagebox.showinfo(titel, text, master=temp_root)
+        temp_root.destroy()
+        
+        # Leeren, damit die Box bei Handover-Updates im laufenden Betrieb nicht nochmal poppt
+        self.config.healed_parameters.clear()
+            
     # ---> NEU: Der Parameter show_gui=False <---
     def log(self, side, text, show_gui=False):
         timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]

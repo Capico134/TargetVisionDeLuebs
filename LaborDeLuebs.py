@@ -166,6 +166,7 @@ class LaborApp:
         self.hough_param2_var = tk.IntVar(value=4)
         # ---> NEU <---
         self.morph_kernel_var = tk.IntVar(value=5)
+        self.blur_kernel_size_var = tk.IntVar(value=7) # <--- NEU
         self.randaufschlag_cumulative_var = tk.IntVar(value=0) # <--- NEU: Default 0
         self.max_aspect_ratio_var = tk.DoubleVar(value=3.5)
         # ---> NEU <---
@@ -548,9 +549,8 @@ class LaborApp:
         self.make_slider(param_frame, "hough_param1 (Kanten):", self.hough_param1_var, 10, 100, key="hough_param1")
         self.make_slider(param_frame, "hough_param2 (Strenge):", self.hough_param2_var, 1, 20, key="hough_param2")
         tk.Label(param_frame, text="--- Bild-Filterung ---", fg="gray").pack(pady=(10, 5))
-        # ---> NEU: Der Panzer-Sticker Slider (echte Pixel, ohne odd_only-Zwang!) <---
+        self.make_slider(param_frame, "blur_kernel_size:", self.blur_kernel_size_var, 1, 31, key="blur_kernel_size", odd_only=True)
         self.make_slider(param_frame, "randaufschlag_cumulative:", self.randaufschlag_cumulative_var, 0, 10, key="randaufschlag_cumulative")
-        # ---> NEU: odd_only=True aktiviert die Sperre! <---
         self.make_slider(param_frame, "morph_kernel_size:", self.morph_kernel_var, 0, 15, key="morph_kernel_size", odd_only=True)
         self.make_slider(param_frame, "max_aspect_ratio (Sichel):", self.max_aspect_ratio_var, 1.5, 6.0, 0.1, key="max_aspect_ratio")
         tk.Label(param_frame, text="--- Score-Gewichtung ---", fg="gray").pack(pady=(10, 5))
@@ -666,21 +666,24 @@ class LaborApp:
             side = self.active_camera_var.get()
             seite_str = "links" if side == 'left' else "rechts"
             
-            if parser.has_section('Kameras'):
-                val_x = parser.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-                val_y = parser.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-                val_fisch = parser.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) 
+            # ---> NEU: Sektion sicherstellen, anstatt bei Fehlen abzubrechen! <---
+            if not parser.has_section('Kameras'):
+                parser.add_section('Kameras')
                 
-                # ---> DER FIX: original_values ZUERST aktualisieren, bevor set() den Trace auslöst! <---
-                if hasattr(self, 'orig_calib'):
-                    self.original_values[str(self.calib_x_var)] = self.orig_calib[f"{side}_x"]
-                    self.original_values[str(self.calib_y_var)] = self.orig_calib[f"{side}_y"]
-                    self.original_values[str(self.calib_fischauge_var)] = self.orig_calib.get(f"{side}_fisch", 0.0) 
+            val_x = parser.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+            val_y = parser.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+            val_fisch = parser.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) 
+            
+            # ---> DER FIX: original_values ZUERST aktualisieren, bevor set() den Trace auslöst! <---
+            if hasattr(self, 'orig_calib'):
+                self.original_values[str(self.calib_x_var)] = self.orig_calib[f"{side}_x"]
+                self.original_values[str(self.calib_y_var)] = self.orig_calib[f"{side}_y"]
+                self.original_values[str(self.calib_fischauge_var)] = self.orig_calib.get(f"{side}_fisch", 0.0) 
 
-                # Jetzt erst die GUI setzen, damit der Trace keinen falschen Alarm (Rot) schlägt
-                self.calib_x_var.set(val_x)
-                self.calib_y_var.set(val_y)
-                self.calib_fischauge_var.set(val_fisch)
+            # Jetzt erst die GUI setzen, damit der Trace keinen falschen Alarm (Rot) schlägt
+            self.calib_x_var.set(val_x)
+            self.calib_y_var.set(val_y)
+            self.calib_fischauge_var.set(val_fisch)
 
     def switch_camera(self):
         """Wird aufgerufen, wenn man zwischen Links/Rechts umschaltet."""
@@ -702,23 +705,15 @@ class LaborApp:
 
     def apply_config_to_ui(self, parser):
         """Zentrale Methode: Füttert alle UI-Slider mit den Werten eines ConfigParsers."""
-        if parser and parser.has_section('Erkennung'):
-            
+        if parser:
+            if not parser.has_section('Erkennung'):
+                parser.add_section('Erkennung')
+                
             self.original_values = {}
             
-            # 1. DIE MAGIE: Automatische Zuweisung ALLER registrierten Slider
-            for key, tk_var in self.registered_sliders.items():
-                if parser.has_option('Erkennung', key):
-                    if isinstance(tk_var, tk.BooleanVar):
-                        tk_var.set(parser.getboolean('Erkennung', key))
-                    elif isinstance(tk_var, tk.IntVar):
-                        tk_var.set(parser.getint('Erkennung', key))
-                    elif isinstance(tk_var, tk.DoubleVar):
-                        tk_var.set(parser.getfloat('Erkennung', key))
-                        
-                self.original_values[str(tk_var)] = tk_var.get()
-
-            # 2. SONDERFALL: Nur noch Legacy-Migration für Uralt-Configs (Pixel zu mm)
+            # 1. SONDERFALL: Nur noch Legacy-Migration für Uralt-Configs (Pixel zu mm)
+            # Das müssen wir VOR dem automatischen Slider-Mapping tun, damit der AuditedConfigParser 
+            # nicht voreilig den 4.5mm Fallback setzt und diese Rechnung blockiert!
             if not parser.has_option('Erkennung', 'caliber_durchmesser') and parser.has_option('Erkennung', 'caliber_radius'):
                 alt_r = parser.getfloat('Erkennung', 'caliber_radius', fallback=15.0)
                 px_x = parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0) if parser.has_section('Kameras') else 5.0
@@ -726,22 +721,42 @@ class LaborApp:
                 avg_px = (px_x + px_y) / 2.0
                 calc_durchmesser = (alt_r / avg_px) * 2.0 if avg_px > 0 else 4.5
                 
-                # Wir setzen den aus Pixeln errechneten Wert und merken ihn uns für den Mittelklick-Reset
-                self.caliber_durchmesser_var.set(round(calc_durchmesser, 2))
-                self.original_values[str(self.caliber_durchmesser_var)] = self.caliber_durchmesser_var.get()
+                # Wir schreiben den errechneten Wert AKTIV in den Parser, damit er ab jetzt existiert!
+                parser.set('Erkennung', 'caliber_durchmesser', str(round(calc_durchmesser, 2)))
+
+            # 2. DIE MAGIE: Automatische Zuweisung ALLER registrierten Slider
+            for key, tk_var in self.registered_sliders.items():
+                fallback_val = tk_var.get() # Den GUI-Standardwert als Rettungsanker nehmen
+                
+                # ---> DER FIX: Wir rufen absichtlich die get-Methoden MIT Fallback auf.
+                # Fehlt der Key, heilt der AuditedConfigParser ihn exakt in diesem Moment im RAM!
+                if isinstance(tk_var, tk.BooleanVar):
+                    val = parser.getboolean('Erkennung', key, fallback=fallback_val)
+                    tk_var.set(val)
+                elif isinstance(tk_var, tk.IntVar):
+                    val = parser.getint('Erkennung', key, fallback=fallback_val)
+                    tk_var.set(val)
+                elif isinstance(tk_var, tk.DoubleVar):
+                    val = parser.getfloat('Erkennung', key, fallback=fallback_val)
+                    tk_var.set(val)
+                        
+                self.original_values[str(tk_var)] = tk_var.get()
             
             # =================================================================
             # ---> ELA FIX: Echte Originalwerte der Kameras für den Mittelklick sichern <---
             # =================================================================
-            # Wir fangen Fehler ab, falls in uralten ZIPs die Sektion [Kameras] fehlt
-            has_cam = parser.has_section('Kameras')
+            if not parser.has_section('Kameras'):
+                parser.add_section('Kameras')
+                
+            # Da wir auch hier getfloat MIT Fallback nutzen, werden fehlende 
+            # Kamera-Parameter (wie fischaugenkorrektur) sofort vom Parser geheilt!
             self.orig_calib = {
-                'left_x': parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0) if has_cam else 5.0,
-                'left_y': parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0) if has_cam else 5.0,
-                'left_fisch': parser.getfloat('Kameras', 'fischaugenkorrektur_links', fallback=0.0) if has_cam else 0.0,
-                'right_x': parser.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0) if has_cam else 5.0,
-                'right_y': parser.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0) if has_cam else 5.0,
-                'right_fisch': parser.getfloat('Kameras', 'fischaugenkorrektur_rechts', fallback=0.0) if has_cam else 0.0
+                'left_x': parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0),
+                'left_y': parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0),
+                'left_fisch': parser.getfloat('Kameras', 'fischaugenkorrektur_links', fallback=0.0),
+                'right_x': parser.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0),
+                'right_y': parser.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0),
+                'right_fisch': parser.getfloat('Kameras', 'fischaugenkorrektur_rechts', fallback=0.0)
             }
             
             # ---> NEU: Initialen Push der Kalibrierungsdaten in die Slider erzwingen, 
@@ -1497,12 +1512,13 @@ class LaborApp:
         # ---> NEU: Den echten RAW-Diff-Wert berechnen (Modus 4) <---
         # ==========================================================
         if len(ref_img.shape) == 3 and 'clean_live_img' in locals():
-            # 1. Wir nutzen zwingend das saubere Bild OHNE gezeichnete Kreise!
-            live_blur = cv2.GaussianBlur(clean_live_img, (7, 7), 0)
+            k = self.blur_kernel_size_var.get()
             
-            # ---> DER FEHLER WAR HIER: ref_img war noch UNBLURRED! <---
+            # 1. Wir nutzen zwingend das saubere Bild OHNE gezeichnete Kreise!
+            live_blur = cv2.GaussianBlur(clean_live_img, (k, k), 0)
+            
             # Die Engine nutzt intern self.ref_left, und das ist geblurrt gespeichert.
-            ref_blur = cv2.GaussianBlur(ref_img, (7, 7), 0)
+            ref_blur = cv2.GaussianBlur(ref_img, (k, k), 0)
             
             norm_live = detector.normalize_brightness(ref_blur, live_blur)
             diff_bgr = cv2.absdiff(ref_blur, norm_live)
@@ -2021,29 +2037,39 @@ class LaborApp:
             if current_path and os.path.basename(current_path) == "Live_Tuning_Bridge.zip":
                 
                 # Wir müssen die aktuellen Masken/Diffs berechnen, um sie an TargetVision zu übergeben
-                d_config = self.package_data['config']  # <--- ELA FIX
+                d_config = self.package_data['config']  
                 d_dm = DummyDateiManager(self)
                 d_sm = StateManager(d_config, d_dm)
                 detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None)
 
-                for orig_name in self.orig_files:
-                    s = 'left' if 'left' in orig_name else 'right'
-                    
-                    # ---> DER ZWEITE FIX: Verhindert, dass alte Bilder in die tote Kamera fließen <---
-                    temp_state = d_sm.state_left if s == 'left' else d_sm.state_right
-                    if not temp_state: 
+                # =====================================================================
+                # ---> DER FIX: Referenzen, Nullpunkte & Startmasken VORAB setzen! <---
+                # =====================================================================
+                for s in ['left', 'right']:
+                    state = d_sm.state_left if s == 'left' else d_sm.state_right
+                    if not state: 
                         continue
                         
-                    detector.detect_new_shot(self.get_img(orig_name), s)
+                    ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
+                    if ref_name:
+                        detector.set_reference_image(self.get_img(ref_name), s)
+                        if getattr(self, 'original_match_data', None):
+                            meta = self.original_match_data.get('metadata', {})
+                            center_key = 'center_l' if s == 'left' else 'center_r'
+                            if meta.get(center_key):
+                                d_sm.set_nullpunkt(s, meta[center_key][0], meta[center_key][1])
                     
                     startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
                     if startmask_name:
                         startmask_gray = cv2.cvtColor(self.get_img(startmask_name), cv2.COLOR_BGR2GRAY)
-                        state = d_sm.state_left if s == 'left' else d_sm.state_right
                         state.cumulative_mask = startmask_gray
 
+                # Jetzt die Aufnahmen sauber (und nur EINMAL) durchjagen
                 for orig_name in self.orig_files:
                     s = 'left' if 'left' in orig_name else 'right'
+                    temp_state = d_sm.state_left if s == 'left' else d_sm.state_right
+                    if not temp_state: 
+                        continue
                     detector.detect_new_shot(self.get_img(orig_name), s)
 
                 # Die Bilder über den DateiManager temporär auf die Festplatte legen, damit der Exporter sie greifen kann
@@ -2108,6 +2134,10 @@ class LaborApp:
             self.root.destroy() 
 
         except Exception as e:
+            # ---> NEU: Der Fehler-Röntgenblick für die Konsole! <---
+            import traceback
+            traceback.print_exc()
+            
             messagebox.showerror("Kritischer Fehler", f"Fehler beim Übernehmen:\n{str(e)}")
         
     def update_image_display(self):

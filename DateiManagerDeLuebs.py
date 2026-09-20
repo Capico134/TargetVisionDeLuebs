@@ -300,6 +300,7 @@ farb_bonus_limit = 150.0
 farb_bonus_kurve = 2.0
 grenzwert_hough = 7.0
 abriss_min_hebel = 0.0
+blur_kernel_size = 7
 
 [Timing]
 # Bildwiederholrate/Haupttakt in Millisekunden (33 ms entspricht ca. 30 FPS).

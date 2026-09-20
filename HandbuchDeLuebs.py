@@ -59,6 +59,7 @@ PARAMETER_LEXIKON = {
     "hough_max_faktor": "Hough-Kreis-Begrenzung: Der größtmögliche Radius, nach dem der Algorithmus sucht.",
     "hough_param1": "Kanten-Erkennung für unsaubere Löcher. Höhere Werte ignorieren weiche Schatten besser.",
     "hough_param2": "Kreis-Strenge. Niedrigere Werte finden leichter Kreise, produzieren aber eventuell mehr Fehlalarme.",
+    "blur_kernel_size": "Weichzeichner-Stärke (muss ungerade sein: 3, 5, 7, 9...). Glättet das Bild vor der Analyse. Hohe Werte (z.B. 11) reduzieren Bildrauschen und glätten ausgefranste Kanten, können aber winzige Löcher 'wegbügeln'. Niedrige Werte (z.B. 3) sind präziser, erfordern aber eine absolut scharfe und rauscharme Kamera.",
     "morph_kernel_size": "Filter-Größe: Schließt kleine Lücken in stark ausgefransten Rissen künstlich, bevor die eigentliche Fläche und das Zentrum berechnet werden.",
     "max_aspect_ratio": "Anti-Verschiebungs-Filter: Extrem flache, in die Länge gezogene Risse (z.B. durch Papierverschiebung) werden ab diesem Seitenverhältnis ignoriert.",
     "gesamt_anteil_am_200score": "Gewichtung: Bestimmt, wie stark das rohe, ungefilterte Diff-Bild gegenüber dem neu gestanzten Loch bei der mathematischen Punktebewertung (0-200 Score) gewichtet wird.",

@@ -63,6 +63,8 @@ class TargetDetector:
         self.px_y_links = self.config.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0)
         self.px_x_rechts = self.config.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0)
         self.px_y_rechts = self.config.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0)
+        
+        self.blur_kernel_size = self.config.getint('Erkennung', 'blur_kernel_size', fallback=7)
 
     def save_debug_image(self, name, image):
         # Der Live-Manager schiebt das Bild in die Warteschlange.
@@ -168,7 +170,9 @@ class TargetDetector:
         return feedback_data
 
     def set_reference_image(self, frame, side):
-        bgr_blur = cv2.GaussianBlur(frame, (7, 7), 0)
+        k = self.blur_kernel_size
+        bgr_blur = cv2.GaussianBlur(frame, (k, k), 0)
+        
         if side == 'left': self.ref_left = bgr_blur
         else: self.ref_right = bgr_blur
         self.save_debug_image(f"referenz_{side}", frame)
@@ -194,17 +198,19 @@ class TargetDetector:
         state = self.sm.state_left if side == 'left' else self.sm.state_right
         reference_bgr = self.ref_left if side == 'left' else self.ref_right
         
+        # 1. ERST auf None prüfen:
         if reference_bgr is None or frame is None: 
-            self.log(side, "Fehler: Keine Referenz vorhanden!")
+            self.log(side, "Fehler: Keine Referenz oder kein Frame vorhanden!")
             return False
         
-        # ---> NEU: Schutzschild gegen heimliche Crop-Änderungen <---
+        # 2. DANN erst auf die Bilddimensionen zugreifen:
         if reference_bgr.shape != frame.shape:
             self.log(side, "⚠️ Bildgröße hat sich geändert (Crop)! Erneuere Referenz automatisch...", True)
             self.set_reference_image(frame, side)
             return False
         
-        current_bgr_blur = cv2.GaussianBlur(frame, (7, 7), 0) 
+        k = self.blur_kernel_size
+        current_bgr_blur = cv2.GaussianBlur(frame, (k, k), 0) 
         current_normalized = self.normalize_brightness(reference_bgr, current_bgr_blur)
         
         #ALTE FARBERKENNUNG
