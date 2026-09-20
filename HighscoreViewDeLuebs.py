@@ -257,13 +257,15 @@ class MatchDetailWindow(tk.Toplevel):
         
         for hit in self.timeline:
             if hit['s'] == side:
-                cx = hit['x'] * self.zoom_factor
-                cy = hit['y'] * self.zoom_factor
+                # ---> DER FIX: Korrektes Runden vor der Integer-Wandlung für Subpixel-Präzision <---
+                cx = int(round(hit['x'] * self.zoom_factor))
+                cy = int(round(hit['y'] * self.zoom_factor))
                 score = hit.get('score', 0.0)
                 
-                r = base_r * self.zoom_factor 
+                # Auch den Radius sauber runden
+                r = int(round(base_r * self.zoom_factor))
+                
                 draw.ellipse((cx-r, cy-r, cx+r, cy+r), outline="red", width=4)
-                # ... Rest des Zeichnens ...
                 
                 id_str = str(idx)
                 
@@ -275,9 +277,10 @@ class MatchDetailWindow(tk.Toplevel):
                 except AttributeError:
                     tw, th = draw.textsize(id_str, font=font)
                 
-                # Exakt mittig setzen
-                text_x = cx - (tw / 2)
-                text_y = cy - (th / 2) - int(2 * self.zoom_factor) # Leichter optischer Ausgleich
+                # Exakt mittig setzen und auch hier korrekt runden
+                text_x = int(round(cx - (tw / 2.0)))
+                # Leichter optischer Ausgleich
+                text_y = int(round(cy - (th / 2.0) - (2.0 * self.zoom_factor))) 
                 
                 # Schwarzer Outline-Schatten für Kontrast auf hellen UND dunklen Löchern
                 outline_color = "black"
@@ -292,48 +295,67 @@ class MatchDetailWindow(tk.Toplevel):
                 idx += 1
 
     def on_tree_select(self, event, side):
-        # ---> NEU: Das Schutzschild gegen den Ping-Pong-Absturz! <---
-        if getattr(self, '_ignore_selection', False):
-            return
-
-        if self.orig_img_l: self.canvas_l.delete("highlight")
-        if self.orig_img_r: self.canvas_r.delete("highlight")
-
-        # Wir schalten das Schutzschild ein, BEVOR wir die andere Tabelle anfassen
-        self._ignore_selection = True
         try:
-            # Selektion bereinigen (Wer in Tabelle L klickt, hebt R auf)
-            if side == 'l':
-                self.tree_r.selection_remove(self.tree_r.selection())
-                tree = self.tree_l
-            elif side == 'r':
-                self.tree_l.selection_remove(self.tree_l.selection())
-                tree = self.tree_r
-            else:
+            # ---> NEU: Das Schutzschild gegen den Ping-Pong-Absturz! <---
+            if getattr(self, '_ignore_selection', False):
                 return
-        finally:
-            # Schutzschild wieder aus, egal was passiert
-            self._ignore_selection = False
 
-        selected = tree.selection()
-        if not selected: return
+            if self.orig_img_l: self.canvas_l.delete("highlight")
+            if self.orig_img_r: self.canvas_r.delete("highlight")
 
-        # Timeline-Index aus der versteckten IID auslesen!
-        timeline_idx = int(selected[0])
-        if timeline_idx < 0 or timeline_idx >= len(self.timeline): return
+            # Wir schalten das Schutzschild ein, BEVOR wir die andere Tabelle anfassen
+            self._ignore_selection = True
+            try:
+                # Selektion bereinigen (Wer in Tabelle L klickt, hebt R auf)
+                if side == 'l':
+                    self.tree_r.selection_remove(self.tree_r.selection())
+                    tree = self.tree_l
+                elif side == 'r':
+                    self.tree_l.selection_remove(self.tree_l.selection())
+                    tree = self.tree_r
+                else:
+                    return
+            finally:
+                # Schutzschild wieder aus, egal was passiert
+                self._ignore_selection = False
 
-        hit = self.timeline[timeline_idx]
-        
-        cx = hit['x'] * self.zoom_factor
-        cy = hit['y'] * self.zoom_factor
-        
-        # ---> NEU: Holt den perfekten Radius für die jeweilige Seite! <---
-        base_r = self.radius_left if hit['s'] == 'l' else self.radius_right
-        r = base_r * self.zoom_factor
-        
-        canvas = self.canvas_l if hit['s'] == 'l' else self.canvas_r
-        if canvas:
-            canvas.create_oval(cx - r, cy - r, cx + r, cy + r, outline="#00ffff", width=7, tags="highlight")
+            selected = tree.selection()
+            if not selected: return
+
+            # Timeline-Index aus der versteckten IID auslesen!
+            timeline_idx = int(selected[0])
+            if timeline_idx < 0 or timeline_idx >= len(self.timeline): return
+
+            hit = self.timeline[timeline_idx]
+            
+            # ---> MIT RUNDUNGS-FIX AUS DEM VORHERIGEN SCHRITT! <---
+            cx = int(round(hit['x'] * self.zoom_factor))
+            cy = int(round(hit['y'] * self.zoom_factor))
+            
+            # Holt den perfekten Radius für die jeweilige Seite
+            base_r = self.radius_left if hit['s'] == 'l' else self.radius_right
+            r = int(round(base_r * self.zoom_factor))
+            
+            canvas = self.canvas_l if hit['s'] == 'l' else self.canvas_r
+            if canvas:
+                canvas.create_oval(cx - r, cy - r, cx + r, cy + r, outline="#00ffff", width=7, tags="highlight")
+                
+        except Exception as e:
+            import traceback
+            err_msg = traceback.format_exc()
+            
+            # 1. Sofort als "Blackbox" auf die Festplatte retten (falls die GUI komplett stirbt)
+            try:
+                with open("crash_log_tabelle.txt", "w", encoding="utf-8") as f:
+                    f.write(err_msg)
+            except:
+                pass
+                
+            # 2. In die Konsole drucken
+            print(err_msg)
+            
+            # 3. Messagebox für den Anwender aufpoppen lassen
+            messagebox.showerror("Kritischer Fehler", f"Absturz in der Tabelle abgefangen!\nLog wurde als 'crash_log_tabelle.txt' gespeichert.\n\nFehler:\n{str(e)}")
 
 class HighscoreViewer:
     def __init__(self, root):

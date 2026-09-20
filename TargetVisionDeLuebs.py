@@ -490,9 +490,10 @@ class TargetTracker:
                 if shot['side'] == 'right' and self.nutze_kamera_links:
                     x += self.w_left_displayed
                     
-                # ---> OFFSET ADDIEIREN! <---
-                final_x = int(x * self.scale_x) + self.pad_x
-                final_y = int(y * self.scale_y) + self.pad_y
+                # ---> OFFSET ADDIEREN! <---
+                # VORHER: final_x = int(x * self.scale_x) + self.pad_x
+                final_x = int(round(x * self.scale_x)) + self.pad_x
+                final_y = int(round(y * self.scale_y)) + self.pad_y
                 
                 color = (0, 0, 255) if (shot.get('is_new', False) and blink_state) else (255, 100, 0)
                 
@@ -541,18 +542,18 @@ class TargetTracker:
                     offset_x = 0 if s == 'left' else scaled_w_left
                     
                     # ---> NEU: self.pad_x und self.pad_y auf die Zentren addieren! <---
-                    fb_cx = int(feedback['cx'] * self.scale_x) + offset_x + getattr(self, 'pad_x', 0)
-                    fb_cy = int(feedback['cy'] * self.scale_y) + getattr(self, 'pad_y', 0)
+                    fb_cx = int(round(feedback['cx'] * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
+                    fb_cy = int(round(feedback['cy'] * self.scale_y)) + getattr(self, 'pad_y', 0)
                     
-                    fb_ideal_rx = int(feedback['ideal_rx'] * self.scale_x)
-                    fb_ideal_ry = int(feedback['ideal_ry'] * self.scale_y)
+                    fb_ideal_rx = int(round(feedback['ideal_rx'] * self.scale_x))
+                    fb_ideal_ry = int(round(feedback['ideal_ry'] * self.scale_y))
                     
                     # ---> NEU: Auch beim roten Fehler-Kreis den Offset addieren! <---
-                    fb_red_cx = int(feedback['red_cx'] * self.scale_x) + offset_x + getattr(self, 'pad_x', 0)
-                    fb_red_cy = int(feedback['red_cy'] * self.scale_y) + getattr(self, 'pad_y', 0)
+                    fb_red_cx = int(round(feedback['red_cx'] * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
+                    fb_red_cy = int(round(feedback['red_cy'] * self.scale_y)) + getattr(self, 'pad_y', 0)
                     
-                    fb_red_rx = int(feedback['red_rx'] * self.scale_x)
-                    fb_red_ry = int(feedback['red_ry'] * self.scale_y)
+                    fb_red_rx = int(round(feedback['red_rx'] * self.scale_x))
+                    fb_red_ry = int(round(feedback['red_ry'] * self.scale_y))
 
                     # =========================================================================
                     # ---> ELA HILFSFUNKTION: Gestrichelte Ellipsen zeichnen (1/3 Linie, 2/3 Lücke) <---
@@ -612,8 +613,8 @@ class TargetTracker:
                 use_cam = self.nutze_kamera_links if s == 'left' else self.nutze_kamera_rechts
                 if use_cam and fb:
                     offset_x = 0 if s == 'left' else scaled_w_left
-                    cx = int(fb['cx'] * self.scale_x) + offset_x + getattr(self, 'pad_x', 0)
-                    cy = int(fb['cy'] * self.scale_y) + getattr(self, 'pad_y', 0)
+                    cx = int(round(fb['cx'] * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
+                    cy = int(round(fb['cy'] * self.scale_y)) + getattr(self, 'pad_y', 0)
                     
                     aktive_scheibe = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
                     targets = self.dm.load_targets()
