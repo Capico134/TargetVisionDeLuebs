@@ -379,8 +379,8 @@ class StateManager:
                 "winner_method": str(s.get('winner_method', 'Unbekannt')),
                 
                 # ---> NEU: Auch die Visualisierungs-Punkte für Abrisskanten erhalten 4 Nachkommastellen <---
-                "base_pos": [round(float(s.get('base_pos', s['pos'])[0]), 4), round(float(s.get('base_pos', s['pos'])[1]), 4)],
-                "end_pos": [round(float(s.get('end_pos', s['pos'])[0]), 4), round(float(s.get('end_pos', s['pos'])[1]), 4)],
+                #"base_pos": [round(float(s.get('base_pos', s['pos'])[0]), 4), round(float(s.get('base_pos', s['pos'])[1]), 4)],
+                #"end_pos": [round(float(s.get('end_pos', s['pos'])[0]), 4), round(float(s.get('end_pos', s['pos'])[1]), 4)],
                 
                 "edited": bool(s.get('is_edited', False))
             })

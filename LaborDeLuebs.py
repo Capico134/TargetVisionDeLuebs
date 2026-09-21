@@ -1789,7 +1789,7 @@ class LaborApp:
                 hy = int(round(s['y']))
                 # Wieder zurück auf knackig scharfe Standard-Pixel ohne Kantenglättung!
                 cv2.circle(live_img, (hx, hy), r_offiziell, (0, 255, 255), 1)
-                cv2.circle(live_img, (hx, hy), 1, (0, 255, 255), -1)
+                cv2.circle(live_img, (hx, hy), 1, (0, 255, 255), 0)
         
         # --- LAYER 3: Neue Treffer (Rot - Immer ganz oben!) ---
         for shot in d_sm.shots:
