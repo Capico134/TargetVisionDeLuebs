@@ -1773,33 +1773,31 @@ class LaborApp:
             # Smart Alignment
             aligned = self.align_shots(orig_shots_side, curr_shots_side, r_erkennung * 2.5)
             
-            last_valid_align_idx = -1
-            for idx, (o_idx, c_idx, dist) in enumerate(aligned):
-                if c_idx is not None:
-                    last_valid_align_idx = idx
-                    
+            # =========================================================================
+            # ---> DER ELA-FIX: Granulare Filterung statt blindem Index-Schnitt! <---
+            # Wir prüfen jedes Paar einzeln und filtern knallhart nach der Bildnummer.
+            # =========================================================================
             shots_to_draw = []
-            if last_valid_align_idx >= 0:
-                for idx in range(last_valid_align_idx + 1):
-                    o_idx = aligned[idx][0]
-                    if o_idx is not None:
+            for o_idx, c_idx, dist in aligned:
+                if o_idx is not None and c_idx is not None:
+                    curr_shot = curr_shots_side[c_idx]
+                    frame_num = curr_shot.get('labor_frame_num', 0)
+                    
+                    # Nur zeichnen, wenn dieser Schuss in oder vor dem aktuell betrachteten Bild stattfand!
+                    if frame_num <= self.current_index:
                         shots_to_draw.append(orig_shots_side[o_idx])
-            else:
-                shots_to_draw = orig_shots_side[:target_idx + 1]
             
-            # ---> NEU: Trefferliste für die hochauflösende GUI-Ebene merken <---
+            # Trefferliste für die hochauflösende GUI-Ebene merken
             self.last_orig_shots_to_draw = shots_to_draw 
             
             for s in shots_to_draw:
                 cv2.circle(live_img, (int(round(s['x'])), int(round(s['y']))), r_offiziell, (0, 255, 255), 1)
-
+        
         # --- LAYER 3: Neue Treffer (Rot - Immer ganz oben!) ---
         for shot in d_sm.shots:
             if shot['side'] == side and shot.get('is_new', False):
                 draw_pos = (int(round(shot['pos'][0])), int(round(shot['pos'][1])))
                 cv2.circle(live_img, draw_pos, r_erkennung, (0, 0, 255), 1)
-        
-        
         
         
         # ====================================================================
