@@ -1773,25 +1773,23 @@ class LaborApp:
             # Smart Alignment
             aligned = self.align_shots(orig_shots_side, curr_shots_side, r_erkennung * 2.5)
             
-            # =========================================================================
-            # ---> DER ELA-FIX: Granulare Filterung statt blindem Index-Schnitt! <---
-            # Wir prüfen jedes Paar einzeln und filtern knallhart nach der Bildnummer.
-            # =========================================================================
             shots_to_draw = []
             for o_idx, c_idx, dist in aligned:
                 if o_idx is not None and c_idx is not None:
                     curr_shot = curr_shots_side[c_idx]
                     frame_num = curr_shot.get('labor_frame_num', 0)
                     
-                    # Nur zeichnen, wenn dieser Schuss in oder vor dem aktuell betrachteten Bild stattfand!
                     if frame_num <= self.current_index:
                         shots_to_draw.append(orig_shots_side[o_idx])
             
-            # Trefferliste für die hochauflösende GUI-Ebene merken
             self.last_orig_shots_to_draw = shots_to_draw 
             
             for s in shots_to_draw:
-                cv2.circle(live_img, (int(round(s['x'])), int(round(s['y']))), r_offiziell, (0, 255, 255), 1)
+                hx = int(round(s['x']))
+                hy = int(round(s['y']))
+                # Wieder zurück auf knackig scharfe Standard-Pixel ohne Kantenglättung!
+                cv2.circle(live_img, (hx, hy), r_offiziell, (0, 255, 255), 1)
+                cv2.circle(live_img, (hx, hy), 1, (0, 255, 255), -1)
         
         # --- LAYER 3: Neue Treffer (Rot - Immer ganz oben!) ---
         for shot in d_sm.shots:
@@ -2235,8 +2233,8 @@ class LaborApp:
                 new_match_data["timeline"].append({
                     "t": float(len(new_match_data["timeline"]) + 1.0), 
                     "s": side_char,
-                    "x": int(s['pos'][0]),
-                    "y": int(s['pos'][1]),
+                    "x": round(float(s['pos'][0]), 4),
+                    "y": round(float(s['pos'][1]), 4),
                     "a": round(float(s['area']), 1),
                     "score": float(s.get('score', 0.0)),
                     "cv_score": round(float(s.get('cv_score', 0.0)), 1),
@@ -2424,12 +2422,13 @@ class LaborApp:
                     new_match_data["timeline"].append({
                         "t": float(len(new_match_data["timeline"]) + 1.0),
                         "s": side_char,
-                        "x": int(s['pos'][0]),
-                        "y": int(s['pos'][1]),
+                        # ---> NEU: Mit 4 Nachkommastellen statt int() <---
+                        "x": round(float(s['pos'][0]), 4),
+                        "y": round(float(s['pos'][1]), 4),
                         "a": round(float(s['area']), 1),
                         "score": float(s.get('score', 0.0)),
                         "cv_score": round(float(s.get('cv_score', 0.0)), 1),
-                        "winner_method": str(s.get('winner_method', 'Unbekannt')), # <--- NEU
+                        "winner_method": str(s.get('winner_method', 'Unbekannt')),
                         "edited": False
                     })
                 

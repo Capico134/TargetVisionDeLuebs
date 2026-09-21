@@ -351,11 +351,14 @@ class StateManager:
             "erkennungs_methode": str(self.config.get('Erkennung', 'erkennungs_methode')),
             "match_id": int(self.current_match_id),
             "version": str(self.dm.get_current_version()),
-            "festplattenspeicher_gb": free_space_gb, # <--- NEU IM JSON!
+            "festplattenspeicher_gb": free_space_gb,
             "start_zeit": start_zeit_str,
             "timestamp": datetime.now().strftime("%d.%m.%y %H:%M:%S"),
-            "center_l": [int(center_l_raw[0]), int(center_l_raw[1])] if (cam_l and center_l_raw) else None,
-            "center_r": [int(center_r_raw[0]), int(center_r_raw[1])] if (cam_r and center_r_raw) else None,
+            
+            # ---> NEU: Zentrum-Koordinaten mit 4 Nachkommastellen (verhindert Ring-Drift beim Neuladen) <---
+            "center_l": [round(float(center_l_raw[0]), 4), round(float(center_l_raw[1]), 4)] if (cam_l and center_l_raw) else None,
+            "center_r": [round(float(center_r_raw[0]), 4), round(float(center_r_raw[1]), 4)] if (cam_r and center_r_raw) else None,
+            
             "fortsetzung_links": bool(self.state_left.is_fortsetzung) if (cam_l and self.state_left) else False,
             "fortsetzung_rechts": bool(self.state_right.is_fortsetzung) if (cam_r and self.state_right) else False
         }
@@ -365,14 +368,20 @@ class StateManager:
             timeline.append({
                 "t": round(float(s['t_mono']), 3),
                 "s": "l" if s['side'] == 'left' else "r",
-                "x": round(float(s['pos'][0]), 2),
-                "y": round(float(s['pos'][1]), 2),
+                
+                # ---> NEU: Treffer-Koordinaten mit 4 Nachkommastellen für perfekte Labor-Deckung <---
+                "x": round(float(s['pos'][0]), 4),
+                "y": round(float(s['pos'][1]), 4),
+                
                 "a": round(float(s['area']), 1),
                 "score": float(s.get('score', 0.0)),
                 "cv_score": round(float(s.get('cv_score', 0.0)), 1),
                 "winner_method": str(s.get('winner_method', 'Unbekannt')),
-                "base_pos": [round(float(s.get('base_pos', s['pos'])[0]), 2), round(float(s.get('base_pos', s['pos'])[1]), 2)],
-                "end_pos": [round(float(s.get('end_pos', s['pos'])[0]), 2), round(float(s.get('end_pos', s['pos'])[1]), 2)],
+                
+                # ---> NEU: Auch die Visualisierungs-Punkte für Abrisskanten erhalten 4 Nachkommastellen <---
+                "base_pos": [round(float(s.get('base_pos', s['pos'])[0]), 4), round(float(s.get('base_pos', s['pos'])[1]), 4)],
+                "end_pos": [round(float(s.get('end_pos', s['pos'])[0]), 4), round(float(s.get('end_pos', s['pos'])[1]), 4)],
+                
                 "edited": bool(s.get('is_edited', False))
             })
 
