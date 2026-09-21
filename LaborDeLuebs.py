@@ -136,6 +136,10 @@ class LaborApp:
         self.root = root
         self.root.title("Labor & Einstellungen")
         
+        # ---> NEU: ELA-Türsteher (Zeichenfilter) für alle Textfelder registrieren <---
+        self.vcmd_float = (self.root.register(self.validate_float_chars), '%P')
+        self.vcmd_int = (self.root.register(self.validate_int_chars), '%P')
+        
         # ---> NEU: Fenstergröße dynamisch an die Windows-Skalierung (z.B. 200%) anpassen <---
         # 96 DPI ist der Standardwert (100%). Liefert der Bildschirm mehr, wächst das Fenster proportional mit.
         skalierungs_faktor = self.root.winfo_fpixels('1i') / 96.0 
@@ -198,16 +202,23 @@ class LaborApp:
         self.registered_sliders = {}
         
         self.setup_ui()
+
+    def validate_float_chars(self, P):
+        """Erlaubt nur Ziffern, Punkt, Minus, Plus und E (für wissenschaftliche Notation)"""
+        return all(c in "0123456789+-.eE" for c in P)
+        
+    def validate_int_chars(self, P):
+        """Erlaubt nur Ziffern, Plus und Minus"""
+        return all(c in "0123456789+-" for c in P)
         
     # ---> ELA FIX: Optionaler tooltip_key Parameter hinzugefügt <---
     def make_slider(self, parent, label_text, tk_var, from_, to_, res=1, section="Erkennung", key=None, odd_only=False, tooltip_key=None):
         """Hilfsfunktion für Slider mit direkter Eingabe, Reset und Live-Data-Binding"""
-        # Jeder Slider meldet seine Variable automatisch beim System an!
         if key:
             self.registered_sliders[key] = tk_var  
             
         if odd_only:
-            tk_var._last_val = tk_var.get() # Den Startwert als Basis merken
+            tk_var._last_val = tk_var.get() 
             
         frame = tk.Frame(parent)
         frame.pack(fill=tk.X, pady=2)
@@ -215,56 +226,67 @@ class LaborApp:
         lbl = tk.Label(frame, text=label_text, width=25, anchor="w")
         lbl.pack(side=tk.LEFT)
         
-        # ---> NEU: Tooltip aus dem Handbuch anhängen (Nutzt tooltip_key, wenn vorhanden, sonst key) <---
         t_key = tooltip_key if tooltip_key else key
         if t_key and t_key in PARAMETER_LEXIKON:
             ToolTip(lbl, PARAMETER_LEXIKON[t_key])
         
-        # ---> DER FIX: Wir trennen das Textfeld von der strengen Slider-Variable! <---
-        entry = tk.Entry(frame, width=8, justify="right")
+        # ELA-Türsteher anheften
+        is_float = isinstance(tk_var, tk.DoubleVar)
+        vcmd = self.vcmd_float if is_float else self.vcmd_int
+        
+        entry = tk.Entry(frame, width=8, justify="right", validate="key", validatecommand=vcmd)
         entry.pack(side=tk.RIGHT, padx=(5, 0))
         entry.insert(0, str(tk_var.get()))
         
         # =====================================================================
-        # ---> DER FIX: Slider-Logik komplett vom Trace entkoppelt! <---
+        # ---> DER ELA-FIX: Völlige Entkopplung von Slider und Variable! <---
         # =====================================================================
         def scale_cmd(val_str):
-            if odd_only:
-                try:
-                    v = int(float(val_str))
+            # Wenn wir den Slider per Code bewegen (sync_entry), ignorieren wir diesen Befehl!
+            if getattr(scale, '_ignore_cmd', False):
+                return
+                
+            try:
+                v = int(float(val_str)) if isinstance(tk_var, tk.IntVar) else float(val_str)
+                    
+                if odd_only and isinstance(tk_var, tk.IntVar):
                     if v > 0 and v % 2 == 0:
-                        # Rausfinden, in welche Richtung der Slider bewegt wurde!
                         last = getattr(tk_var, '_last_val', v)
-                        if v < last:
-                            new_v = v - 1 # Nach links gezogen
-                        else:
-                            new_v = v + 1 # Nach rechts gezogen
-                        tk_var.set(new_v)
+                        v = v - 1 if v < last else v + 1
                         
-                    tk_var._last_val = tk_var.get()
-                except ValueError:
-                    pass
-            self.on_param_change()
-            
-        scale = tk.Scale(frame, from_=from_, to_=to_, resolution=res, orient=tk.HORIZONTAL, 
-                         variable=tk_var, command=scale_cmd)
+                    # Den Slider optisch auf die ungerade Zahl nachziehen
+                    scale._ignore_cmd = True
+                    scale.set(v)
+                    scale._ignore_cmd = False
+                    
+                # Nur updaten, wenn sich WIRKLICH was geändert hat (verhindert Endlosschleifen)
+                if tk_var.get() != v:
+                    tk_var.set(v)
+                    if odd_only:
+                        tk_var._last_val = v
+                    self.on_param_change()
+            except ValueError:
+                pass
+
+        # ACHTUNG: Der Parameter variable=tk_var wurde hier absichtlich entfernt!
+        # ---> NEU: showvalue=0 schaltet die redundante, rundende Zahl über dem Slider ab! <---
+        scale = tk.Scale(frame, from_=from_, to_=to_, resolution=res, orient=tk.HORIZONTAL, command=scale_cmd, showvalue=0)
+        
+        # Slider beim Start einmalig auf den Variablen-Wert eichen
+        scale._ignore_cmd = True
+        scale.set(tk_var.get())
+        scale._ignore_cmd = False
+        
         scale.pack(side=tk.RIGHT, fill=tk.X, expand=True)
         
-        # ---> NEU: Wert erst bei Enter oder Klick woanders übernehmen <---
         def apply_entry_val(event=None):
             try:
-                # Prüfen, ob es eine Kommazahl oder Ganzzahl sein soll
-                if isinstance(tk_var, tk.IntVar):
-                    val = int(float(entry.get()))
-                else:
-                    val = float(entry.get())
+                val = int(float(entry.get())) if isinstance(tk_var, tk.IntVar) else float(entry.get())
                     
-                # Auch bei manueller Eingabe die geraden Zahlen verbieten!
                 if odd_only and isinstance(tk_var, tk.IntVar):
                     if val > 0 and val % 2 == 0:
-                        val += 1 # Eingetippte gerade Zahlen einfach aufrunden
+                        val += 1 
                         
-                # Nur neu berechnen, wenn sich die Zahl WIRKLICH geändert hat!
                 if val != tk_var.get():
                     tk_var.set(val)
                     if odd_only:
@@ -272,41 +294,39 @@ class LaborApp:
                     self.on_param_change(force=True)
                     
             except ValueError:
-                pass # Wenn jemand "abc" tippt, ignorieren wir es
+                pass 
                 
-            # Nach der Übernahme formatieren wir das Feld wieder sauber 
             entry.delete(0, tk.END)
             entry.insert(0, str(tk_var.get()))
 
-        # Löst aus, wenn Enter gedrückt wird oder das Textfeld den Fokus verliert
+            if event and hasattr(event, 'keysym') and event.keysym == 'Return':
+                self.root.focus_set()
+
         entry.bind('<Return>', apply_entry_val)
         entry.bind('<FocusOut>', apply_entry_val)
         
-        # =====================================================================
-        # ---> NEU: Der visuelle "Dirty-Marker" (Färbt das Label rot bei Änderung) <---
-        # =====================================================================
         def sync_entry(*args):
-            # 1. Textfeld aktualisieren (falls der Nutzer nicht gerade tippt)
             if self.root.focus_get() != entry:
                 entry.delete(0, tk.END)
                 entry.insert(0, str(tk_var.get()))
                 
-            # 2. Prüfen, ob der Wert vom Original abweicht und das Label entsprechend färben!
+            # ---> NEU: Den Slider stumm nachführen, ohne dass er zurückschießt! <---
+            scale._ignore_cmd = True
+            scale.set(tk_var.get())
+            scale._ignore_cmd = False
+                
             var_key = str(tk_var)
             if hasattr(self, 'original_values') and var_key in self.original_values:
-                # Wir vergleichen als Strings, um Probleme mit Fließkomma-Ungenauigkeiten zu vermeiden
                 if str(tk_var.get()) != str(self.original_values[var_key]):
-                    lbl.config(fg="#e74c3c", font=("Segoe UI", 9, "bold")) # Sattes Rot und Fett
-                    # Ein Sternchen an den Text anhängen, falls noch keines da ist
+                    lbl.config(fg="#e74c3c", font=("Segoe UI", 9, "bold"))
                     if not lbl.cget("text").startswith("*"):
                         lbl.config(text=f"* {label_text}")
                 else:
-                    lbl.config(fg="black", font=("Segoe UI", 9, "normal")) # Zurück auf Standard
+                    lbl.config(fg="black", font=("Segoe UI", 9, "normal")) 
                     lbl.config(text=label_text)
                 
         tk_var.trace_add("write", sync_entry)
 
-        # ---> NEU: Der Trace-Spion (Live-Data-Binding für die Config) <---
         if key:
             def sync_to_config(*args):
                 if getattr(self, 'package_data', None) and self.package_data.get('config'):
@@ -317,8 +337,8 @@ class LaborApp:
             
             tk_var.trace_add("write", sync_to_config)
 
-        # ---> Mittelklick-Reset <---
         def reset_to_original(event):
+            self.root.focus_set()
             var_key = str(tk_var)
             if hasattr(self, 'original_values') and var_key in self.original_values:
                 tk_var.set(self.original_values[var_key])
@@ -670,6 +690,18 @@ class LaborApp:
                        variable=self.show_orig_hits_var, fg="#f1c40f", 
                        command=lambda: self.on_param_change(force=True)).pack(anchor=tk.W, pady=(5, 0))
 
+        # =========================================================================
+        # ---> NEU: Der globale Anti-Fokus-Trap! <---
+        # =========================================================================
+        def release_focus(event):
+            # Wenn das angeklickte Element KEIN Textfeld ist -> Fokus zurücksetzen!
+            if not isinstance(event.widget, tk.Entry) and not isinstance(event.widget, ttk.Combobox):
+                self.root.focus_set()
+        # bind_all reagiert auf JEDEN Klick im gesamten Fenster (Bilder, Labels, Hintergrund)
+        self.root.bind_all('<Button-1>', release_focus, add="+")
+        # Zusätzlich: Mit Escape den Cursor jederzeit manuell aus Textfeldern befreien
+        self.root.bind_all('<Escape>', lambda e: self.root.focus_set(), add="+")
+
     def update_calib_sliders(self):
         """Holt die echten Config-Werte der aktuell aktiven Kamera in die GUI-Slider"""
         if getattr(self, 'package_data', None) and self.package_data.get('config'):
@@ -908,10 +940,15 @@ class LaborApp:
             self.process_and_display()
 
     def safe_prev_shot(self, event=None):
-        if self.root.focus_get() != self.entry_shot_jump: self.prev_shot()
+        # ELA-Schutz: Wenn wir in JEDWEDEM Textfeld/Dropdown sind, ignorieren wir die Pfeiltasten!
+        if isinstance(self.root.focus_get(), (tk.Entry, ttk.Combobox)):
+            return
+        self.prev_shot()
 
     def safe_next_shot(self, event=None):
-        if self.root.focus_get() != self.entry_shot_jump: self.next_shot()
+        if isinstance(self.root.focus_get(), (tk.Entry, ttk.Combobox)):
+            return
+        self.next_shot()
 
     def first_shot(self):
         if self.current_index > 0:
@@ -937,8 +974,8 @@ class LaborApp:
 
     def nudge_center(self, event):
         """Verschiebt den Mittelpunkt im RAM und triggert eine vollständige Neuberechnung."""
-        # 1. Schutz: Wenn der Nutzer gerade in ein Textfeld klickt, ignorieren wir WASD!
-        if isinstance(self.root.focus_get(), tk.Entry):
+        # 1. Schutz einheitlich mit den Pfeiltasten machen:
+        if isinstance(self.root.focus_get(), (tk.Entry, ttk.Combobox)):
             return
             
         if not getattr(self, 'original_match_data', None):
@@ -1239,8 +1276,9 @@ class LaborApp:
 
         is_left = (x < self.current_img_w)
         raw_x = x if is_left else (x - self.current_img_w)
-        real_x = int(raw_x / self.current_scale)
-        real_y = int(y / self.current_scale)
+        # ---> NEU: Echte Subpixel-Präzision durch das Zoomen nutzen! <---
+        real_x = round(raw_x / self.current_scale, 4)
+        real_y = round(y / self.current_scale, 4)
         
         self.calib_points.append((real_x, real_y))
         
@@ -1408,9 +1446,10 @@ class LaborApp:
         )
         
         def apply_values():
-             self.calib_x_var.set(round(px_mm_x, 2))
-             self.calib_y_var.set(round(px_mm_y, 2))
-             self.calib_fischauge_var.set(round(avg_korrektur, 4))
+             # ---> NEU: ELA-Präzision (3 und 5 Nachkommastellen statt 2 und 4) <---
+             self.calib_x_var.set(round(px_mm_x, 3))
+             self.calib_y_var.set(round(px_mm_y, 3))
+             self.calib_fischauge_var.set(round(avg_korrektur, 5))
              
              # Erzwingt den Neuaufbau der Bilder
              self.on_param_change(force=True)
@@ -2770,7 +2809,6 @@ class LaborApp:
         # ---> NEU: Dynamischer ELA-Layer für den Kalibrierungs-Assistenten <---
         # =========================================================================
         if getattr(self, 'calib_mode_active', False) and hasattr(self, 'calib_points'):
-            side = self.active_camera_var.get()
             for pt in self.calib_points:
                 # pt[0] und pt[1] sind die ECHTEN, unskalierten Bildkoordinaten
                 scaled_x = round(pt[0] * self.current_scale)
@@ -2780,11 +2818,8 @@ class LaborApp:
                 final_x = scaled_x + getattr(self, 'pad_x', 0)
                 final_y = scaled_y + getattr(self, 'pad_y', 0)
                 
-                # Wenn wir im rechten Bild kalibrieren, um die linke Bildbreite nach rechts rücken
-                if side == 'right':
-                    final_x += self.current_img_w
-                    
                 # Leuchtend roter Punkt mit leichtem schwarzen Rand für Kontrast
+                # (Wird immer auf der linken Bildhälfte gezeichnet)
                 cv2.circle(combined, (final_x, final_y), 4, (0, 0, 0), -1)
                 cv2.circle(combined, (final_x, final_y), 3, (0, 0, 255), -1)
         
@@ -2931,14 +2966,16 @@ class LaborApp:
                 # 3. FLOAT (Hat einen Punkt und besteht sonst aus Zahlen/Minus)
                 elif '.' in val_str and val_str.replace('.', '', 1).replace('-', '', 1).isdigit():
                     var = tk.DoubleVar(value=float(val_str))
-                    entry = tk.Entry(row, textvariable=var, width=12, justify="right")
+                    # ---> NEU: validatecommand=self.vcmd_float <---
+                    entry = tk.Entry(row, textvariable=var, width=12, justify="right", validate="key", validatecommand=self.vcmd_float)
                     entry.pack(side=tk.RIGHT)
                     var.trace_add("write", make_trace_cmd(section, key, var))
 
                 # 4. INTEGER (Besteht nur aus Zahlen/Minus)
                 elif val_str.replace('-', '', 1).isdigit():
                     var = tk.IntVar(value=int(val_str))
-                    entry = tk.Entry(row, textvariable=var, width=12, justify="right")
+                    # ---> NEU: validatecommand=self.vcmd_int <---
+                    entry = tk.Entry(row, textvariable=var, width=12, justify="right", validate="key", validatecommand=self.vcmd_int)
                     entry.pack(side=tk.RIGHT)
                     var.trace_add("write", make_trace_cmd(section, key, var))
 

@@ -360,9 +360,8 @@ class TargetTracker:
         # 2. Fenster auf Normalmodus zwingen (falls Vollbild aktiv)
         if self.vollbild:
             cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
-            
-        # 3. Zwinge das Fenster auf 1280x720 (beseitigt die wilden Deformationen!)
-        cv2.resizeWindow(self.window_name, 1280, 720)
+            # 3. Zwinge das Fenster auf 1280x720 (beseitigt die wilden Deformationen!)
+            cv2.resizeWindow(self.window_name, 1280, 720)
         
         # 4. Bild anzeigen und rendern lassen, BEVOR die Schleife alles einfriert
         cv2.imshow(self.window_name, pause_frame)
