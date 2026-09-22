@@ -312,10 +312,11 @@ class TargetDetector:
         change_percent = (changed_pixels / total_pixels) * 100
         
         if change_percent > self.max_image_change_percent:
-            self.log(side, f"⚠️ SANITY CHECK FEHLGESCHLAGEN: Neuer Zuwachs zu {change_percent:.2f}%")
+            # ---> NEU: 3 Nachkommastellen <---
+            self.log(side, f"⚠️ SANITY CHECK FEHLGESCHLAGEN: Neuer Zuwachs zu {change_percent:.3f}%")
             self.log(side, "-> Ignoriere Frame.")
-            return False 
-
+            return False
+            
         ##DEBUG-Ausgabe
         #import os
         #export_dir = "labor_export"
@@ -324,12 +325,11 @@ class TargetDetector:
 
         contours, _ = cv2.findContours(thresh_new, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         new_shots_found_this_frame = []
-        
-        # NEU: Flag, um zu merken, ob wir Riesen-Risse maskieren müssen
         update_mask_only = False 
         
         if self.ausloeser_durch_erschuetterung or len(contours) > 0:
-            self.log(side, f"Analysiere Konturen... (Neuer Zuwachs: {change_percent:.2f}% | Konturen: {len(contours)})")
+            # ---> NEU: 3 Nachkommastellen <---
+            self.log(side, f"Analysiere Konturen... (Neuer Zuwachs: {change_percent:.3f}% | Konturen: {len(contours)})")
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
@@ -819,8 +819,23 @@ class TargetDetector:
         else:
             if self.ausloeser_durch_erschuetterung:
                 self.log(side, "Keine validen neuen Treffer im Bild gefunden.")
-            self.save_debug_image(f"diff_letzte_verworfene_auswertung_{side}", thresh_new)
-            self.save_debug_image(f"letzte_verworfene_aufnahme_{side}", frame)
+                
+            # =========================================================================
+            # ---> NEU: Geisterbilder nur speichern, wenn sich WIRKLICH etwas 
+            # Relevantes verändert hat (> 0.005 % entspricht ca. 25 Pixeln)
+            # =========================================================================
+            if self.debug_alle_bilder_speichern and change_percent > 0.005:
+                ts = datetime.now().strftime('%H%M%S_%f')[:-3]
+                shot_idx = sum(1 for s in self.sm.shots if s['side'] == side)
+#!              #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                # ZUKUNFTS-BAUSTELLE: Hier würden die verworfenen Risse in die Maske wandern
+                # state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, thresh_new)
+#!              #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!                
+                # Wir nennen sie "_Geist_", damit das Labor sie nahtlos in die Zeitachse einsortiert
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_diff", thresh_new)
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_orig", frame)
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_diff_gesamt", state.cumulative_mask)
+                
             return False
 
     def check_background_and_evaluate(self, frame, state):
