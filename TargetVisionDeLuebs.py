@@ -945,10 +945,10 @@ class TargetTracker:
                 
             if active_side and active_fb:
                 dx, dy = 0, 0
-                if raw_key in (2490368, 65362) or key == ord('w'): dy = -1
-                elif raw_key in (2621440, 65364) or key == ord('s'): dy = 1
-                elif raw_key in (2424832, 65361) or key == ord('a'): dx = -1
-                elif raw_key in (2555904, 65363) or key == ord('d'): dx = 1
+                if raw_key in (2490368, 65362) or key == ord('w'):   dy = -0.2
+                elif raw_key in (2621440, 65364) or key == ord('s'): dy =  0.2
+                elif raw_key in (2424832, 65361) or key == ord('a'): dx = -0.2
+                elif raw_key in (2555904, 65363) or key == ord('d'): dx =  0.2
                 
                 # 1. Koordinaten um exakt 1 Pixel verschieben
                 new_x = active_fb['cx'] + dx

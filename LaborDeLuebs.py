@@ -694,10 +694,11 @@ class LaborApp:
         # ---> NEU: Der globale Anti-Fokus-Trap! <---
         # =========================================================================
         def release_focus(event):
-            # Wenn das angeklickte Element KEIN Textfeld ist -> Fokus zurücksetzen!
-            if not isinstance(event.widget, tk.Entry) and not isinstance(event.widget, ttk.Combobox):
+            # Wenn das angeklickte Element weder Entry, Combobox noch Text-Bereich ist -> Fokus klauen!
+            if not isinstance(event.widget, (tk.Entry, ttk.Combobox, tk.Text)):
                 self.root.focus_set()
-        # bind_all reagiert auf JEDEN Klick im gesamten Fenster (Bilder, Labels, Hintergrund)
+                
+        # bind_all reagiert auf JEDEN Klick im gesamten Fenster
         self.root.bind_all('<Button-1>', release_focus, add="+")
         # Zusätzlich: Mit Escape den Cursor jederzeit manuell aus Textfeldern befreien
         self.root.bind_all('<Escape>', lambda e: self.root.focus_set(), add="+")
@@ -991,11 +992,11 @@ class LaborApp:
         cx, cy = meta[center_key]
         char = event.keysym.lower()
         
-        if char == 'w': cy -= 1
-        elif char == 's': cy += 1
-        elif char == 'a': cx -= 1
-        elif char == 'd': cx += 1
-        
+        if char == 'w': cy   -= 0.2
+        elif char == 's': cy += 0.2
+        elif char == 'a': cx -= 0.2
+        elif char == 'd': cx += 0.2
+
         # 2. Den neuen Wert speichern (wird dann beim nächsten "Test-Case-Export" auch physisch in die JSON geschrieben!)
         self.original_match_data['metadata'][center_key] = [cx, cy]
         
@@ -1999,17 +2000,42 @@ class LaborApp:
         comp_win = tk.Toplevel(self.root)
         comp_win.title(f"📊 Integrations-Check: Live-Parameter vs. Original-Match")
         
-        # ---> NEU: DPI-Awareness für 4K-TVs <---
         sf = self.root.winfo_fpixels('1i') / 96.0
-        w, h = int(1200 * sf), int(750 * sf)
+        w, h = int(1500 * sf), int(750 * sf)
         comp_win.geometry(f"{w}x{h}")
         
-        comp_win.transient(self.root)  # Zwingt das Unterfenster über das Labor-Hauptfenster
+        comp_win.transient(self.root)
         comp_win.attributes('-topmost', True)
-        comp_win.focus_force()         # Holt den Cursor aktiv in das neue Fenster
+        comp_win.focus_force()
 
-        txt = tk.Text(comp_win, font=("Consolas", 12), bg="#1e1e1e", fg="#00ff00", padx=10, pady=10)
-        txt.pack(fill=tk.BOTH, expand=True)
+        # =====================================================================
+        # ---> NEU: Feste Werkzeugleiste für Buttons oben <---
+        # =====================================================================
+        btn_frame = tk.Frame(comp_win)
+        btn_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        def copy_to_clipboard():
+            # Holt den gesamten Text von Zeile 1.0 bis zum Ende
+            full_log = txt.get("1.0", tk.END)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(full_log)
+            tk.messagebox.showinfo("Kopiert", "Das komplette Protokoll wurde in die Zwischenablage kopiert!", parent=comp_win)
+            
+        tk.Button(btn_frame, text="📋 In Zwischenablage kopieren", command=copy_to_clipboard, bg="#3498db", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+
+        # =====================================================================
+        # ---> NEU: Text-Frame mit Scrollbar <---
+        # =====================================================================
+        txt_frame = tk.Frame(comp_win)
+        txt_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        
+        scrollbar = tk.Scrollbar(txt_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        txt = tk.Text(txt_frame, font=("Consolas", 12), bg="#1e1e1e", fg="#00ff00", padx=10, pady=10, yscrollcommand=scrollbar.set)
+        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=txt.yview)
+
         txt.insert(tk.END, "Führe komplette Neuberechnung aller Schüsse durch... Bitte warten...\n")
         comp_win.update()
 
@@ -2077,13 +2103,12 @@ class LaborApp:
             
             txt.insert(tk.END, f"\n--- KAMERA {side_name.upper()} ---\n")
             txt.insert(tk.END, f"Original Treffer: {len(orig_shots)} | Neu berechnet: {len(curr_shots)}\n")
-            # ---> NEU: Legende für das Sternchen erweitert <---
             txt.insert(tk.END, "Legende: 'E' = Manuell editiert | '*' = Methode hat sich zum Original geändert\n")
             
-            # ---> NEU: Breiten optimiert für perfekten Tabellen-Look <---
-            header = f"{'Nr':>3} | {'Bild':>4} | {'Methode / Sieger':<25} | {'Orig (X,Y)':<20} | {'Neu (X,Y)':<20} | {'Dist':>6} | {'O-CV':>6} | {'N-CV':>6} | {'% Kal':<10}\n"
+            # ---> NEU: Alles konsequent nach Original (Links) und Neu (Rechts) sortiert <---
+            header = f"{'Nr':>3} | {'Bild':>4} | {'Orig-Methode':<25} | {'Neu-Methode':<25} | {'Orig (X,Y)':<18} | {'Neu (X,Y)':<18} | {'Dist':>6} | {'O-CV':>6} | {'N-CV':>6} | {'% Kal':<10}\n"
             txt.insert(tk.END, header)
-            txt.insert(tk.END, "-"*105 + "\n")
+            txt.insert(tk.END, "-"*145 + "\n")
             
             threshold = cal_r * 2.5  
             aligned = self.align_shots(orig_shots, curr_shots, threshold)
@@ -2095,10 +2120,10 @@ class LaborApp:
                 if orig_idx is not None and curr_idx is not None:
                     orig = orig_shots[orig_idx]
                     curr = curr_shots[curr_idx]
+                    # Sauberer Float-Cast für die Tabelle
                     ox, oy = float(orig['x']), float(orig['y'])
                     cx, cy = float(curr['pos'][0]), float(curr['pos'][1])
-                    dx = cx - ox
-                    dy = cy - oy
+                    dx, dy = cx - ox, cy - oy
                     dist = np.hypot(dx, dy)
                     
                     cal_d = cal_r * 2
@@ -2108,9 +2133,7 @@ class LaborApp:
                     match_count += 1
                     
                     warn = "⚠️" if pct > 25.0 else ""
-                    
-                    is_edited = orig.get('edited', False)
-                    edit_marker = "E" if is_edited else " "
+                    edit_marker = "E" if orig.get('edited', False) else " "
                     
                     orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>6.2f},{oy:>6.2f}"
                     curr_str = f"N:{curr_idx+1:02d}  {cx:>6.2f},{cy:>6.2f}"
@@ -2119,46 +2142,44 @@ class LaborApp:
                     curr_method = curr.get('winner_method', 'Std')
                     orig_method = orig.get('winner_method', 'Unbekannt')
                     
-                    # ---> NEU: Die Sternchen-Logik! <---
-                    if orig_method != 'Unbekannt' and orig_method != curr_method:
-                        display_method = f"{curr_method}*"
-                    else:
-                        display_method = curr_method
+                    display_curr_method = f"{curr_method}*" if orig_method != 'Unbekannt' and orig_method != curr_method else curr_method
                     
-                    orig_cv = orig.get('cv_score', 0.0)
-                    curr_cv = curr.get('cv_score', 0.0)
+                    orig_cv, curr_cv = orig.get('cv_score', 0.0), curr.get('cv_score', 0.0)
                     pct_str = f"{pct:.1f}% {warn}"
                     
-                    # ---> NEU: Angepasste Format-Breiten <---
-                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {display_method:<25} | {orig_str:<20} | {curr_str:<20} | {dist:6.1f}p | {orig_cv:6.1f} | {curr_cv:6.1f} | {pct_str:<10}\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {orig_method:<25} | {display_curr_method:<25} | {orig_str:<18} | {curr_str:<18} | {dist:6.1f}p | {orig_cv:6.1f} | {curr_cv:6.1f} | {pct_str:<10}\n")
                     
                 elif orig_idx is not None:
                     orig = orig_shots[orig_idx]
-                    is_edited = orig.get('edited', False)
-                    edit_marker = "E" if is_edited else " "
-                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {orig['x']:>3},{orig['y']:>3}"
+                    edit_marker = "E" if orig.get('edited', False) else " "
+                    # Sicherer Float-Cast, um ValueError-Crashes zu verhindern
+                    ox, oy = float(orig['x']), float(orig['y'])
+                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>6.2f},{oy:>6.2f}"
                     orig_cv = orig.get('cv_score', 0.0)
-                    # ---> NEU: Dynamische Formatierung für Fehlende (Orig) <---
-                    txt.insert(tk.END, f"{idx+1:3d} | {'--':>4} | {'--- FEHLT ---':<22} | {orig_str:<20} | {'--- FEHLT ---':<20} | {'--':>6} | {orig_cv:6.1f} | {'--':>6} | {'-- ❌':<10}\n")
+                    orig_method = orig.get('winner_method', 'Unbekannt')
+                    
+                    txt.insert(tk.END, f"{idx+1:3d} | {'--':>4} | {orig_method:<25} | {'--- FEHLT ---':<25} | {orig_str:<18} | {'--- FEHLT ---':<18} | {'--':>6} | {orig_cv:6.1f} | {'--':>6} | {'-- ❌':<10}\n")
                     
                 elif curr_idx is not None:
                     curr = curr_shots[curr_idx]
-                    cx, cy = int(curr['pos'][0]), int(curr['pos'][1])
-                    curr_str = f"N:{curr_idx+1:02d}  {cx:>3},{cy:>3}"
+                    cx, cy = float(curr['pos'][0]), float(curr['pos'][1])
+                    curr_str = f"N:{curr_idx+1:02d}  {cx:>6.2f},{cy:>6.2f}"
                     curr_cv = curr.get('cv_score', 0.0)
                     f_num = curr.get('frame_num', 0)
-                    display_method = curr.get('winner_method', 'Std')
-                    # ---> NEU: Dynamische Formatierung für Fehlende (Neu) <---
-                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {display_method:<22} | {'--- FEHLT ---':<20} | {curr_str:<20} | {'--':>6} | {'--':>6} | {curr_cv:6.1f} | {'-- 🆕':<10}\n")
+                    curr_method = curr.get('winner_method', 'Std')
+                    
+                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {'--- FEHLT ---':<25} | {curr_method:<25} | {'--- FEHLT ---':<18} | {curr_str:<18} | {'--':>6} | {'--':>6} | {curr_cv:6.1f} | {'-- 🆕':<10}\n")
 
             if match_count > 0:
                 avg_dist = total_dist / match_count
-                txt.insert(tk.END, "-"*113 + "\n")
+                txt.insert(tk.END, "-"*145 + "\n")
                 txt.insert(tk.END, f"Ø Abweichung {side_name.upper()} (nur gematchte Treffer): {avg_dist:.2f} Pixel\n")
+                
         # Tabellen ausgeben
         build_side_comparison('left', 'l')
         build_side_comparison('right', 'r')
         
+        # ---> Wieder knallhart sperren, das Kopieren übernimmt ja jetzt der Button! <---
         txt.config(state=tk.DISABLED)
 
 

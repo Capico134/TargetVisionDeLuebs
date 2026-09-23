@@ -85,31 +85,63 @@ class TargetDetector:
 
     def calculate_hole_score(self, cx, cy, radius, thresh_new, thresh_raw):
         """
-        Berechnet die Qualität eines potenziellen Schusslochs (Score 0 bis 200).
+        Berechnet den Score mit unbestechlichem harten Supersampling (keine Kantenglättungs-Fehler!).
         """
-        circle_mask = np.zeros_like(thresh_new)
-        cv2.circle(circle_mask, (int(round(cx)), int(round(cy))), int(round(radius)), 255, -1)
+        # 1. Bounding Box (ROI) um den Treffer berechnen (+2 Pixel Puffer)
+        r_int = int(radius) + 2
+        x1 = max(0, int(cx) - r_int)
+        y1 = max(0, int(cy) - r_int)
+        x2 = min(thresh_new.shape[1], int(cx) + r_int)
+        y2 = min(thresh_new.shape[0], int(cy) + r_int)
         
-        pixels_in_circle = cv2.countNonZero(circle_mask)
+        roi_w = x2 - x1
+        roi_h = y2 - y1
+        if roi_w <= 0 or roi_h <= 0:
+            return 0.0, 0.0, 0.0
+            
+        local_cx = cx - x1
+        local_cy = cy - y1
+        
+        # ---> NEU: Echter Supersampling-Faktor (1 physischer Pixel wird zu 4x4=16 Subpixeln) <---
+        scale = 4
+        
+        # 2. Die originalen ROIs ausschneiden
+        roi_new = thresh_new[y1:y2, x1:x2]
+        roi_raw = thresh_raw[y1:y2, x1:x2]
+        
+        # 3. Hartes Hochskalieren (NEAREST bewahrt die pixeligen, harten Treppenstufen!)
+        roi_new_highres = cv2.resize(roi_new, (roi_w * scale, roi_h * scale), interpolation=cv2.INTER_NEAREST)
+        roi_raw_highres = cv2.resize(roi_raw, (roi_w * scale, roi_h * scale), interpolation=cv2.INTER_NEAREST)
+        
+        # 4. Hochauflösende Kreis-Maske erstellen
+        circle_mask_highres = np.zeros((roi_h * scale, roi_w * scale), dtype=np.uint8)
+        
+        scaled_cx = int(round(local_cx * scale))
+        scaled_cy = int(round(local_cy * scale))
+        scaled_r = int(round(radius * scale))
+        
+        # Knallhartes Zeichnen ohne Anti-Aliasing (cv2.LINE_8)
+        cv2.circle(circle_mask_highres, (scaled_cx, scaled_cy), scaled_r, 255, -1, cv2.LINE_8)
+        
+        pixels_in_circle = cv2.countNonZero(circle_mask_highres)
         if pixels_in_circle == 0: 
             return 0.0, 0.0, 0.0
             
-        # 1. Check: Anteil am NEUEN Riss (thresh_new)
-        intersection_new = cv2.bitwise_and(thresh_new, circle_mask)
+        # 5. Echte, binäre Schnittmengen bilden (0 oder 255, keine Graustufen!)
+        intersection_new = cv2.bitwise_and(circle_mask_highres, roi_new_highres)
+        intersection_raw = cv2.bitwise_and(circle_mask_highres, roi_raw_highres)
+        
         pixels_in_new = cv2.countNonZero(intersection_new)
-        coverage_new = (pixels_in_new / pixels_in_circle) * 100 
-        
-        # 2. Check: Anteil am GESAMTEN Lochbild (thresh_raw)
-        intersection_raw = cv2.bitwise_and(thresh_raw, circle_mask)
         pixels_in_raw = cv2.countNonZero(intersection_raw)
-        coverage_raw = (pixels_in_raw / pixels_in_circle) * 100 
         
-        # ---> NEU: Die gewichtete Berechnung! <---
+        coverage_new = (pixels_in_new / pixels_in_circle) * 100.0
+        coverage_raw = (pixels_in_raw / pixels_in_circle) * 100.0
+        
         weight_new = 1.0 - self.gesamt_anteil_am_200score
         total_score = 2.0 * ((coverage_new * weight_new) + (coverage_raw * self.gesamt_anteil_am_200score))
         
         return total_score, coverage_new, coverage_raw
-
+        
     def ninja_kalibrierungs_check(self, ref_bgr, side):
         """Findet den Nullpunkt mit dem unbestechlichen 'Weißen-Punkt-Sniper'."""
         aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')

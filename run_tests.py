@@ -7,6 +7,7 @@ import numpy as np
 import configparser
 import re
 from datetime import datetime
+import time
 
 # Deine echte Engine importieren
 from DetectionDeLuebs import TargetDetector
@@ -65,6 +66,7 @@ class SmartTestLogger:
 # HAUPT-TEST-LOGIK
 # ==========================================
 def run_all_tests():
+    start_time = time.time()  # <--- HIER MUSS ER HIN!
     test_dir = "testcases"
     report_file = "test_report.txt"
     treffer_log_file = "treffer_log.txt"
@@ -181,7 +183,6 @@ def run_all_tests():
                 match_passed = True
                 error_messages = []
                 
-                cal_r = config.getint('Erkennung', 'caliber_radius', fallback=11)
                 tolerance_px = 2.0 
                 
                 for side, side_char in [('left', 'l'), ('right', 'r')]:
@@ -194,8 +195,9 @@ def run_all_tests():
                         continue
                         
                     for idx, (orig, curr) in enumerate(zip(orig_shots, curr_shots)):
-                        ox, oy = orig['x'], orig['y']
-                        cx, cy = int(curr['pos'][0]), int(curr['pos'][1])
+                        # ---> ELA FIX: Subpixel-Präzision auch beim Testen! <---
+                        ox, oy = float(orig['x']), float(orig['y'])
+                        cx, cy = float(curr['pos'][0]), float(curr['pos'][1])
                         dist = np.hypot(cx - ox, cy - oy)
                         
                         if dist > tolerance_px:
@@ -216,11 +218,16 @@ def run_all_tests():
             log(f"{C_RED}⚠️ ERROR bei {zip_file}:{C_END} {str(e)}")
             failed_count += 1
 
+
+    
     # ZUSAMMENFASSUNG
+    end_time = time.time()
+    duration = end_time - start_time
+    
     log("\n" + "="*70)
     log("📊 TEST ZUSAMMENFASSUNG")
     log("="*70)
-    log(f"Insgesamt ausgeführt: {passed_count + failed_count}")
+    log(f"Insgesamt ausgeführt: {passed_count + failed_count} (in {duration:.2f} Sekunden)")
     log(f"{C_GREEN}Erfolgreich (PASS): {passed_count}{C_END}")
     if failed_count > 0:
         log(f"{C_RED}Fehlgeschlagen (FAIL): {failed_count}{C_END}")
@@ -253,9 +260,9 @@ def run_all_tests():
     # EXIT-CODE AN DAS BETRIEBSSYSTEM / GITHUB ACTIONS MELDEN
     # =======================================================
     if failed_count > 0:
-        sys.exit(1)  # GitHub Actions wird ROT ❌ und Badge wechselt auf "failing"
+        sys.exit(1)
     else:
-        sys.exit(0)  # GitHub Actions wird GRÜN ✅ und Badge bleibt "passing"
+        sys.exit(0)
 
 if __name__ == "__main__":
     run_all_tests()
