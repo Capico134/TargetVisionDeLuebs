@@ -45,22 +45,21 @@ class DummyDateiManager:
 class SmartTestLogger:
     def __init__(self, track_keywords):
         self.log_lines = []
-        # Baut automatisch ein Dictionary: {'⚖️ GLEICHSTAND': 0, '🚫 Fehlalarm': 0, ...}
         self.stats = {kw: 0 for kw in track_keywords}
-        self.total_shots = 0
+        # Klar benannt: Zählt nur die Duelle!
+        self.battle_royales = 0 
 
     def log_callback(self, side, msg, show_gui=False):
         self.log_lines.append(f"[{side.upper()}] {msg}")
         
-        # Zähle die Gesamtschüsse
+        # Zähle die Battle-Royale-Entscheidungen
         if "BATTLE ROYALE SIEGER:" in msg:
-            self.total_shots += 1
+            self.battle_royales += 1
             
-        # Zähle alle registrierten Keywords
+        # Zähle alle registrierten Keywords (Gleichstand, Fehlalarm etc.)
         for keyword in self.stats:
             if keyword in msg:
                 self.stats[keyword] += 1
-
 
 # ==========================================
 # HAUPT-TEST-LOGIK
@@ -93,6 +92,8 @@ def run_all_tests():
         "⚖️ GLEICHSTAND",
         "🚫 Fehlalarm",
         "🔄 Sichel-Duell",
+        "⚠️ Treffer ignoriert",          # <--- Zählt die "Zu-nah-am-alten-Loch" Tode
+        "✂️ Überzähliger Treffer",     # <--- Zählt die Max-Treffer Tode
         "⚠️ Abrisskante gescheitert"
     ]
     smart_logger = SmartTestLogger(suchbegriffe)
@@ -110,6 +111,9 @@ def run_all_tests():
 
     passed_count = 0
     failed_count = 0
+    # Unsere beiden globalen Zähler für die Statistik
+    total_valid_hits = 0
+    total_kandidaten_gesamt = 0
 
     for zip_file in zip_files:
         zip_path = os.path.join(test_dir, zip_file)
@@ -139,6 +143,7 @@ def run_all_tests():
                     'Erkennung': {
                         # 'hit_tolerance': '35',
                         # 'morph_kernel_size': '8',
+                        # 'gesamt_anteil_am_200score': '0.6',
                     }
                 }
                 
@@ -174,11 +179,24 @@ def run_all_tests():
                         state = d_sm.state_left if s == 'left' else d_sm.state_right
                         state.cumulative_mask = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
 
+                # ---> NEU: Frame-Zähler für beide Kameras <---
+                frame_counts = {'left': 0, 'right': 0}
+
                 for orig_name in orig_files:
                     img = cv2.imdecode(np.frombuffer(zf.read(orig_name), np.uint8), cv2.IMREAD_COLOR)
                     s = 'left' if 'left' in orig_name else 'right'
+                    
+                    # Hochzählen, genau wie in der Labor-GUI
+                    frame_counts[s] += 1
+                    shots_before = len(d_sm.shots)
+                    
                     detector.detect_new_shot(img, s)
                     
+                    # ---> NEU: Den neuen Schüssen die Bildnummer als Stempel aufdrücken <---
+                    shots_after = len(d_sm.shots)
+                    for j in range(shots_before, shots_after):
+                        d_sm.shots[j]['labor_frame_num'] = frame_counts[s]
+
                 # 5. ABWEICHUNG MESSEN
                 match_passed = True
                 error_messages = []
@@ -202,7 +220,9 @@ def run_all_tests():
                         
                         if dist > tolerance_px:
                             match_passed = False
-                            error_messages.append(f"[{side.upper()}] Schuss {idx+1} abgewichen um {dist:.1f}px (Erlaubt: {tolerance_px}px)")
+                            # ---> NEU: Bild-Nummer auslesen und mit ins Log schreiben <---
+                            f_num = curr.get('labor_frame_num', '?')
+                            error_messages.append(f"[{side.upper()}] Bild #{f_num:<3} | Schuss {idx+1} abgewichen um {dist:.1f}px (Erlaubt: {tolerance_px}px)")
                 
                 # 6. ERGEBNIS DRUCKEN & LOGGEN
                 if match_passed:
@@ -213,13 +233,17 @@ def run_all_tests():
                     for err in error_messages:
                         log(f"      {C_RED}-> {err}{C_END}")
                     failed_count += 1
+                
+                # ---> Die echten Treffer auf dem Monitor summieren <---
+                total_valid_hits += len(d_sm.shots)
                     
         except Exception as e:
             log(f"{C_RED}⚠️ ERROR bei {zip_file}:{C_END} {str(e)}")
             failed_count += 1
 
+        # ---> Die intern geprüften Matrix-Kandidaten summieren <---
+        total_kandidaten_gesamt += detector.eval_counter
 
-    
     # ZUSAMMENFASSUNG
     end_time = time.time()
     duration = end_time - start_time
@@ -227,7 +251,8 @@ def run_all_tests():
     log("\n" + "="*70)
     log("📊 TEST ZUSAMMENFASSUNG")
     log("="*70)
-    log(f"Insgesamt ausgeführt: {passed_count + failed_count} (in {duration:.2f} Sekunden)")
+    log(f"Insgesamt ausgeführt: {passed_count + failed_count} Matches (in {duration:.2f} Sekunden)")
+    log(f"Insgesamt gefundene Treffer: {total_valid_hits}")
     log(f"{C_GREEN}Erfolgreich (PASS): {passed_count}{C_END}")
     if failed_count > 0:
         log(f"{C_RED}Fehlgeschlagen (FAIL): {failed_count}{C_END}")
@@ -235,9 +260,17 @@ def run_all_tests():
         log(f"{C_GREEN}🎉 ALLE TESTS BESTANDEN! Dein Code ist bereit für die Produktion.{C_END}")
         
     log("-" * 70)
-    log(f"📈 ENGINE STATISTIKEN (Gesamt ausgewertete Treffer-Kandidaten: {smart_logger.total_shots}):")
+    
+    # Durchschnitt ausrechnen (Verhindert Division durch 0)
+    avg_kandidaten = (total_kandidaten_gesamt / smart_logger.battle_royales) if smart_logger.battle_royales > 0 else 0
+    
+    log(f"📈 ENGINE STATISTIKEN:")
+    log(f"   Ausgewertete Battle-Royales:   {smart_logger.battle_royales}")
+    log(f"   Geprüfte Treffer-Kandidaten:   {total_kandidaten_gesamt} (Ø {avg_kandidaten:.1f} pro Battle-Royale)")
+    log("   ------------------------------------------------------------------")
+    
     for keyword, count in smart_logger.stats.items():
-        rate = (count / smart_logger.total_shots * 100) if smart_logger.total_shots > 0 else 0
+        rate = (count / smart_logger.battle_royales * 100) if smart_logger.battle_royales > 0 else 0
         log(f"   {keyword:<30} {count}x aufgetreten (Rate: {rate:.1f}%)")
     log("="*70 + "\n")
 

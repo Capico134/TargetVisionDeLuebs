@@ -19,6 +19,9 @@ class TargetDetector:
         # ---> NEU: Einmaliges Laden aller Erkennungs-Parameter in schnelle RAM-Attribute <---
         self.refresh_settings_from_config()
 
+        # ---> NEU: Interner Zähler für die Test-Suite (bleibt im Live-Betrieb stumm) <---
+        self.eval_counter = 0
+
         # Internes Gedächtnis des Detectors
         self.ref_left = None
         self.ref_right = None
@@ -87,6 +90,9 @@ class TargetDetector:
         """
         Berechnet den Score mit unbestechlichem harten Supersampling (keine Kantenglättungs-Fehler!).
         """
+        # ---> NEU: Jeder Aufruf zählt, ganz ohne Log-Eintrag! <---
+        self.eval_counter += 1
+        
         # 1. Bounding Box (ROI) um den Treffer berechnen (+2 Pixel Puffer)
         r_int = int(radius) + 2
         x1 = max(0, int(cx) - r_int)
