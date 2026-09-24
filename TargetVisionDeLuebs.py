@@ -66,6 +66,41 @@ class TargetTracker:
         # ---> NEU: Wir instanziieren den Detector und übergeben unsere log-Funktion als Callback! <---
         self.detector = TargetDetector(config, datei_manager, state_manager, self.log)
 
+        # =====================================================================
+        # ---> NEU: Logo laden und Mathematik vorbereiten (PERFORMANCE-TRICK) <---
+        # =====================================================================
+        self.logo_rgb_pre = None
+        logo_pfad = "logo.png"
+        
+        # ---> NEU: Hier stellst du die gewünschte Größe ein (1.0 = 100%, 0.5 = 50%) <---
+        logo_skalierung = 0.65 
+        
+        if os.path.exists(logo_pfad):
+            # IMREAD_UNCHANGED ist zwingend nötig, um den Alpha-Kanal (Transparenz) mitzuladen!
+            logo_img = cv2.imread(logo_pfad, cv2.IMREAD_UNCHANGED)
+            if logo_img is not None and logo_img.shape[2] == 4: # Hat es 4 Kanäle (B, G, R, Alpha)?
+                
+                # ---> NEU: Einmaliges, hochwertiges Skalieren beim Start <---
+                if logo_skalierung != 1.0:
+                    new_w = int(logo_img.shape[1] * logo_skalierung)
+                    new_h = int(logo_img.shape[0] * logo_skalierung)
+                    # INTER_AREA ist der beste Algorithmus, um Bilder scharf und ohne Treppeneffekte zu verkleinern
+                    logo_img = cv2.resize(logo_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+                self.logo_h, self.logo_w = logo_img.shape[:2]
+                
+                # Wir trennen die Transparenz (Kanal 3) von der Farbe (Kanal 0,1,2)
+                alpha_kanal = (logo_img[:, :, 3] / 255.0).astype(np.float32)
+                
+                # Wir machen aus der flachen Alpha-Matrix eine 3D-Matrix (für B, G und R)
+                self.logo_alpha = np.dstack([alpha_kanal]*3)
+                self.logo_inv_alpha = 1.0 - self.logo_alpha
+                
+                # Wir berechnen die Logo-Farbe schon VORAB multipliziert mit ihrer Transparenz!
+                self.logo_rgb_pre = (logo_img[:, :, :3].astype(np.float32) * self.logo_alpha)
+                self.log("SYSTEM", f"Logo ({self.logo_w}x{self.logo_h}) erfolgreich als Overlay geladen.")
+        # =====================================================================
+
         #self.state_left = self.sm.state_left
         #self.state_right = self.sm.state_right
         
@@ -900,6 +935,38 @@ class TargetTracker:
                     
                     cursor_x += block_w
                     
+        # =====================================================================
+        # ---> NEU: Blitzschnelles Logo-Overlay (Kostet < 0.5 ms!) <---
+        # =====================================================================
+        if getattr(self, 'logo_rgb_pre', None) is not None:
+            c_h, c_w = combined_view.shape[:2]
+            lh, lw = self.logo_h, self.logo_w
+            
+            # ---> NEU: Abstand von der Kamera-Ecke (in Pixeln) einstellen <---
+            margin_x = 20
+            margin_y = 20
+            
+            # Startpunkt berechnen: pad_x/pad_y ist exakt die linke obere Ecke 
+            # der ERSTEN aktiven Kamera (egal ob links oder rechts)
+            start_x = getattr(self, 'pad_x', 0) + margin_x
+            start_y = getattr(self, 'pad_y', 0) + margin_y
+            
+            end_x = start_x + lw
+            end_y = start_y + lh
+            
+            # Sicherheits-Check: Passt das Logo noch ins Fenster, ohne abgeschnitten zu werden?
+            if end_y <= c_h and end_x <= c_w and start_x >= 0 and start_y >= 0:
+                # 1. Den Bereich aus dem Live-Bild ausschneiden
+                roi = combined_view[start_y:end_y, start_x:end_x].astype(np.float32)
+                
+                # 2. Die pure Matrix-Magie: (Hintergrund * inverse Transparenz) + vorbereitetes Logo
+                blended = (roi * self.logo_inv_alpha) + self.logo_rgb_pre
+                
+                # 3. Den Bereich im Live-Bild überschreiben
+                combined_view[start_y:end_y, start_x:end_x] = blended.astype(np.uint8)
+        # =====================================================================
+
+
         cv2.imshow(self.window_name, combined_view)
 
     def check_keys(self):
