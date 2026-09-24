@@ -773,22 +773,26 @@ class LaborApp:
                 parser.set('Erkennung', 'caliber_durchmesser', str(round(calc_durchmesser, 2)))
 
             # 2. DIE MAGIE: Automatische Zuweisung ALLER registrierten Slider
+            self.migrated_keys = [] # <--- NEU: Merkliste für den Migrator
+            
             for key, tk_var in self.registered_sliders.items():
                 fallback_val = tk_var.get() # Den GUI-Standardwert als Rettungsanker nehmen
                 
-                # ---> DER FIX: Wir rufen absichtlich die get-Methoden MIT Fallback auf.
-                # Fehlt der Key, heilt der AuditedConfigParser ihn exakt in diesem Moment im RAM!
+                # ---> NEU: Fehlt der Key in der ZIP-Config? Dann ab auf die Merkliste! <---
+                if not parser.has_option('Erkennung', key):
+                    self.migrated_keys.append(key)
+                
+                # Wir rufen absichtlich die get-Methoden MIT Fallback auf.
                 if isinstance(tk_var, tk.BooleanVar):
                     val = parser.getboolean('Erkennung', key, fallback=fallback_val)
-                    tk_var.set(val)
                 elif isinstance(tk_var, tk.IntVar):
                     val = parser.getint('Erkennung', key, fallback=fallback_val)
-                    tk_var.set(val)
                 elif isinstance(tk_var, tk.DoubleVar):
                     val = parser.getfloat('Erkennung', key, fallback=fallback_val)
-                    tk_var.set(val)
                         
-                self.original_values[str(tk_var)] = tk_var.get()
+                # DER ELA-FIX: Erst die Baseline setzen, DANN den Trace auslösen!
+                self.original_values[str(tk_var)] = val
+                tk_var.set(val)
             
             # =================================================================
             # ---> ELA FIX: Echte Originalwerte der Kameras für den Mittelklick sichern <---
@@ -848,6 +852,8 @@ class LaborApp:
             filepath = filedialog.askopenfilename(title="Wähle ZIP", filetypes=[("ZIP", "*.zip")])
             
         if filepath:
+            self._is_loading = True # <--- NEU: Ladesperre AKTIVIEREN
+            
             self.current_zip_path = filepath
             # Vorläufiger Titel (damit was dasteht, falls das Laden einer Riesen-ZIP kurz dauert)
             self.root.title(f"Labor & Einstellungen  -  {os.path.basename(filepath)}")
@@ -913,22 +919,22 @@ class LaborApp:
             # 1. ZUERST BILD LADEN UND LOG LÖSCHEN
             self.process_and_display()
 
-            #ACHTUNG IST DAS WIRKLICH NICHT MEHR WICHTIG!!??????????????????????????????????????????????????????????????????
-            ## 2. DANN DEN MIGRATOR-LOG SCHREIBEN (Damit er sichtbar bleibt!)
-            ## ---> NEU: Alte Test-Case-Configs automatisch mit allen aktuellen Slider-Keys vervollständigen! <---
-            #if parser:
-            #    if not parser.has_section('Erkennung'):
-            #        parser.add_section('Erkennung')
-            #    added_keys = []
-            #    for key, tk_var in self.registered_sliders.items():
-            #        if not parser.has_option('Erkennung', key):
-            #            # Key fehlt in der geladenen Config -> Virtuell im RAM mit aktuellem GUI-Wert ergänzen
-            #            parser.set('Erkennung', key, str(tk_var.get()))
-            #            added_keys.append(key)
-            #    if added_keys:
-            #        keys_str = ", ".join(added_keys)
-            #        self.print_log("SYSTEM", f"🔧 Legacy-Migrator: {len(added_keys)} fehlende Parameter für diese Analyse-Sitzung ergänzt (nur im RAM):")
-            #        self.print_log("SYSTEM", f"   -> {keys_str}")
+            # 2. DANN DEN MIGRATOR-LOG SCHREIBEN (Damit er sichtbar bleibt!)
+            if hasattr(self, 'migrated_keys') and self.migrated_keys:
+                keys_str = ", ".join(self.migrated_keys)
+                
+                # A) Ausgabe in der Labor-GUI
+                self.print_log("SYSTEM", f"🔧 Legacy-Migrator: {len(self.migrated_keys)} fehlende Parameter für diese Analyse ergänzt:")
+                self.print_log("SYSTEM", f"   -> {keys_str}")
+                
+                # B) Ausgabe in der CMD-Konsole
+                print(f"\n🔧 [LEGACY-MIGRATOR] {len(self.migrated_keys)} fehlende Parameter aus GUI-Standardwerten in '{os.path.basename(filepath)}' ergänzt:")
+                print(f"   -> {keys_str}\n")
+                
+                # Merkliste wieder putzen
+                self.migrated_keys = []
+                
+            self._is_loading = False # <--- NEU: Ladesperre LÖSEN
 
     def prev_shot(self):
         if self.current_index > 0:
@@ -1006,6 +1012,10 @@ class LaborApp:
  
     def on_param_change(self, event=None, force=False):
         if not self.current_zip_path:
+            return
+            
+        # ---> NEU: Blockiere Updates, während ein ZIP im Hintergrund geladen wird! <---
+        if getattr(self, '_is_loading', False):
             return
             
         # Wenn 'Enter' im Textfeld gedrückt wurde, sofort aktualisieren
