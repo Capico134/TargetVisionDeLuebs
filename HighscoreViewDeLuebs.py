@@ -444,11 +444,41 @@ class HighscoreViewer:
 
     def build_gui(self):
         top_frame = tk.Frame(self.root, bg='#2c3e50')
-        top_frame.pack(fill="x", padx=20, pady=20)
+        top_frame.pack(fill="x", padx=20, pady=10)
         
-        title_label = tk.Label(top_frame, text="🏆 TargetVision Match-Historie", font=('Arial', 24, 'bold'), bg='#2c3e50', fg='white')
+        # =====================================================================
+        # ---> NEU: Halbtransparentes Logo GANZ LINKS einfügen <---
+        # =====================================================================
+        logo_pfad = "LogoHighscore.png"
+        if os.path.exists(logo_pfad):
+            try:
+                # Bild laden, Transparenz erhalten (RGBA) und skalieren
+                img = Image.open(logo_pfad).convert("RGBA")
+                
+                ziel_hoehe = 70 
+                aspekt_ratio = img.width / img.height
+                ziel_breite = int(ziel_hoehe * aspekt_ratio)
+                
+                img_resized = img.resize((ziel_breite, ziel_hoehe), Image.LANCZOS)
+                
+                # Transparenz-Trick für Tkinter
+                bg_img = Image.new("RGBA", img_resized.size, "#2c3e50")
+                bg_img.paste(img_resized, (0, 0), img_resized)
+                
+                self.logo_tk = ImageTk.PhotoImage(bg_img)
+                
+                # Logo-Label erstellen und als ALLERERSTES ganz links anheften
+                logo_label = tk.Label(top_frame, image=self.logo_tk, bg='#2c3e50', bd=0)
+                logo_label.pack(side="left", padx=(0, 15))
+            except Exception as e:
+                print(f"Fehler beim Laden des Logos: {e}")
+        # =====================================================================
+
+        # 1. Titel direkt daneben packen (rutscht automatisch rechts neben das Logo)
+        title_label = tk.Label(top_frame, text="TargetVision Match-Historie", font=('Arial', 24, 'bold'), bg='#2c3e50', fg='white')
         title_label.pack(side="left")
         
+        # 2. Aktualisieren-Button ganz rechts
         refresh_btn = tk.Button(top_frame, text="↻ Aktualisieren", command=self.load_and_display_data, font=('Arial', 16), bg='#3498db', fg='white', relief="flat", padx=10)
         refresh_btn.pack(side="right", padx=10)
 
