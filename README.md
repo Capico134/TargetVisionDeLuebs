@@ -31,7 +31,7 @@ In diesem System stecken Algorithmen, die speziell für den rauen und optisch sc
 ## 🚀 Installation & Start
 1. **Repo klonen** oder als ZIP herunterladen.
 2. **Konfiguration:** Die mitgelieferte `config.example.ini` beim ersten Start einfach ignorieren – das Programm erstellt automatisch eine frische `config.ini` mit hilfreichen Kommentaren für dein System.
-3. **Starten:** Führe einfach die `StartTargetVisionDeLuebs.bat` aus. Das Skript prüft und installiert automatisch alle benötigten Abhängigkeiten (`requirements.txt`)[cite: 6] und startet anschließend direkt das System[cite: 6].
+3. **Starten:** Führe einfach die `StartTargetVisionDeLuebs.bat` aus. Das Skript prüft und installiert automatisch alle benötigten Abhängigkeiten (`requirements.txt`) und startet anschließend direkt das System.
 
 ### 🎨 Praxistipp: Hintergrund-Farbwerte (RGB) exakt ermitteln
 Damit die automatische Pausenerkennung (und die optionale Treffererkennung mittels Farb-Bonus) perfekt funktioniert, benötigt das System die exakten RGB-Farbwerte deiner Wand.
