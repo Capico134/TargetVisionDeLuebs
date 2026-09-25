@@ -146,6 +146,13 @@ class LaborApp:
         w, h = int(1400 * skalierungs_faktor), int(850 * skalierungs_faktor)
         self.root.geometry(f"{w}x{h}")
         
+        # ---> NEU: Labor direkt maximiert starten! <---
+        try:
+            self.root.state('zoomed') # Standard für Windows
+        except tk.TclError:
+            self.root.attributes('-zoomed', True) # Fallback für Linux
+            
+        
         self.dm = DateiManager() # <--- NEU: Unser zentraler ELA-Werkzeugkasten
         self.package_data = None # <--- NEU: Speichert das entpackte ZIP im RAM
         
@@ -202,6 +209,28 @@ class LaborApp:
         self.registered_sliders = {}
         
         self.setup_ui()
+        
+        # ---> NEU: Initialisierung für das Blink-Overlay <---
+        self.blink_state = True
+        self._toggle_blink()
+        self.last_mouse_x = None
+        self.last_mouse_y = None
+
+    def _toggle_blink(self):
+        """Kippt das Blink-Flag alle 500ms und erzwingt einen GUI-Redraw."""
+        self.blink_state = not getattr(self, 'blink_state', True)
+        
+        # Nur das Bild neu zeichnen, KEINE Engine-Neuberechnung!
+        if getattr(self, 'base_combined_img', None) is not None:
+            self.update_image_display()
+            
+            # ---> DER FIX: Wenn die Maus noch im Bild ist, das Fadenkreuz direkt wieder drauflegen! <---
+            mx = getattr(self, 'last_mouse_x', None)
+            my = getattr(self, 'last_mouse_y', None)
+            if mx is not None and my is not None:
+                self._draw_crosshair(mx, my)
+            
+        self.root.after(1000, self._toggle_blink)
 
     def validate_float_chars(self, P):
         """Erlaubt nur Ziffern, Punkt, Minus, Plus und E (für wissenschaftliche Notation)"""
@@ -694,9 +723,13 @@ class LaborApp:
         # ---> NEU: Der globale Anti-Fokus-Trap! <---
         # =========================================================================
         def release_focus(event):
-            # Wenn das angeklickte Element weder Entry, Combobox noch Text-Bereich ist -> Fokus klauen!
-            if not isinstance(event.widget, (tk.Entry, ttk.Combobox, tk.Text)):
-                self.root.focus_set()
+            try:
+                # ---> DER FIX: winfo_class() erkennt auch versteckte Ttk-Widgets zuverlässig! <---
+                valid_classes = ('Entry', 'TCombobox', 'Text', 'Listbox', 'Scrollbar', 'TScrollbar')
+                if event.widget.winfo_class() not in valid_classes:
+                    self.root.focus_set()
+            except AttributeError:
+                pass
                 
         # bind_all reagiert auf JEDEN Klick im gesamten Fenster
         self.root.bind_all('<Button-1>', release_focus, add="+")
@@ -736,7 +769,8 @@ class LaborApp:
     def switch_camera(self):
         """Wird aufgerufen, wenn man zwischen Links/Rechts umschaltet."""
         self.current_index = 0 # Zurück auf Start!
-        self.update_calib_sliders() # <--- NEU
+        self.update_calib_sliders() 
+        #self.auto_zoom_and_center() # <--- NEU: Beim Seitenwechsel direkt wieder zentrieren!
         self.process_and_display()
 
     def get_current_side_origs(self):
@@ -916,6 +950,10 @@ class LaborApp:
             self.btn_first.config(state=tk.NORMAL)
             self.btn_last.config(state=tk.NORMAL)
             self.update_calib_sliders() # <--- NEU: Initiales Füllen der Slider nach dem Laden!
+            
+            # ---> NEU: Auto-Zoom und Zentrierung vor dem ersten Zeichnen <---
+            self.auto_zoom_and_center()
+            
             # 1. ZUERST BILD LADEN UND LOG LÖSCHEN
             self.process_and_display()
 
@@ -1037,11 +1075,35 @@ class LaborApp:
         self._param_timer = None
         self.process_and_display()
 
+    def _draw_crosshair(self, x, y):
+        """Zeichnet das Fadenkreuz auf das aktuelle Basisbild und zeigt es an."""
+        if getattr(self, 'base_combined_img', None) is None or not hasattr(self, 'current_scale'):
+            return
+            
+        temp_img = self.base_combined_img.copy()
+        kreis_radius = int(getattr(self, 'current_radius_px', 15) * self.current_scale) 
+        neon_blue = (255, 255, 0)
+        
+        # Fadenkreuz zeichnen (mit Spiegel-Logik für die jeweils andere Seite)
+        is_left = (x < self.current_img_w)
+        mirror_x = (x + self.current_img_w) if is_left else (x - self.current_img_w)
+        cv2.circle(temp_img, (mirror_x, y), kreis_radius, neon_blue, 2)
+        cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) 
+
+        # Das temporäre Bild mit dem Overlay blitzschnell ins Tkinter-Label werfen
+        img_pil = Image.fromarray(cv2.cvtColor(temp_img, cv2.COLOR_BGR2RGB))
+        self.tk_image = ImageTk.PhotoImage(img_pil)
+        self.lbl_image.config(image=self.tk_image)
+
     def on_mouse_move(self, event):
         # Wenn noch kein Bild geladen ist, tu nichts
         if getattr(self, 'base_combined_img', None) is None or not hasattr(self, 'current_scale'):
             return
             
+        # ---> NEU: Letzte Position für den Blink-Timer retten <---
+        self.last_mouse_x = event.x
+        self.last_mouse_y = event.y
+        
         x, y = event.x, event.y
         img_h, img_w = self.base_combined_img.shape[:2]
         
@@ -1100,21 +1162,17 @@ class LaborApp:
             
         # UI Update mit Anzeige der Seite
         side_name = "Live" if is_left else "Rechts"
-        #self.lbl_coords.config(text=f"{side_name} X:{real_x:04d} Y:{real_y:04d} | D:{diff_val:03d} | {ref_str} -> {live_str}{bonus_str}")
         self.lbl_coords.config(text=f"{side_name} X:{real_x:04d} Y:{real_y:04d} | D:{diff_val:03d}{bonus_str}")
         
-        # Fadenkreuz zeichnen (mit Spiegel-Logik für die jeweils andere Seite)
-        mirror_x = (x + self.current_img_w) if is_left else (x - self.current_img_w)
-        cv2.circle(temp_img, (mirror_x, y), kreis_radius, neon_blue, 2)
-        cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) 
-
-        # Das temporäre Bild mit dem Overlay blitzschnell ins Tkinter-Label werfen
-        img_pil = Image.fromarray(cv2.cvtColor(temp_img, cv2.COLOR_BGR2RGB))
-        self.tk_image = ImageTk.PhotoImage(img_pil)
-        self.lbl_image.config(image=self.tk_image)
+        # ---> DER FIX: Ausgelagerte Zeichenfunktion aufrufen <---
+        self._draw_crosshair(x, y)
 
     def on_mouse_leave(self, event):
         self.lbl_coords.config(text="Maus nicht im Bild")
+        
+        # ---> NEU: Position löschen, da die Maus nicht mehr da ist <---
+        self.last_mouse_x = None
+        self.last_mouse_y = None
         
         # ---> NEU: Wieder das cleane Base-Image anzeigen, wenn die Maus weg ist <---
         if getattr(self, 'base_combined_img', None) is not None:
@@ -1141,7 +1199,7 @@ class LaborApp:
             self.pick_color_from_event(event)
             self.toggle_color_picker() 
             return
-
+    
     def toggle_color_picker(self):
         """Schaltet den Modus um und ändert das Aussehen des Buttons/Mauszeigers"""
         self.color_picker_active = not getattr(self, 'color_picker_active', False)
@@ -1348,34 +1406,47 @@ class LaborApp:
         cx = (neun_l[0] + neun_r[0]) / 2.0
         cy = (neun_o[1] + neun_u[1]) / 2.0
 
-        # A) Basis-Skalierung (px_pro_mm) ausschließlich am zentralen 9er-Ring messen
-        neun_px_x = abs(neun_r[0] - neun_l[0])
-        neun_px_y = abs(neun_u[1] - neun_o[1])
+        # =========================================================================
+        # A) Best-Fit Regressions-Analyse (Least Squares) über alle 3 Ringe
+        # Minimiert den quadratischen Fehler über die gesamte Scheibe.
+        # =========================================================================
         
-        px_mm_x = neun_px_x / neun_mm if neun_mm > 0 else 0
-        px_mm_y = neun_px_y / neun_mm if neun_mm > 0 else 0
+        # Radien in echten Millimetern
+        r_9 = neun_mm / 2.0
+        r_s = spiegel_mm / 2.0
+        r_a = aussen_mm / 2.0
         
-        # B) Hilfsfunktion zur Ermittlung der Fischaugenkorrektur
-        def calc_korrektur(px_measured, mm_real, px_base):
-            if mm_real <= 0 or px_base <= 0: return 0.0
-            r_mm = mm_real / 2.0
-            gemessen_mm = (px_measured / 2.0) / px_base
-            return ((gemessen_mm / r_mm) - 1.0) / r_mm
-
-        # C) Gemessene Pixel-Distanzen für Spiegel und Außenring
-        spiegel_px_x = abs(spiegel_r[0] - spiegel_l[0])
-        spiegel_px_y = abs(spiegel_u[1] - spiegel_o[1])
-        aussen_px_x = abs(aussen_r[0] - aussen_l[0])
-        aussen_px_y = abs(aussen_u[1] - aussen_o[1])
+        # Gemessene Pixel-Radien (X-Achse)
+        p_9_x = abs(neun_r[0] - neun_l[0]) / 2.0
+        p_s_x = abs(spiegel_r[0] - spiegel_l[0]) / 2.0
+        p_a_x = abs(aussen_r[0] - aussen_l[0]) / 2.0
         
-        # D) Korrekturwerte ermitteln
-        korr_spiegel_x = calc_korrektur(spiegel_px_x, spiegel_mm, px_mm_x)
-        korr_spiegel_y = calc_korrektur(spiegel_px_y, spiegel_mm, px_mm_y)
-        korr_aussen_x = calc_korrektur(aussen_px_x, aussen_mm, px_mm_x)
-        korr_aussen_y = calc_korrektur(aussen_px_y, aussen_mm, px_mm_y)
+        # Gemessene Pixel-Radien (Y-Achse)
+        p_9_y = abs(neun_u[1] - neun_o[1]) / 2.0
+        p_s_y = abs(spiegel_u[1] - spiegel_o[1]) / 2.0
+        p_a_y = abs(aussen_u[1] - aussen_o[1]) / 2.0
         
-        # E) Die finale Fischaugenkorrektur als sanfter Durchschnitt
-        avg_korrektur = (korr_spiegel_x + korr_spiegel_y + korr_aussen_x + korr_aussen_y) / 4.0
+        # Umrechnung in gemessene "Pixel pro Millimeter" an den jeweiligen Radien
+        y_data_x = np.array([p_9_x / r_9, p_s_x / r_s, p_a_x / r_a])
+        y_data_y = np.array([p_9_y / r_9, p_s_y / r_s, p_a_y / r_a])
+        x_data = np.array([r_9, r_s, r_a])
+        
+        # Lineare Regression (y = m*x + b)
+        # b ist die Skalierung bei Radius 0 (das exakte optische Zentrum)
+        # m ist die Steigung der Verzerrung
+        m_x, b_x = np.polyfit(x_data, y_data_x, 1)
+        m_y, b_y = np.polyfit(x_data, y_data_y, 1)
+        
+        px_mm_x = b_x
+        px_mm_y = b_y
+        
+        # Die Fischaugenkorrektur (K) ergibt sich aus Steigung / Basis-Skalierung
+        k_x = m_x / b_x if b_x != 0 else 0.0
+        k_y = m_y / b_y if b_y != 0 else 0.0
+        
+        avg_korrektur = (k_x + k_y) / 2.0
+        
+        
         
         dist_diag1 = math.hypot(diag1_o[0] - diag1_u[0], diag1_o[1] - diag1_u[1])
         dist_diag2 = math.hypot(diag2_o[0] - diag2_u[0], diag2_o[1] - diag2_u[1])
@@ -1383,6 +1454,7 @@ class LaborApp:
         # =========================================================================
         # NEU: VALIDIERUNGS-CHECK & MONSTER-LOG
         # =========================================================================
+        
         log_lines = []
         log_lines.append("\n" + "="*70)
         log_lines.append("🎯 KALIBRIERUNGS-PROTOKOLL")
@@ -1540,7 +1612,6 @@ class LaborApp:
             # 1. Info ins Log schreiben
             self.print_log("SYSTEM", f"🎯 RÖNTGEN-SCAN: Dieser Treffer entstand in BILD #{f_num} (Score: {best_shot.get('score', 0.0):.1f})")
             
-            import time
             # 2. Highlight-Daten speichern (für den orangen Kreis)
             self.highlighted_shot = {
                 'pos': best_shot['pos'], 
@@ -1551,8 +1622,20 @@ class LaborApp:
             # Bild neu zeichnen, um das Highlight zu zeigen
             self.update_image_display()
             
-            # Timer setzen, um das Highlight nach 5 Sekunden wieder zu löschen
-            self.root.after(5000, self.clear_highlight)
+            # =========================================================================
+            # ---> DER FIX: Den alten Abschalt-Timer stornieren, falls er noch tickt! <---
+            # =========================================================================
+            if hasattr(self, '_highlight_timer') and self._highlight_timer is not None:
+                self.root.after_cancel(self._highlight_timer)
+                
+            # Timer setzen und sich die Auftragsnummer merken
+            self._highlight_timer = self.root.after(5000, self.clear_highlight)
+
+    def clear_highlight(self):
+        """Löscht das orangene/lila Highlight nach Ablauf des Timers"""
+        self.highlighted_shot = None
+        self._highlight_timer = None  # ---> NEU: Auftraggeber zurücksetzen
+        self.update_image_display()
 
     def clear_highlight(self):
         """Löscht das orangene Highlight nach Ablauf des Timers"""
@@ -1574,13 +1657,63 @@ class LaborApp:
         self.lbl_image.place(x=self.pan_x, y=self.pan_y)
         
     def reset_view(self, event=None):
-        """Setzt Zoom und Position zurück (z.B. bei Rechtsklick)"""
-        self.zoom_factor = 1.0
-        self.pan_x = 0
-        self.pan_y = 0
-        self.lbl_image.place(x=0, y=0)
+        """Setzt Zoom und Position zurück (Auto-Fit bei Rechtsklick)"""
+        if getattr(self, 'current_zip_path', None):
+            self.auto_zoom_and_center()
+        else:
+            self.zoom_factor = 1.0
+            self.pan_x = 0
+            self.pan_y = 0
+            self.lbl_image.place(x=0, y=0)
+            
         self.update_image_display()
+    
+    def auto_zoom_and_center(self):
+        """Berechnet den optimalen Zoom, sodass das Doppel-Bild exakt in den sichtbaren Bereich passt."""
+        side = self.active_camera_var.get() # Liefert 'left' oder 'right'
         
+        # 1. Original-Bildgröße ermitteln (Fallback 720x1280)
+        h, w = 720, 1280
+        
+        # ---> DER FIX: Dateinamen nutzen 'left'/'right' (side), nicht 'links'/'rechts' (seite_str)! <---
+        ref_name = next((f for f in getattr(self, 'all_files', []) if f"referenz_{side}" in f), None)
+        if ref_name:
+            ref_img = self.get_img(ref_name)
+            if ref_img is not None:
+                h, w = ref_img.shape[:2]
+                
+        # 2. Verfügbaren Platz in der GUI dynamisch ermitteln
+        self.root.update_idletasks() # Wartet intern, bis das Fenster gezeichnet ist
+        container_h = self.img_container.winfo_height()
+        container_w = self.img_container.winfo_width()
+        
+        # Fallback-Maße, falls die GUI im Hintergrund noch lädt
+        if container_h < 100: container_h = 800
+        if container_w < 100: container_w = 1200
+        
+        # 3. Ziel-Skalierung berechnen (Wir lassen keinen Rand (vorher 0.95) für eine schöne Optik)
+        # Wir brauchen Platz für 2 Bilder nebeneinander (w * 2.0)
+        target_scale_w = (container_w * 1.00) / (w * 2.0)
+        target_scale_h = (container_h * 1.00) / float(h)
+        
+        # Der kleinere Wert gewinnt, damit garantiert nichts abgeschnitten wird
+        target_scale = min(target_scale_w, target_scale_h)
+        
+        # 4. Den internen zoom_factor der Engine füttern
+        # (Die Engine rechnet intern immer mit einer Basis-Höhe von 550 Pixeln)
+        self.zoom_factor = target_scale * (h / 550.0)
+        self.zoom_factor = max(0.2, min(self.zoom_factor, 10.0)) # Sicherheits-Grenzen
+        
+        # Echte Skalierung für das Panning (falls die Grenzen gegriffen haben)
+        echte_scale = (550.0 / h) * self.zoom_factor
+        
+        # 5. Bild exakt mittig in den Container pinnen
+        self.pan_x = int((container_w - (w * 2.0 * echte_scale)) / 2.0)
+        self.pan_y = int((container_h - (h * echte_scale)) / 2.0)
+        
+        self.lbl_image.place(x=self.pan_x, y=self.pan_y)
+
+    
     def on_mouse_scroll(self, event):
         old_zoom = self.zoom_factor
         
@@ -2799,6 +2932,35 @@ class LaborApp:
                     cv2.circle(combined, (scaled_x, scaled_y), 1, (0, 255, 255), -1, cv2.LINE_AA)
         
         # =========================================================================
+        # ---> NEU: Blinkende orangene Kreise für AKTUELLE Treffer im rechten Bild <---
+        # =========================================================================
+        if getattr(self, 'blink_state', True) and hasattr(self, 'current_engine_shots'):
+            # Wir nutzen den exakten Erkennungs-Radius, passend zum Zoom skaliert
+            base_r = getattr(self, 'current_radius_px', 15)
+            scaled_r = round(base_r * self.current_scale)
+            
+            side = getattr(self, 'current_side', self.active_camera_var.get())
+            current_frame_num = self.current_index
+            
+            for shot in self.current_engine_shots:
+                # Nur Treffer dieser Kamera und dieses exakten Frames!
+                if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
+                    hx, hy = shot['pos']
+                    
+                    # Koordinaten auf das linke Bild skalieren...
+                    scaled_x1 = round(hx * self.current_scale)
+                    scaled_y = round(hy * self.current_scale)
+                    
+                    # ...und für das rechte Bild verschieben!
+                    scaled_x2 = scaled_x1 + self.current_img_w 
+                    
+                    # Haardünner, orangener Kreis mit perfekter Kantenglättung
+                    cv2.circle(combined, (scaled_x2, scaled_y), scaled_r, (0, 165, 255), 1, cv2.LINE_AA)
+                    
+                    # Optional: Ein winziger, schwarzer Punkt in der Mitte für mehr Kontrast
+                    cv2.circle(combined, (scaled_x2, scaled_y), 1, (0, 0, 0), -1, cv2.LINE_AA)
+
+        # =========================================================================
         # ---> NEU: Das präzise, dünne Treffer-Highlight (Röntgen-Klick) <---
         # =========================================================================
         hl = getattr(self, 'highlighted_shot', None)
@@ -2984,6 +3146,10 @@ class LaborApp:
                     var = tk.StringVar(value=val_str)
                     cb = ttk.Combobox(row, textvariable=var, values=targets, state="readonly", width=20)
                     cb.pack(side=tk.RIGHT)
+                    
+                    # ---> DER FIX: Wir zwingen Python, die Variable am Leben zu lassen! <---
+                    cb.var_ref = var 
+                    
                     var.trace_add("write", make_trace_cmd(section, key, var))
 
                 # 2. BOOLEAN (yes/no) - '0' und '1' wurden hier als Trigger entfernt!
