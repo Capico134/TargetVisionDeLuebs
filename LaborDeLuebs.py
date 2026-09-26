@@ -451,6 +451,8 @@ class LaborApp:
         self.lbl_image.bind('<B1-Motion>', self.on_drag_motion)
         self.lbl_image.bind('<ButtonRelease-1>', self.on_drag_stop) # <--- NEU: Der Loslass-Erkenner!
         self.lbl_image.bind('<Button-3>', self.reset_view)
+        # ---> NEU: Mittelklick zentriert den letzten Treffer! <---
+        self.lbl_image.bind('<Button-2>', self.center_on_last_shot)
         
         # Das Log-Fenster (Standard-Höhe etwas kleiner, da man es ja nun größer ziehen kann)
         self.log_text = tk.Text(self.paned_window, height=12, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
@@ -1667,6 +1669,59 @@ class LaborApp:
             self.lbl_image.place(x=0, y=0)
             
         self.update_image_display()
+
+    def center_on_last_shot(self, event=None):
+        """Zentriert den letzten Schuss des aktuellen Bildes in der angeklickten Bildhälfte."""
+        if not getattr(self, 'current_engine_shots', None) or not hasattr(self, 'current_scale'):
+            return
+            
+        side = self.active_camera_var.get()
+        current_frame_num = self.current_index
+        
+        # Alle Treffer dieses Bildes (und dieser Kamera) filtern
+        valid_shots = [s for s in self.current_engine_shots if s.get('side') == side and s.get('labor_frame_num') == current_frame_num]
+        
+        if not valid_shots:
+            self.print_log("SYSTEM", "Mittelklick: Kein Treffer in diesem Bild gefunden, auf den zentriert werden könnte.")
+            return
+            
+        # Den absolut letzten Treffer aus der Liste schnappen
+        latest_shot = valid_shots[-1]
+        hx, hy = latest_shot['pos']
+        
+        # Fenstermaße aktualisieren und abrufen
+        self.root.update_idletasks()
+        container_w = self.img_container.winfo_width()
+        container_h = self.img_container.winfo_height()
+        
+        # Auf welche der beiden Hälften (Links oder Rechts) wurde geklickt?
+        is_left = (event.x < getattr(self, 'current_img_w', 0))
+        
+        if is_left:
+            # X-Koordinate im skalierten Bild
+            shot_img_x = hx * self.current_scale
+            # Ziel-Punkt ist das Zentrum der LINKEN Bildschirmhälfte (also 25% der Gesamtbreite)
+            target_container_x = (container_w / 4.0) * 2.0
+        else:
+            # X-Koordinate im skalierten Bild (um die linke Bildhälfte nach rechts verschoben)
+            shot_img_x = (hx * self.current_scale) + self.current_img_w
+            # Ziel-Punkt ist das Zentrum der RECHTEN Bildschirmhälfte (also 75% der Gesamtbreite)
+            target_container_x = (container_w / 4.0) * 2.0
+            
+        shot_img_y = hy * self.current_scale
+        # Y-Ziel ist exakt die vertikale Mitte des Containers
+        target_container_y = container_h / 2.0
+        
+        # Neue Kamera-Verschiebung (Pan) berechnen
+        self.pan_x = int(target_container_x - shot_img_x)
+        self.pan_y = int(target_container_y - shot_img_y)
+        
+        # Bild verschieben
+        self.lbl_image.place(x=self.pan_x, y=self.pan_y)
+        
+        # Falls die Maus nach dem Klick liegen bleibt, triggern wir kurz ein Move-Event, 
+        # damit auch das Fadenkreuz und die Koordinaten sofort aktualisiert werden
+        self.on_mouse_move(event)
     
     def auto_zoom_and_center(self):
         """Berechnet den optimalen Zoom, sodass das Doppel-Bild exakt in den sichtbaren Bereich passt."""
@@ -2825,7 +2880,7 @@ class LaborApp:
                     
                     if start_pt != end_pt:
                         # Verbindung nur in Ansicht 4 zeichnen
-                        cv2.line(right_img, start_pt, end_pt, gruen, 1, cv2.LINE_AA)
+                        cv2.line(right_img, start_pt, end_pt, gruen, 1, cv2.LINE_8) #cv2.LINE_AA)
 
                     # Beide Endpunkte: Abrisskante + gefundener CoG/MEC-Punkt
                     cv2.circle(right_img, start_pt, 2, hellblau, -1)
@@ -2884,7 +2939,7 @@ class LaborApp:
                     # =========================================================================
                     def draw_dashed_ellipse(img, center, rx, ry, color):
                         for angle in range(1, 361, 6): # um 1° verdreht # for angle in range(0, 360, 6): # um 1° verdreht
-                            cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 2, color, 1, cv2.LINE_AA)
+                            cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 2, color, 1, cv2.LINE_8) #cv2.LINE_AA)
                     
                     # 2. Alle Standard-Ringe gestrichelt zeichnen
                     seite_str = "links" if side == 'left' else "rechts"
@@ -2920,13 +2975,13 @@ class LaborApp:
                         def draw_orange_ellipse(img, center, rx, ry, color):
                             if rx <= 0 or ry <= 0: return
                             for angle in range(0, 360, 12):
-                                cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 4, color, 1, cv2.LINE_AA)
+                                cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 4, color, 1, cv2.LINE_8) #cv2.LINE_AA)
                                 
                         # Lila: 12-Grad-Raster ab 6 Grad (versetzt in die Lücken)
                         def draw_purple_ellipse(img, center, rx, ry, color):
                             if rx <= 0 or ry <= 0: return
                             for angle in range(6, 360, 12):
-                                cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 4, color, 1, cv2.LINE_AA)
+                                cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 4, color, 1, cv2.LINE_8) #cv2.LINE_AA)
                                 
                         color_outer = (0, 165, 255) # Kräftiges Orange (Pappe 1 bis 10)
                         color_inner = (82, 4, 87)   # Lila (10er-Mittelpunktwertung)
@@ -2963,6 +3018,27 @@ class LaborApp:
                                 rx = round((r_mm_draw * px_x) * self.current_scale)
                                 ry = round((r_mm_draw * px_y) * self.current_scale)
                                 draw_purple_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, color_inner)
+        
+        # =========================================================================
+        # ---> NEU: Original-Treffer als hochauflösende GUI-Kreise im rechten Bild <---
+        # =========================================================================
+        if getattr(self, 'show_orig_hits_var', None) and self.show_orig_hits_var.get():
+            orig_shots = getattr(self, 'last_orig_shots_to_draw', [])
+            if orig_shots:
+                # Offiziellen Radius passend zum aktuellen Zoom skalieren
+                base_r = getattr(self, 'official_radius_px', 15)
+                scaled_r = round(base_r * self.current_scale)
+                
+                for s in orig_shots:
+                    hx, hy = s['x'], s['y']
+                    # Skalieren und um die linke Bildbreite nach rechts verschieben
+                    scaled_x = round(hx * self.current_scale) + self.current_img_w
+                    scaled_y = round(hy * self.current_scale)
+                    
+                    # Haardünner gelber Kreis (BGR: 0, 255, 255) mit Kantenglättung (LINE_AA)
+                    cv2.circle(combined, (scaled_x, scaled_y), scaled_r, (0, 255, 255), 1, cv2.LINE_8) #cv2.LINE_AA)
+                    # Winziger Mittelpunkt für absolute Präzision
+                    cv2.circle(combined, (scaled_x, scaled_y), 1, (0, 255, 255), -1, cv2.LINE_8) #cv2.LINE_AA)
         
         # =========================================================================
         # ---> NEU: Blinkende orangene Ellipsen für AKTUELLE Treffer im rechten Bild 
@@ -3033,13 +3109,13 @@ class LaborApp:
                             ry = round((r_tan_mm * px_y) * self.current_scale)
                             
                             # Perfekt korrigierte, ausgerichtete Ellipse zeichnen
-                            cv2.ellipse(combined, (scaled_x2, scaled_y), (int(rx), int(ry)), angle_deg, 0, 360, (0, 165, 255), 1, cv2.LINE_AA)
+                            cv2.ellipse(combined, (scaled_x2, scaled_y), (int(rx), int(ry)), angle_deg, 0, 360, (0, 165, 255), 1, cv2.LINE_8) #cv2.LINE_AA)
                         else:
                             # Fallback exakt im Zentrum
-                            cv2.circle(combined, (scaled_x2, scaled_y), fallback_r, (0, 165, 255), 1, cv2.LINE_AA)
+                            cv2.circle(combined, (scaled_x2, scaled_y), fallback_r, (0, 165, 255), 1, cv2.LINE_8) #cv2.LINE_AA)
                     else:
                         # Fallback ohne bekanntes Zentrum
-                        cv2.circle(combined, (scaled_x2, scaled_y), fallback_r, (0, 165, 255), 1, cv2.LINE_AA)
+                        cv2.circle(combined, (scaled_x2, scaled_y), fallback_r, (0, 165, 255), 1, cv2.LINE_8) #cv2.LINE_AA)
                         
                     # Kleiner schwarzer Kontrastpunkt im Zentrum des Treffers
                     cv2.circle(combined, (scaled_x2, scaled_y), 1, (0, 0, 0), -1)
@@ -3072,7 +3148,7 @@ class LaborApp:
                 cv2.circle(combined, (scaled_x1, scaled_y), 2, color, -1)        # <--- Der eigentliche lila Punkt
                 
                 # ---> NEU: Fette, große Schrift (Scale 1.2, Dicke 2) <---
-                cv2.putText(combined, f"#{f_num}", (scaled_x1 - 25, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2, cv2.LINE_AA)
+                cv2.putText(combined, f"#{f_num}", (scaled_x1 - 25, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2, cv2.LINE_8) #cv2.LINE_AA)
                 
                 # Highlight Rechts (Gespiegelt)
                 cv2.circle(combined, (scaled_x2, scaled_y), scaled_r, color, line_thickness)
@@ -3080,7 +3156,7 @@ class LaborApp:
                 cv2.circle(combined, (scaled_x2, scaled_y), 2, color, -1)        # <--- Der eigentliche lila Punkt
                 
                 # ---> NEU: Auf der rechten Seite noch einen Tick größer (Scale 1.5, Dicke 3) <---
-                cv2.putText(combined, f"#{f_num}", (scaled_x2 - 30, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_AA)
+                cv2.putText(combined, f"#{f_num}", (scaled_x2 - 30, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_8) #cv2.LINE_AA)
         
         # =========================================================================
         # ---> NEU: Dynamischer ELA-Layer für den Kalibrierungs-Assistenten <---

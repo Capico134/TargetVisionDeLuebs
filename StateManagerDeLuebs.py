@@ -168,34 +168,35 @@ class StateManager:
             dx_px = abs(cx - nullpunkt[0])
             dy_px = abs(cy - nullpunkt[1])
             
-            # 1. Den gemessenen Pixel-Radius ausrechnen
-            # Anstatt getrennte X/Y-Strecken zu nehmen, mitteln wir die Pixel-Skalierung für den Radius
-            avg_px = (px_x + px_y) / 2.0
-            dist_px = math.hypot(dx_px, dy_px)
+            # 1. Strecken einzeln in Millimeter umrechnen (Unterschiedliche Pixel-Seitenverhältnisse respektieren!)
+            dx_mm_obs = dx_px / px_x
+            dy_mm_obs = dy_px / px_y
+            
+            # Die optisch gemessene, verzerrte Distanz in Millimetern
+            dist_mm_obs = math.hypot(dx_mm_obs, dy_mm_obs)
             
             # =========================================================================
-            # ---> DER FIX: Korrekte Fischaugen-Umkehrfunktion für die Distanz! <---
+            # ---> DER FIX: Korrekte Fischaugen-Umkehrfunktion auf den ECHTEN Millimetern! <---
             # =========================================================================
             korrektur = self.config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
             
             if korrektur != 0.0:
-                # Wir suchen die ECHTEN Millimeter (dist_mm), wissen aber nur, wie viele Pixel 
-                # der Detector auf dem verbogenen Bild gesehen hat.
-                # Formel (vom Zeichnen): dist_px = dist_mm * (1 + dist_mm * k) * avg_px
+                # Wir suchen die ECHTE physikalische Distanz (dist_mm).
+                # Formel (vom Zeichnen): dist_mm_obs = dist_mm * (1 + dist_mm * korrektur)
                 # Umgestellt nach dist_mm mittels p-q-Formel:
                 a = korrektur
                 b = 1.0
-                c = - (dist_px / avg_px)
+                c = -dist_mm_obs
                 
                 diskriminante = b**2 - 4*a*c
                 if diskriminante >= 0:
                     # Wir nehmen die positive Wurzel
                     dist_mm = (-b + math.sqrt(diskriminante)) / (2*a)
                 else:
-                    dist_mm = dist_px / avg_px # Fallback bei mathematisch unmöglichen Werten
+                    dist_mm = dist_mm_obs # Fallback bei mathematisch unmöglichen Werten
             else:
                 # Keine Korrektur aktiv
-                dist_mm = dist_px / avg_px
+                dist_mm = dist_mm_obs
             
             aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
             targets = self.dm.load_targets()
