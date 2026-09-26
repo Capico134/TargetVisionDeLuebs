@@ -16,6 +16,9 @@ from datetime import datetime
 
 # ---> HIER IMPORTIEREN WIR DEINE ECHTE ENGINE UND DEN MANAGER! <---
 from DetectionDeLuebs import TargetDetector
+from LaborRendererDeLuebs import LaborRenderer
+from LaborUIDeLuebs import LaborUIBuilder
+
 from DateiManagerDeLuebs import DateiManager
 from StateManagerDeLuebs import StateManager
 
@@ -134,6 +137,9 @@ class DummyDateiManager:
 class LaborApp:
     def __init__(self, root):
         self.root = root
+        self.renderer = LaborRenderer(self)
+        self.ui_builder = LaborUIBuilder(self)
+        
         self.root.title("Labor & Einstellungen")
         
         # ---> NEU: ELA-Türsteher (Zeichenfilter) für alle Textfelder registrieren <---
@@ -203,35 +209,47 @@ class LaborApp:
         self.zoom_factor = 1.0
         self.pan_x = 0
         self.pan_y = 0
-        self.view_mode_var = tk.IntVar(value=1)
+        self.view_mode_var = tk.IntVar(value=1) # <--- HIER AUCH ÄNDERN
         
         # ---> NEU: Dynamisches Dictionary für alle Slider und deren Variablen <---
         self.registered_sliders = {}
         
-        self.setup_ui()
+        self.ui_builder.setup_ui()
         
         # ---> NEU: Initialisierung für das Blink-Overlay <---
         self.blink_state = True
         self._toggle_blink()
         self.last_mouse_x = None
         self.last_mouse_y = None
-
+        self.drag_start_x = None
+        self.drag_start_y = None
+        # ---> Strg-Tasten global überwachen (Plattformunabhängig) <---
+        self.is_zoom_box_active = False
+        self.ctrl_is_pressed = False
+        #self.root.bind('<Control_L>', lambda e: setattr(self, 'ctrl_is_pressed', True))
+        #self.root.bind('<Control_R>', lambda e: setattr(self, 'ctrl_is_pressed', True))
+        #self.root.bind('<KeyRelease-Control_L>', lambda e: setattr(self, 'ctrl_is_pressed', False))
+        #self.root.bind('<KeyRelease-Control_R>', lambda e: setattr(self, 'ctrl_is_pressed', False))
+        
     def _toggle_blink(self):
-        """Kippt das Blink-Flag alle 500ms und erzwingt einen GUI-Redraw."""
+        """Kippt das Blink-Flag alle 1000ms und erzwingt einen GUI-Redraw."""
         self.blink_state = not getattr(self, 'blink_state', True)
         
-        # Nur das Bild neu zeichnen, KEINE Engine-Neuberechnung!
         if getattr(self, 'base_combined_img', None) is not None:
-            self.update_image_display()
-            
-            # ---> DER FIX: Wenn die Maus noch im Bild ist, das Fadenkreuz direkt wieder drauflegen! <---
             mx = getattr(self, 'last_mouse_x', None)
             my = getattr(self, 'last_mouse_y', None)
+            
+            # ---> DER FIX: Doppeltes Tkinter-Update bei extremer Größe verhindern! <---
             if mx is not None and my is not None:
-                self._draw_crosshair(mx, my)
+                # Bild stumm im Hintergrund (RAM) updaten, OHNE es an Tkinter zu senden
+                self.renderer.update_image_display(full_rebuild=False, push_to_gui=False)
+                # Das Fadenkreuz übernimmt den fertigen RGB-Cache und schickt ihn an Tkinter
+                self.renderer.draw_crosshair(mx, my)
+            else:
+                # Maus ist nicht im Bild -> Normal updaten
+                self.renderer.update_image_display(full_rebuild=False, push_to_gui=True)
             
         self.root.after(1000, self._toggle_blink)
-
     def validate_float_chars(self, P):
         """Erlaubt nur Ziffern, Punkt, Minus, Plus und E (für wissenschaftliche Notation)"""
         return all(c in "0123456789+-.eE" for c in P)
@@ -239,504 +257,6 @@ class LaborApp:
     def validate_int_chars(self, P):
         """Erlaubt nur Ziffern, Plus und Minus"""
         return all(c in "0123456789+-" for c in P)
-        
-    # ---> ELA FIX: Optionaler tooltip_key Parameter hinzugefügt <---
-    def make_slider(self, parent, label_text, tk_var, from_, to_, res=1, section="Erkennung", key=None, odd_only=False, tooltip_key=None):
-        """Hilfsfunktion für Slider mit direkter Eingabe, Reset und Live-Data-Binding"""
-        if key:
-            self.registered_sliders[key] = tk_var  
-            
-        if odd_only:
-            tk_var._last_val = tk_var.get() 
-            
-        frame = tk.Frame(parent)
-        frame.pack(fill=tk.X, pady=2)
-        
-        lbl = tk.Label(frame, text=label_text, width=25, anchor="w")
-        lbl.pack(side=tk.LEFT)
-        
-        t_key = tooltip_key if tooltip_key else key
-        if t_key and t_key in PARAMETER_LEXIKON:
-            ToolTip(lbl, PARAMETER_LEXIKON[t_key])
-        
-        # ELA-Türsteher anheften
-        is_float = isinstance(tk_var, tk.DoubleVar)
-        vcmd = self.vcmd_float if is_float else self.vcmd_int
-        
-        entry = tk.Entry(frame, width=8, justify="right", validate="key", validatecommand=vcmd)
-        entry.pack(side=tk.RIGHT, padx=(5, 0))
-        entry.insert(0, str(tk_var.get()))
-        
-        # =====================================================================
-        # ---> DER ELA-FIX: Völlige Entkopplung von Slider und Variable! <---
-        # =====================================================================
-        def scale_cmd(val_str):
-            # Wenn wir den Slider per Code bewegen (sync_entry), ignorieren wir diesen Befehl!
-            if getattr(scale, '_ignore_cmd', False):
-                return
-                
-            try:
-                v = int(float(val_str)) if isinstance(tk_var, tk.IntVar) else float(val_str)
-                    
-                if odd_only and isinstance(tk_var, tk.IntVar):
-                    if v > 0 and v % 2 == 0:
-                        last = getattr(tk_var, '_last_val', v)
-                        v = v - 1 if v < last else v + 1
-                        
-                    # Den Slider optisch auf die ungerade Zahl nachziehen
-                    scale._ignore_cmd = True
-                    scale.set(v)
-                    scale._ignore_cmd = False
-                    
-                # Nur updaten, wenn sich WIRKLICH was geändert hat (verhindert Endlosschleifen)
-                if tk_var.get() != v:
-                    tk_var.set(v)
-                    if odd_only:
-                        tk_var._last_val = v
-                    self.on_param_change()
-            except ValueError:
-                pass
-
-        # ACHTUNG: Der Parameter variable=tk_var wurde hier absichtlich entfernt!
-        # ---> NEU: showvalue=0 schaltet die redundante, rundende Zahl über dem Slider ab! <---
-        scale = tk.Scale(frame, from_=from_, to_=to_, resolution=res, orient=tk.HORIZONTAL, command=scale_cmd, showvalue=0)
-        
-        # Slider beim Start einmalig auf den Variablen-Wert eichen
-        scale._ignore_cmd = True
-        scale.set(tk_var.get())
-        scale._ignore_cmd = False
-        
-        scale.pack(side=tk.RIGHT, fill=tk.X, expand=True)
-        
-        def apply_entry_val(event=None):
-            try:
-                val = int(float(entry.get())) if isinstance(tk_var, tk.IntVar) else float(entry.get())
-                    
-                if odd_only and isinstance(tk_var, tk.IntVar):
-                    if val > 0 and val % 2 == 0:
-                        val += 1 
-                        
-                if val != tk_var.get():
-                    tk_var.set(val)
-                    if odd_only:
-                        tk_var._last_val = val
-                    self.on_param_change(force=True)
-                    
-            except ValueError:
-                pass 
-                
-            entry.delete(0, tk.END)
-            entry.insert(0, str(tk_var.get()))
-
-            if event and hasattr(event, 'keysym') and event.keysym == 'Return':
-                self.root.focus_set()
-
-        entry.bind('<Return>', apply_entry_val)
-        entry.bind('<FocusOut>', apply_entry_val)
-        
-        def sync_entry(*args):
-            if self.root.focus_get() != entry:
-                entry.delete(0, tk.END)
-                entry.insert(0, str(tk_var.get()))
-                
-            # ---> NEU: Den Slider stumm nachführen, ohne dass er zurückschießt! <---
-            scale._ignore_cmd = True
-            scale.set(tk_var.get())
-            scale._ignore_cmd = False
-                
-            var_key = str(tk_var)
-            if hasattr(self, 'original_values') and var_key in self.original_values:
-                if str(tk_var.get()) != str(self.original_values[var_key]):
-                    lbl.config(fg="#e74c3c", font=("Segoe UI", 9, "bold"))
-                    if not lbl.cget("text").startswith("*"):
-                        lbl.config(text=f"* {label_text}")
-                else:
-                    lbl.config(fg="black", font=("Segoe UI", 9, "normal")) 
-                    lbl.config(text=label_text)
-                
-        tk_var.trace_add("write", sync_entry)
-
-        if key:
-            def sync_to_config(*args):
-                if getattr(self, 'package_data', None) and self.package_data.get('config'):
-                    parser = self.package_data['config']
-                    if not parser.has_section(section):
-                        parser.add_section(section)
-                    parser.set(section, key, str(tk_var.get()))
-            
-            tk_var.trace_add("write", sync_to_config)
-
-        def reset_to_original(event):
-            self.root.focus_set()
-            var_key = str(tk_var)
-            if hasattr(self, 'original_values') and var_key in self.original_values:
-                tk_var.set(self.original_values[var_key])
-                if odd_only:
-                    tk_var._last_val = tk_var.get()
-                self.on_param_change(force=True)
-            return "break" 
-                
-        scale.bind('<Button-2>', reset_to_original)
-        lbl.bind('<Button-2>', reset_to_original)
-        entry.bind('<Button-2>', reset_to_original)
-
-    def setup_ui(self):
-        # TOP FRAME
-        top_frame = tk.Frame(self.root, pady=10, padx=10)
-        top_frame.pack(fill=tk.X)
-        
-        tk.Button(top_frame, text="📦 ZIP-Paket laden", command=self.load_zip, font=("Arial", 10, "bold")).pack(side=tk.LEFT)
-        
-        # ---> NEU: Der Pipetten-Button <---
-        self.color_picker_active = False
-        self.btn_pick_color = tk.Button(top_frame, text="🎨 Farbe picken", command=self.toggle_color_picker, bg="#f39c12", fg="white", font=("Arial", 10, "bold"))
-        self.btn_pick_color.pack(side=tk.LEFT, padx=(20, 0))
-        
-        # ---> NEU: Der Kalibrierungs-Assistent <---
-        self.calib_mode_active = False
-        self.calib_points = []
-        self.btn_calib_assist = tk.Button(top_frame, text="📏 Kalibrierung", command=self.start_calibration_assist, bg="#8e44ad", fg="white", font=("Arial", 10, "bold"))
-        self.btn_calib_assist.pack(side=tk.LEFT, padx=(20, 0))
-        
-        # ---> lbl_file wurde hier komplett gelöscht! <---
-        
-        self.btn_compare = tk.Button(top_frame, text="📊 Abweichungen", command=self.show_comparison, font=("Arial", 10, "bold"))
-        self.btn_compare.pack(side=tk.LEFT, padx=20)        
-        
-        btn_export = tk.Button(top_frame, text="💾 Test-Case-Export", command=self.export_test_case)
-        btn_export.pack(side=tk.LEFT, pady=5, padx=(0, 20))
-        
-        btn_einstellungen = tk.Button(top_frame, text="⚙️ Erweiterte Einstellungen", command=self.open_all_settings_dialog, bg="#34495e", fg="white")
-        btn_einstellungen.pack(side=tk.LEFT, pady=5, padx=(0, 20))
-        
-        # ---> NEU: Der lange, eindeutige Button-Text <---
-        self.btn_apply = tk.Button(top_frame, text="✅ Einstellungen speichern", 
-                                   command=self.apply_to_live, bg="#27ae60", fg="white", font=("Arial", 10, "bold"))
-        self.btn_apply.pack(side=tk.LEFT, pady=5)
-        
-        self.lbl_coords = tk.Label(top_frame, text="Maus nicht im Bild", font=("Consolas", 12, "bold"), fg="#3498db")
-        self.lbl_coords.pack(side=tk.RIGHT, padx=15)
-        
-        # MAIN FRAME
-        main_frame = tk.Frame(self.root, padx=10, pady=10)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # LINKS: Bild-Ansicht (Text für den Nutzer als Hilfestellung angepasst)
-        self.image_frame = tk.LabelFrame(main_frame, text=" Live-Labor (Mausrad = Zoom | Linksklick = Bewegen | Rechtsklick = Reset) ", bg="#222222", fg="white")
-        self.image_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
-        
-        # =========================================================================
-        # ---> NEU: Das PanedWindow für den flexiblen Trennstrich (Doppelpfeil) <---
-        # =========================================================================
-        self.paned_window = tk.PanedWindow(self.image_frame, orient=tk.VERTICAL, sashwidth=9, sashrelief=tk.RAISED, bg="#555555")
-        self.paned_window.pack(fill=tk.BOTH, expand=True)
-
-        # Ein extra Container für das Bild, damit unser freies Verschieben (place) weiterhin klappt
-        self.img_container = tk.Frame(self.paned_window, bg="#222222")
-        
-        self.lbl_image = tk.Label(self.img_container, text="Warte auf ZIP-Datei...", bg="#222222", fg="gray", font=("Arial", 14))
-        self.lbl_image.place(x=0, y=0, anchor=tk.NW)
-        
-        # ---> NEU: Maus-Events binden <---
-        self.lbl_image.bind('<Motion>', self.on_mouse_move)
-        self.lbl_image.bind('<Leave>', self.on_mouse_leave)
-        
-        # ---> NEU: Zoom-Events (Mausrad) <---
-        self.lbl_image.bind('<MouseWheel>', self.on_mouse_scroll) # Windows / Mac
-        self.lbl_image.bind('<Button-4>', self.on_mouse_scroll)   # Linux (Hoch)
-        self.lbl_image.bind('<Button-5>', self.on_mouse_scroll)   # Linux (Runter)
-        
-        # ---> NEU: Drag & Drop (Verschieben) + Reset <---
-        self.lbl_image.bind('<ButtonPress-1>', self.on_drag_start)
-        self.lbl_image.bind('<B1-Motion>', self.on_drag_motion)
-        self.lbl_image.bind('<ButtonRelease-1>', self.on_drag_stop) # <--- NEU: Der Loslass-Erkenner!
-        self.lbl_image.bind('<Button-3>', self.reset_view)
-        # ---> NEU: Mittelklick zentriert den letzten Treffer! <---
-        self.lbl_image.bind('<Button-2>', self.center_on_last_shot)
-        
-        # Das Log-Fenster (Standard-Höhe etwas kleiner, da man es ja nun größer ziehen kann)
-        self.log_text = tk.Text(self.paned_window, height=12, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
-        
-        # ---> Beide Elemente in den Splitter werfen <---
-        self.paned_window.add(self.img_container, stretch="always") # Das Bild bekommt den restlichen Platz
-        self.paned_window.add(self.log_text, stretch="never")       # Das Textfeld hält seine Form, kann aber gezogen werden
-        # -------------------------------------------
-        
-        # RECHTS: Steuerpult (Nur noch EINMAL definiert!)
-        control_frame = tk.Frame(main_frame, width=400)
-        control_frame.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # ==========================================================
-        # ---> DER KAMERA-UMSCHALTER <---
-        # ==========================================================
-        cam_frame = tk.LabelFrame(control_frame, text=" Aktive Kamera ", pady=5, padx=5)
-        cam_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        self.active_camera_var = tk.StringVar(value="left")
-        
-        self.rb_cam_left = tk.Radiobutton(cam_frame, text="Kamera Links", variable=self.active_camera_var, value="left", command=self.switch_camera)
-        self.rb_cam_left.pack(side=tk.LEFT, expand=True)
-        
-        self.rb_cam_right = tk.Radiobutton(cam_frame, text="Kamera Rechts", variable=self.active_camera_var, value="right", command=self.switch_camera)
-        self.rb_cam_right.pack(side=tk.LEFT, expand=True)
-        # ==========================================================
-        
-        # Bild-Navigation (Nur noch EINMAL definiert!)
-        nav_frame = tk.LabelFrame(control_frame, text=" Bild-Navigation ", pady=10, padx=10)
-        nav_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        # ---> 5 Buttons mit fester Breite und ohne Expand <---
-        self.btn_first = tk.Button(nav_frame, text="<<", state=tk.DISABLED, command=self.first_shot, width=3)
-        self.btn_first.pack(side=tk.LEFT, padx=(0, 2))
-        self.btn_prev = tk.Button(nav_frame, text="◀ Zurück", state=tk.DISABLED, command=self.prev_shot, width=8)
-        self.btn_prev.pack(side=tk.LEFT)
-        # ---> NEU: Interaktiver Bereich in der Mitte <---
-        self.shot_nav_frame = tk.Frame(nav_frame)
-        self.shot_nav_frame.pack(side=tk.LEFT, expand=True)
-        tk.Label(self.shot_nav_frame, text="Bild ", font=("Arial", 10, "bold")).pack(side=tk.LEFT)
-        self.shot_jump_var = tk.StringVar(value="-")
-        self.entry_shot_jump = tk.Entry(self.shot_nav_frame, textvariable=self.shot_jump_var, width=4, font=("Arial", 10, "bold"), justify="center")
-        self.entry_shot_jump.pack(side=tk.LEFT)
-        # Binde die Enter-Taste an unsere neue Funktion
-        self.entry_shot_jump.bind('<Return>', self.jump_to_shot)
-        self.lbl_shot_total = tk.Label(self.shot_nav_frame, text=" / -", font=("Arial", 10, "bold"))
-        self.lbl_shot_total.pack(side=tk.LEFT)
-        
-        
-        self.btn_last = tk.Button(nav_frame, text=">>", state=tk.DISABLED, command=self.last_shot, width=3)
-        self.btn_last.pack(side=tk.RIGHT, padx=(2, 0))
-        self.btn_next = tk.Button(nav_frame, text="Weiter ▶", state=tk.DISABLED, command=self.next_shot, width=8)
-        self.btn_next.pack(side=tk.RIGHT)
-        
-        ## ---> NEU: Der Vergleichs-Button <---
-        #self.btn_compare = tk.Button(nav_frame, text="📊 Abweichung zum Original messen", command=self.show_comparison, bg="#2c3e50", fg="white")
-        #self.btn_compare.pack(side=tk.BOTTOM, fill=tk.X, pady=(10,0))
-        
-        # ---> NEU: Ansichts-Steuerung UND Ringwertung im Doppel-Layout <---
-        view_outer_frame = tk.Frame(control_frame)
-        view_outer_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        view_frame = tk.LabelFrame(view_outer_frame, text=" Rechte Bildhälfte ", pady=10, padx=10)
-        view_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
-        
-        tk.Radiobutton(view_frame, text="1) Diff-Bild", variable=self.view_mode_var, value=1, command=self.update_image_display).pack(anchor=tk.W)
-        tk.Radiobutton(view_frame, text="2) Diff-Gesamt", variable=self.view_mode_var, value=2, command=self.update_image_display).pack(anchor=tk.W)
-        tk.Radiobutton(view_frame, text="3) Überlagerung", variable=self.view_mode_var, value=3, command=self.update_image_display).pack(anchor=tk.W)
-        tk.Radiobutton(view_frame, text="4) Raw-Diff", variable=self.view_mode_var, value=4, command=self.update_image_display).pack(anchor=tk.W)
-        tk.Radiobutton(view_frame, text="5) Rohes Bild", variable=self.view_mode_var, value=5, command=self.update_image_display).pack(anchor=tk.W)
-
-        self.score_frame = tk.LabelFrame(view_outer_frame, text=" Ringwertung (Live) ", pady=10, padx=10)
-        self.score_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
-        
-        self.lbl_current_scores = tk.Label(self.score_frame, text="-", justify=tk.LEFT, anchor="nw", font=("Consolas", 12, "bold"), fg="#27ae60")
-        self.lbl_current_scores.pack(fill=tk.BOTH, expand=True)
-        
-        # ---> NEU: Scrollbarer Bereich für die Parameter <---
-        param_outer_frame = tk.LabelFrame(control_frame, text=" Erkennungs-Parameter (Live) ", pady=5, padx=5)
-        param_outer_frame.pack(fill=tk.BOTH, expand=True)
-
-        # Canvas und Scrollbar erstellen
-        canvas = tk.Canvas(param_outer_frame, borderwidth=0, highlightthickness=0)
-        scrollbar = tk.Scrollbar(param_outer_frame, orient="vertical", command=canvas.yview)
-        
-        # Das eigentliche Frame für die Slider, das im Canvas liegt
-        param_frame = tk.Frame(canvas)
-        
-        # Scrollregion dynamisch anpassen, wenn Slider hinzugefügt werden
-        param_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        
-        # Fenster im Canvas erstellen und so konfigurieren, dass es die volle Breite nutzt
-        canvas_window = canvas.create_window((0, 0), window=param_frame, anchor="nw")
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_window, width=e.width))
-        
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # --- Hier kommen die Slider in das neue scrollbare param_frame ---
-        
-        # =====================================================================
-        # ---> NEU: Dynamische Kamera-Kalibrierung (Separiert!) <---
-        # =====================================================================
-        self.calib_outer_frame = tk.LabelFrame(param_frame, text=" Kalibrierung: Kamera Links ", pady=5, padx=5, fg="#2980b9", font=("Arial", 10, "bold"))
-        self.calib_outer_frame.pack(fill=tk.X, pady=(5, 10))
-        
-        self.calib_x_var = tk.DoubleVar(value=5.0)
-        self.calib_y_var = tk.DoubleVar(value=5.0)
-        
-        self.make_slider(self.calib_outer_frame, "Pixel pro mm (X):", self.calib_x_var, 1.0, 15.0, 0.001, key=None, tooltip_key="px_pro_mm")
-        self.make_slider(self.calib_outer_frame, "Pixel pro mm (Y):", self.calib_y_var, 1.0, 15.0, 0.001, key=None, tooltip_key="px_pro_mm")
-
-        self.calib_fischauge_var = tk.DoubleVar(value=0.0)
-        self.make_slider(self.calib_outer_frame, "Fischaugen-Korr.:", self.calib_fischauge_var, -0.01, 0.01, 0.00001, key=None, tooltip_key="fischaugenkorrektur")
-
-        def sync_calib_config(*args):
-            if getattr(self, 'package_data', None) and self.package_data.get('config'):
-                parser = self.package_data['config']
-                side = self.active_camera_var.get()
-                seite_str = "links" if side == 'left' else "rechts"
-                
-                if not parser.has_section('Kameras'): parser.add_section('Kameras')
-                
-                parser.set('Kameras', f'px_pro_mm_x_{seite_str}', str(self.calib_x_var.get()))
-                parser.set('Kameras', f'px_pro_mm_y_{seite_str}', str(self.calib_y_var.get()))
-                parser.set('Kameras', f'fischaugenkorrektur_{seite_str}', str(self.calib_fischauge_var.get()))
-                
-                self.on_param_change()
-                
-        self.calib_x_var.trace_add("write", sync_calib_config)
-        self.calib_y_var.trace_add("write", sync_calib_config)
-        self.calib_fischauge_var.trace_add("write", sync_calib_config)
-        
-        # Der Trenner für die eigentlichen System-Parameter
-        tk.Label(param_frame, text="--- Engine Parameter ---", fg="#3498db").pack(pady=(5, 5))
-        
-        
-        
-        self.make_slider(param_frame, "hit_tolerance:", self.hit_tolerance_var, 1, 100, key="hit_tolerance")
-        self.make_slider(param_frame, "min_hole_area:", self.min_hole_area_var, 5, 500, key="min_hole_area")
-        #self.make_slider(param_frame, "caliber_radius:", self.caliber_radius_var, 5.0, 50.0, res=0.1, key="caliber_radius")
-        self.make_slider(param_frame, "caliber_durchmesser (mm):", self.caliber_durchmesser_var, 3.00, 10.00, res=0.01, key="caliber_durchmesser")
-        tk.Label(param_frame, text="--- Hybrid & Hough Faktoren ---", fg="#3498db").pack(pady=(10, 5))
-        #self.make_slider(param_frame, "hybrid_sichel_faktor:", self.hybrid_sichel_faktor_var, 0.1, 1.5, 0.01, key="hybrid_sichel_faktor")
-        #self.make_slider(param_frame, "hybrid_riss_faktor:", self.hybrid_riss_faktor_var, 1.0, 3.0, 0.001, key="hybrid_riss_faktor")
-        self.make_slider(param_frame, "hybrid_discard_faktor:", self.hybrid_discard_faktor_var, 1.5, 5.0, 0.1, key="hybrid_discard_faktor")
-        self.make_slider(param_frame, "grenzwert_hough:", self.grenzwert_hough_var, 0.0, 20.0, 0.5, key="grenzwert_hough") #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        self.make_slider(param_frame, "hough_min_faktor:", self.hough_min_faktor_var, 0.5, 1.0, 0.01, key="hough_min_faktor")
-        self.make_slider(param_frame, "hough_max_faktor:", self.hough_max_faktor_var, 1.0, 2.0, 0.01, key="hough_max_faktor")
-        self.make_slider(param_frame, "hough_param1 (Kanten):", self.hough_param1_var, 10, 100, key="hough_param1")
-        self.make_slider(param_frame, "hough_param2 (Strenge):", self.hough_param2_var, 1, 20, key="hough_param2")
-        tk.Label(param_frame, text="--- Bild-Filterung ---", fg="#3498db").pack(pady=(10, 5))
-        self.make_slider(param_frame, "blur_kernel_size:", self.blur_kernel_size_var, 1, 31, key="blur_kernel_size", odd_only=True)
-        self.make_slider(param_frame, "randaufschlag_cumulative:", self.randaufschlag_cumulative_var, 0, 10, key="randaufschlag_cumulative")
-        self.make_slider(param_frame, "morph_kernel_size:", self.morph_kernel_var, 0, 15, key="morph_kernel_size", odd_only=True)
-        self.make_slider(param_frame, "max_aspect_ratio (Sichel):", self.max_aspect_ratio_var, 1.5, 6.0, 0.1, key="max_aspect_ratio")
-        tk.Label(param_frame, text="--- Score-Gewichtung ---", fg="#3498db").pack(pady=(10, 5))
-        self.make_slider(param_frame, "gesamt_anteil (Raw):", self.gesamt_anteil_am_200score_var, 0.1, 0.9, 0.001, key="gesamt_anteil_am_200score")
-        tk.Label(param_frame, text="--- Heuristik & Limits ---", fg="#3498db").pack(pady=(10, 5))
-        self.make_slider(param_frame, "abriss_max_edge_percent:", self.abriss_max_edge_percent_var, 0.4, 1.5, 0.01, key="abriss_max_edge_percent")
-        self.make_slider(param_frame, "abriss_base_bonus:", self.abriss_base_bonus_var, 0.0, 30.0, 0.5, key="abriss_base_bonus")
-        self.make_slider(param_frame, "abriss_min_hebel (px):", self.abriss_min_hebel_var, 0.0, 10.0, 0.5, key="abriss_min_hebel") #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        #self.make_slider(param_frame, "early_exit_min_score:", self.early_exit_min_score_var, 100.0, 201.0, 1.0, key="early_exit_min_score")
-        #self.make_slider(param_frame, "early_exit_perfect_score:", self.early_exit_perfect_score_var, 150.0, 201.0, 1.0, key="early_exit_perfect_score")
-        self.make_slider(param_frame, "min_score_valid (Discard):", self.min_score_valid_var, 10.0, 150.0, 1.0, key="min_score_valid")
-        tk.Label(param_frame, text="--- Anti-Doppelzählung ---", fg="#3498db").pack(pady=(10, 5))
-        self.make_slider(param_frame, "clipping_factor_history:", self.clipping_factor_history_var, 0.05, 0.5, 0.01, key="clipping_factor_history")
-        self.make_slider(param_frame, "clipping_factor_current:", self.clipping_factor_current_var, 0.5, 1.5, 0.01, key="clipping_factor_current")
-        # ---> NEU: Slider für das Limit <---
-        self.make_slider(param_frame, "max_treffer_je_frame:", self.max_treffer_je_frame_var, 0, 10, key="max_treffer_je_frame")
-        tk.Label(param_frame, text="--- Anti-Weiß Filter (Farb-Bonus) ---", fg="#3498db").pack(pady=(10, 5))
-        
-        # Checkbutton
-        base_text_farb = "🟢 farb_bonus_aktiv"
-        chk_farb = tk.Checkbutton(param_frame, text=base_text_farb, variable=self.farb_bonus_aktiv_var)
-        chk_farb.pack(anchor=tk.W)
-        self.registered_sliders["farb_bonus_aktiv"] = self.farb_bonus_aktiv_var
-        
-        # ---> ELA FIX: Tooltip manuell an die Checkbox hängen <---
-        if "farb_bonus_aktiv" in PARAMETER_LEXIKON:
-            ToolTip(chk_farb, PARAMETER_LEXIKON["farb_bonus_aktiv"])
-        
-        def sync_farb_config(*args):
-            # 1. Spion für die Config
-            if getattr(self, 'package_data', None) and self.package_data.get('config'):
-                parser = self.package_data['config']
-                if not parser.has_section('Erkennung'): parser.add_section('Erkennung')
-                val_str = "yes" if self.farb_bonus_aktiv_var.get() else "no"
-                parser.set('Erkennung', "farb_bonus_aktiv", val_str)
-                self.on_param_change()
-                
-            # 2. ---> NEU: Visueller Dirty-Marker für die Checkbox <---
-            var_key = str(self.farb_bonus_aktiv_var)
-            if hasattr(self, 'original_values') and var_key in self.original_values:
-                # Prüfen ob der aktuelle Zustand (True/False) vom Original abweicht
-                if self.farb_bonus_aktiv_var.get() != self.original_values[var_key]:
-                    chk_farb.config(fg="#e74c3c", font=("Segoe UI", 9, "bold"), text=f"* {base_text_farb}")
-                else:
-                    chk_farb.config(fg="black", font=("Segoe UI", 9, "normal"), text=base_text_farb)
-                    
-        self.farb_bonus_aktiv_var.trace_add("write", sync_farb_config)
-
-        # ---> NEU: Mittelklick-Reset auch für die Checkbox! <---
-        def reset_farb_to_original(event):
-            var_key = str(self.farb_bonus_aktiv_var)
-            if hasattr(self, 'original_values') and var_key in self.original_values:
-                self.farb_bonus_aktiv_var.set(self.original_values[var_key])
-                self.on_param_change(force=True)
-            return "break" 
-            
-        chk_farb.bind('<Button-2>', reset_farb_to_original)
-        
-        # =========================================================================
-        # ---> HIER SIND DIE BEIDEN VERLORENEN SLIDER WIEDER! <---
-        # =========================================================================
-        self.make_slider(param_frame, "farb_bonus_limit (Distanz):", self.farb_bonus_limit_var, 50.0, 750.0, 5.0, key="farb_bonus_limit")
-        self.make_slider(param_frame, "farb_bonus_kurve (Exponent):", self.farb_bonus_kurve_var, 1.0, 5.0, 0.1, key="farb_bonus_kurve")
-        
-        
-        tk.Checkbutton(param_frame, text="💾 Simulations-Bilder exportieren", 
-                       variable=self.export_images_var, fg="#00aaff").pack(anchor=tk.W, pady=(15, 0))
-
-        # ---> NEU: Zielscheiben-Ringe Checkbox <---
-        self.show_target_rings_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(param_frame, text="🎯 Zielscheibe (Ringe) einblenden", 
-                       variable=self.show_target_rings_var, fg="#27ae60", 
-                       command=lambda: self.on_param_change(force=True)).pack(anchor=tk.W, pady=(5, 0))
-
-        # ---> NEU: Scroll-Fix für das Mausrad im gesamten Parameter-Block <---
-        def _on_mousewheel(event):
-            # Check für Scrollrichtung (Windows/Mac: delta, Linux: num 4/5)
-            if event.num == 4 or getattr(event, 'delta', 0) > 0:
-                canvas.yview_scroll(-1, "units")
-            elif event.num == 5 or getattr(event, 'delta', 0) < 0:
-                canvas.yview_scroll(1, "units")
-
-        def _bind_scroll_recursive(widget):
-            # Bindet das Event an das aktuelle Element
-            widget.bind("<MouseWheel>", _on_mousewheel)
-            widget.bind("<Button-4>", _on_mousewheel)
-            widget.bind("<Button-5>", _on_mousewheel)
-            # Geht rekursiv durch alle Unter-Elemente (Labels, Slider, Frames)
-            for child in widget.winfo_children():
-                _bind_scroll_recursive(child)
-
-        # Die Funktion auf das Canvas und das Frame loslassen
-        _bind_scroll_recursive(canvas)
-        _bind_scroll_recursive(param_frame)
-        
-        # ---> NEU: Pfeiltasten global an das Fenster binden <---
-        self.root.bind('<Left>', self.safe_prev_shot)
-        self.root.bind('<Right>', self.safe_next_shot)
-        # ---> NEU: WASD für das Pixel-Schubsen des Zentrums <---
-        for key_char in ['w', 'a', 's', 'd', 'W', 'A', 'S', 'D']:
-            self.root.bind(f'<{key_char}>', self.nudge_center)
-    
-        # ---> NEU: Original-Treffer Checkbox <---
-        self.show_orig_hits_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(param_frame, text="🟡 Original-Treffer (match.json) einblenden", 
-                       variable=self.show_orig_hits_var, fg="#f1c40f", 
-                       command=lambda: self.on_param_change(force=True)).pack(anchor=tk.W, pady=(5, 0))
-
-        # =========================================================================
-        # ---> NEU: Der globale Anti-Fokus-Trap! <---
-        # =========================================================================
-        def release_focus(event):
-            try:
-                # ---> DER FIX: winfo_class() erkennt auch versteckte Ttk-Widgets zuverlässig! <---
-                valid_classes = ('Entry', 'TCombobox', 'Text', 'Listbox', 'Scrollbar', 'TScrollbar')
-                if event.widget.winfo_class() not in valid_classes:
-                    self.root.focus_set()
-            except AttributeError:
-                pass
-                
-        # bind_all reagiert auf JEDEN Klick im gesamten Fenster
-        self.root.bind_all('<Button-1>', release_focus, add="+")
-        # Zusätzlich: Mit Escape den Cursor jederzeit manuell aus Textfeldern befreien
-        self.root.bind_all('<Escape>', lambda e: self.root.focus_set(), add="+")
 
     def update_calib_sliders(self):
         """Holt die echten Config-Werte der aktuell aktiven Kamera in die GUI-Slider"""
@@ -1077,97 +597,73 @@ class LaborApp:
         self._param_timer = None
         self.process_and_display()
 
-    def _draw_crosshair(self, x, y):
-        """Zeichnet das Fadenkreuz auf das aktuelle Basisbild und zeigt es an."""
-        if getattr(self, 'base_combined_img', None) is None or not hasattr(self, 'current_scale'):
-            return
-            
-        temp_img = self.base_combined_img.copy()
-        kreis_radius = int(getattr(self, 'current_radius_px', 15) * self.current_scale) 
-        neon_blue = (255, 255, 0)
-        
-        # Fadenkreuz zeichnen (mit Spiegel-Logik für die jeweils andere Seite)
-        is_left = (x < self.current_img_w)
-        mirror_x = (x + self.current_img_w) if is_left else (x - self.current_img_w)
-        cv2.circle(temp_img, (mirror_x, y), kreis_radius, neon_blue, 2)
-        cv2.circle(temp_img, (mirror_x, y), 2, neon_blue, -1) 
-
-        # Das temporäre Bild mit dem Overlay blitzschnell ins Tkinter-Label werfen
-        img_pil = Image.fromarray(cv2.cvtColor(temp_img, cv2.COLOR_BGR2RGB))
-        self.tk_image = ImageTk.PhotoImage(img_pil)
-        self.lbl_image.config(image=self.tk_image)
-
     def on_mouse_move(self, event):
         # Wenn noch kein Bild geladen ist, tu nichts
         if getattr(self, 'base_combined_img', None) is None or not hasattr(self, 'current_scale'):
             return
+
+        # =========================================================================
+        # ---> DER FIX: Wir verhindern den tödlichen Tkinter-Stau! <---
+        # =========================================================================
+        if getattr(self, '_is_rendering_crosshair', False):
+            return # Ein 500MB-Bild wird gerade verarbeitet -> weitere Maus-Events abprallen lassen!
             
-        # ---> NEU: Letzte Position für den Blink-Timer retten <---
-        self.last_mouse_x = event.x
-        self.last_mouse_y = event.y
-        
-        x, y = event.x, event.y
-        img_h, img_w = self.base_combined_img.shape[:2]
-        
-        # Sicherheits-Check: Befindet sich die Maus überhaupt innerhalb des Bildes?
-        if x < 0 or y < 0 or x >= img_w or y >= img_h:
-            self.on_mouse_leave(event)
+        import time
+        current_time = time.time()
+        # Maximal 50 FPS erlauben
+        if current_time - getattr(self, 'last_mouse_update_time', 0) < 0.02:
             return
             
-        # Wir nehmen das Base-Image und zeichnen nur auf dieser Kopie herum
-        temp_img = self.base_combined_img.copy()
+        self.last_mouse_update_time = current_time
+        self._is_rendering_crosshair = True # Tür abschließen!
         
-        # Den aktuellen Radius an den Zoom-Faktor anpassen
-        base_r = getattr(self, 'current_radius_px', 15) 
-        kreis_radius = int(base_r * self.current_scale) 
-        neon_blue = (255, 255, 0)
-        
-        # 1. Ermitteln, in welcher Bildhälfte wir sind und die Basis-Koordinaten rechnen
-        is_left = (x < self.current_img_w)
-        raw_x = x if is_left else (x - self.current_img_w)
-        
-        real_x = int(raw_x / self.current_scale)
-        real_y = int(y / self.current_scale)
-        
-        # ---> DER FIX: Schutzplanken gegen Out-of-Bounds <---
-        if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
-            orig_h, orig_w = self.last_clean_live_img.shape[:2]
-            real_x = max(0, min(real_x, orig_w - 1))
-            real_y = max(0, min(real_y, orig_h - 1))
+        try:
+            # Letzte Position für den Blink-Timer retten
+            self.last_mouse_x = event.x
+            self.last_mouse_y = event.y
             
-        # ---> RGB-Werte aus dem Referenzbild holen <---
-        if hasattr(self, 'last_ref_img') and self.last_ref_img is not None:
-            ref_h, ref_w = self.last_ref_img.shape[:2]
-            safe_ref_x = max(0, min(real_x, ref_w - 1))
-            safe_ref_y = max(0, min(real_y, ref_h - 1))
-            ref_b, ref_g, ref_r = self.last_ref_img[safe_ref_y, safe_ref_x]
-            ref_str = f"Ref({ref_r},{ref_g},{ref_b})"
-        else:
-            ref_str = "Ref(-,-,-)"
-
-        # RGB-Werte aus dem nackten Live-Bild holen
-        if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
-            b_val, g_val, r_val = self.last_clean_live_img[real_y, real_x]
-            live_str = f"Live({r_val},{g_val},{b_val})"
-        else:
-            live_str = "Live(-,-,-)"
-
-        diff_val = self.last_raw_diff[real_y, real_x] if hasattr(self, 'last_raw_diff') else 0
-        
-        # Faktor und Farb-Distanz auslesen
-        if hasattr(self, 'last_color_multiplier') and self.last_color_multiplier is not None:
-            factor = self.last_color_multiplier[real_y, real_x]
-            dist_c = self.last_color_dist[real_y, real_x] if hasattr(self, 'last_color_dist') else 0
-            bonus_str = f" | Dist: {dist_c:.0f} | F: {factor:.2f}"
-        else:
-            bonus_str = " | Filter Aus"
+            x, y = event.x, event.y
+            img_h, img_w = self.base_combined_img.shape[:2]
             
-        # UI Update mit Anzeige der Seite
-        side_name = "Live" if is_left else "Rechts"
-        self.lbl_coords.config(text=f"{side_name} X:{real_x:04d} Y:{real_y:04d} | D:{diff_val:03d}{bonus_str}")
-        
-        # ---> DER FIX: Ausgelagerte Zeichenfunktion aufrufen <---
-        self._draw_crosshair(x, y)
+            # Sicherheits-Check: Befindet sich die Maus überhaupt innerhalb des Bildes?
+            if x < 0 or y < 0 or x >= img_w or y >= img_h:
+                self.on_mouse_leave(event)
+                return
+                
+            # 1. Ermitteln, in welcher Bildhälfte wir sind und die Basis-Koordinaten rechnen
+            is_left = (x < self.current_img_w)
+            raw_x = x if is_left else (x - self.current_img_w)
+            
+            real_x = int(raw_x / self.current_scale)
+            real_y = int(y / self.current_scale)
+            
+            # Schutzplanken gegen Out-of-Bounds
+            if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
+                orig_h, orig_w = self.last_clean_live_img.shape[:2]
+                real_x = max(0, min(real_x, orig_w - 1))
+                real_y = max(0, min(real_y, orig_h - 1))
+
+            # Diff-Werte abrufen
+            diff_val = self.last_raw_diff[real_y, real_x] if hasattr(self, 'last_raw_diff') else 0
+            
+            # Faktor und Farb-Distanz auslesen
+            if hasattr(self, 'last_color_multiplier') and self.last_color_multiplier is not None:
+                factor = self.last_color_multiplier[real_y, real_x]
+                dist_c = self.last_color_dist[real_y, real_x] if hasattr(self, 'last_color_dist') else 0
+                bonus_str = f" | Dist: {dist_c:.0f} | F: {factor:.2f}"
+            else:
+                bonus_str = " | Filter Aus"
+                
+            # UI Update mit Anzeige der Seite
+            side_name = "Live" if is_left else "Rechts"
+            self.lbl_coords.config(text=f"{side_name} X:{real_x:04d} Y:{real_y:04d} | D:{diff_val:03d}{bonus_str}")
+            
+            # Direktes, synchrones Zeichnen
+            self.renderer.draw_crosshair(x, y)
+            
+        finally:
+            # Egal was passiert, am Ende wird die Tür wieder aufgeschlossen
+            self._is_rendering_crosshair = False
 
     def on_mouse_leave(self, event):
         self.lbl_coords.config(text="Maus nicht im Bild")
@@ -1182,25 +678,119 @@ class LaborApp:
             self.tk_image = ImageTk.PhotoImage(img_pil)
             self.lbl_image.config(image=self.tk_image)
 
+    def on_zoom_box_start(self, event):
+        """Startet den Rahmen-Zoom (Strg / Shift)"""
+        #if getattr(self, 'calib_mode_active', False) or getattr(self, 'color_picker_active', False):
+        # ---> DER FIX: Wir haben die Kalibrierungs-Sperre entfernt! <---
+        if getattr(self, 'color_picker_active', False):
+            return "break"
+        
+        self.is_zoom_box_active = True
+        self.zoom_box_start_x = event.x
+        self.zoom_box_start_y = event.y
+        return "break" # Verhindert, dass das normale Klick-Event feuert!
+
+    def on_zoom_box_motion(self, event):
+        """Zeichnet den Rahmen (Strg / Shift)"""
+        if getattr(self, 'is_zoom_box_active', False):
+            self.renderer.draw_zoom_box(self.zoom_box_start_x, self.zoom_box_start_y, event.x, event.y)
+        return "break"
+
+    def on_zoom_box_stop(self, event):
+        """Führt den Box-Zoom aus (Strg / Shift)"""
+        if getattr(self, 'is_zoom_box_active', False):
+            self.is_zoom_box_active = False
+            self.apply_zoom_box(self.zoom_box_start_x, self.zoom_box_start_y, event.x, event.y)
+        return "break"
+
     def on_drag_start(self, event):
-        """Merkt sich die Startkoordinaten beim Klicken ODER pickt die Wandfarbe"""
+        """Normaler Linksklick (Verschieben, Kalibrieren, Pipette)"""
+        if getattr(self, 'calib_mode_active', False):
+            if event.widget == self.lbl_image:
+                 self.handle_calibration_click(event)
+            return
+
+        if getattr(self, 'color_picker_active', False):
+            self.pick_color_from_event(event)
+            self.toggle_color_picker() 
+            return
+
         self.drag_start_x = event.x_root
         self.drag_start_y = event.y_root
         self.start_pan_x = self.pan_x
         self.start_pan_y = self.pan_y
 
-        # ---> Wenn der Kalibrierungs-Assistent aktiv ist, fangen wir den Klick ab! <---
-        if getattr(self, 'calib_mode_active', False):
-            # Der Klick darf nur verarbeitet werden, wenn er auf das Bild (Label) geht!
-            if event.widget == self.lbl_image:
-                 self.handle_calibration_click(event)
-            return
+    def on_drag_motion(self, event):
+        """Verschiebt das Bild normal"""
+        if getattr(self, 'tk_image', None) is None: return
+        if self.drag_start_x is None or self.drag_start_y is None: return
+        
+        dx = event.x_root - self.drag_start_x
+        dy = event.y_root - self.drag_start_y
+        
+        self.pan_x = self.start_pan_x + dx
+        self.pan_y = self.start_pan_y + dy
+        
+        self.lbl_image.place(x=self.pan_x, y=self.pan_y)
 
-        # ---> Wenn die Pipette aktiv ist, fangen wir den Klick ab! <---
-        if getattr(self, 'color_picker_active', False):
-            self.pick_color_from_event(event)
-            self.toggle_color_picker() 
+    def on_drag_stop(self, event):
+        """Normales Loslassen (Verschieben beenden oder Röntgen-Klick)"""
+        if getattr(self, 'color_picker_active', False): return
+        if getattr(self, 'tk_image', None) is None: return
+        if self.drag_start_x is None or self.drag_start_y is None: return
+
+        dx = event.x_root - self.drag_start_x
+        dy = event.y_root - self.drag_start_y
+        dist = (dx**2 + dy**2)**0.5
+        
+        self.drag_start_x = None
+        self.drag_start_y = None
+
+        if dist < 5:  
+            self.identify_shot_at_click(event.x, event.y)
+
+    def apply_zoom_box(self, x1, y1, x2, y2):
+        """Berechnet aus dem gezogenen Rahmen den neuen Zoom und zentriert den Ausschnitt."""
+        min_x, max_x = min(x1, x2), max(x1, x2)
+        min_y, max_y = min(y1, y2), max(y1, y2)
+        
+        box_w = max_x - min_x
+        box_h = max_y - min_y
+        
+        # Sicherheits-Check gegen versehentliche Winz-Klicks
+        if box_w < 15 or box_h < 15:
+            self.renderer.update_image_display()
             return
+            
+        self.root.update_idletasks()
+        container_w = self.img_container.winfo_width()
+        container_h = self.img_container.winfo_height()
+        
+        old_scale = getattr(self, 'current_scale', 1.0)
+        
+        # Neuen Zoom-Faktor basierend auf der Box-Größe berechnen
+        zoom_multiplier = min(container_w / box_w, container_h / box_h)
+        zoom_multiplier = max(1.01, min(zoom_multiplier, 15.0))
+        
+        self.zoom_factor = max(0.2, min(self.zoom_factor * zoom_multiplier, 10.0))
+        print("apply_zoom_box - zoom_factor: ",self.zoom_factor)
+        
+        # Neuen Maßstab ermitteln
+        h, w = self.last_live_img.shape[:2] if hasattr(self, 'last_live_img') and self.last_live_img is not None else (720, 1280)
+        new_scale = (550.0 / h) * self.zoom_factor
+        
+        # Mittelpunkt der Box im aktuellen Anzeigebild
+        center_x = (min_x + max_x) / 2.0
+        center_y = (min_y + max_y) / 2.0
+        
+        # Den Ausschnitt exakt auf die Mitte des Monitors mappen
+        self.pan_x = int((container_w / 2.0) - (center_x / old_scale) * new_scale)
+        self.pan_y = int((container_h / 2.0) - (center_y / old_scale) * new_scale)
+        
+        # Bild an die neue Position setzen und neu zeichnen
+        self.lbl_image.place(x=self.pan_x, y=self.pan_y)
+        self.renderer.update_image_display()
+        self.update_frame_title() # <--- NEU
     
     def toggle_color_picker(self):
         """Schaltet den Modus um und ändert das Aussehen des Buttons/Mauszeigers"""
@@ -1296,18 +886,18 @@ class LaborApp:
         self.print_log("KALIB", f"Letzter Klick rückgängig gemacht (noch {len(self.calib_points)}/16 Punkte).", show_gui=True)
         
         # ---> DER ELA-FIX: Pipeline zeichnet einfach den neuen Zustand ohne den Punkt! <---
-        self.update_image_display()
+        self.renderer.update_image_display()#full_rebuild=False) # <--- NEU
         self.update_calibration_instruction()  
 
     def cancel_calibration(self):
         """Bricht den Assistenten ab."""
         self.calib_mode_active = False
         self.calib_points = []
-        self.btn_calib_assist.config(bg="#8e44ad", text="📏 Kalibrierungs-Assistent")
+        self.btn_calib_assist.config(bg="#8e44ad", text="📏 Kalibrierung")
         self.lbl_image.config(cursor="")
         self.root.unbind('<BackSpace>') # Binding wieder lösen
         self.print_log("KALIB", "Assistent manuell abgebrochen.", show_gui=True)
-        self.update_image_display()
+        self.renderer.update_image_display()
 
     def update_calibration_instruction(self):
         """Aktualisiert die Anweisungen für den Benutzer, je nachdem, wie viele Klicks schon erfolgt sind."""
@@ -1357,7 +947,7 @@ class LaborApp:
         self.print_log("KALIB", f"✓ Punkt {schritt}/16 gesetzt bei (X: {real_x}, Y: {real_y})", show_gui=True)
         
         # ---> DER ELA-FIX: Wir malen nicht mehr selbst, wir rufen die Pipeline! <---
-        self.update_image_display()
+        self.renderer.update_image_display()#full_rebuild=False) # <--- NEU
         self.update_calibration_instruction()
 
     def finish_calibration(self):
@@ -1572,7 +1162,7 @@ class LaborApp:
         tk.Button(btn_frame, text="📋 Log kopieren", command=copy_to_clipboard, bg="#3498db", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="Abbrechen", command=info_win.destroy).pack(side=tk.LEFT, padx=5)
         
-        self.update_image_display()
+        self.renderer.update_image_display()
         
     def on_drag_stop(self, event):
         """Entscheidet beim Loslassen: War es Drag&Drop oder ein Röntgen-Klick?"""
@@ -1622,7 +1212,7 @@ class LaborApp:
             }
             
             # Bild neu zeichnen, um das Highlight zu zeigen
-            self.update_image_display()
+            self.renderer.update_image_display(full_rebuild=False) # <--- NEU
             
             # =========================================================================
             # ---> DER FIX: Den alten Abschalt-Timer stornieren, falls er noch tickt! <---
@@ -1637,12 +1227,12 @@ class LaborApp:
         """Löscht das orangene/lila Highlight nach Ablauf des Timers"""
         self.highlighted_shot = None
         self._highlight_timer = None  # ---> NEU: Auftraggeber zurücksetzen
-        self.update_image_display()
+        self.renderer.update_image_display(full_rebuild=False) # <--- NEU
 
     def clear_highlight(self):
         """Löscht das orangene Highlight nach Ablauf des Timers"""
         self.highlighted_shot = None
-        self.update_image_display()
+        self.renderer.update_image_display()
 
 
     def on_drag_motion(self, event):
@@ -1668,7 +1258,27 @@ class LaborApp:
             self.pan_y = 0
             self.lbl_image.place(x=0, y=0)
             
-        self.update_image_display()
+        self.renderer.update_image_display()
+        self.update_frame_title() # <--- NEU
+
+    def update_frame_title(self):
+        """Aktualisiert die Überschrift des Bild-Bereichs mit dynamischem Zoom und Shortcuts."""
+        if not getattr(self, 'current_zip_path', None):
+            return
+            
+        side = self.active_camera_var.get()
+        zoom_str = f"Zoom: {self.zoom_factor:.1f}x"
+        controls = "Rad: Zoom  |  L-Klick: Bewegen  |  R-Klick: Reset  |  M-Klick: Zentrieren  |  Strg+Ziehen: Rahmen"
+        
+        if self.current_index == 0:
+            self.image_frame.config(text=f" {zoom_str}  |  {controls}  |  📷 Referenz {side.upper()} ")
+        else:
+            side_origs = self.get_current_side_origs()
+            if side_origs and self.current_index <= len(side_origs):
+                orig_name = side_origs[self.current_index - 1]
+            else:
+                orig_name = "Unbekannt"
+            self.image_frame.config(text=f" {zoom_str}  |  {controls}  |  📄 {orig_name} ")
 
     def center_on_last_shot(self, event=None):
         """Zentriert den letzten Schuss des aktuellen Bildes in der angeklickten Bildhälfte."""
@@ -1791,13 +1401,15 @@ class LaborApp:
             self.lbl_image.place(x=self.pan_x, y=self.pan_y)
         
         # Bild blitzschnell neu zeichnen
-        self.update_image_display()
+        self.renderer.update_image_display()
+        self.update_frame_title() # <--- NEU
         
         # Koordinaten-Anzeige manuell triggern, damit sie nach dem Zoom sofort stimmt
         self.on_mouse_move(event)   
 
     def process_and_display(self):
         #self.root.focus()
+        self.update_frame_title()
         if not self.current_zip_path: return
         
         side = self.active_camera_var.get()
@@ -1846,7 +1458,7 @@ class LaborApp:
         # ---> SONDERFALL: INDEX 0 = DAS REFERENZBILD <---
         # ==========================================================
         if self.current_index == 0:
-            self.image_frame.config(text=f" Live-Labor (Referenz & Startmaske)  |  📷 Kamera {side.upper()} ")
+            #self.image_frame.config(text=f" Live-Labor (Referenz & Startmaske)  |  📷 Kamera {side.upper()} ")
             self.print_log("SYSTEM", f"Zeige initialen Zustand für Kamera {side.upper()}.")
             
             # ---> NEU: Treffer-Anzeige konsequent zurücksetzen! <---
@@ -1880,7 +1492,7 @@ class LaborApp:
             # ---> NEU: Geister-Abrisskante beim Zurückspringen löschen! <---
             self.last_abrisskante = None
             
-            self.update_image_display()
+            self.renderer.update_image_display()
             return
             
         # ==========================================================
@@ -1889,7 +1501,7 @@ class LaborApp:
         target_idx = self.current_index - 1
         orig_name = side_origs[target_idx]
         
-        self.image_frame.config(text=f" Live-Labor (Mausrad = Zoom | Klick = Bewegen | Rechtsklick = Reset)  |  📄 {orig_name} ")
+        #self.image_frame.config(text=f" Live-Labor (Mausrad = Zoom | Klick = Bewegen | Rechtsklick = Reset)  |  📄 {orig_name} ")
         
         # 1. DUMMYS AUFBAUEN
         # ---> ELA FIX <---
@@ -2140,7 +1752,7 @@ class LaborApp:
                 self.last_history_mask = np.zeros((h, w), dtype=np.uint8)        
 
         
-        self.update_image_display()
+        self.renderer.update_image_display()
 
     def align_shots(self, orig_shots, curr_shots, threshold):
         """Robustes Greedy-Alignment, das Aussetzer und OpenCV-Reihenfolge-Änderungen verzeiht."""
@@ -2720,639 +2332,6 @@ class LaborApp:
             traceback.print_exc()
             
             messagebox.showerror("Kritischer Fehler", f"Fehler beim Übernehmen:\n{str(e)}")
-        
-    def update_image_display(self):
-        """Zeichnet die zwischengespeicherten Bilder mit dem aktuellen Zoom-Faktor neu"""
-        if getattr(self, 'last_live_img', None) is None: return
-
-        h, w = self.last_live_img.shape[:2]
-        mode = self.view_mode_var.get()
-        
-        # Hilfsfunktion, um Graustufen-Bilder sicher in Farbe (3 Kanäle) zu konvertieren
-        def to_bgr(img):
-            if img is None: return np.zeros((h, w, 3), dtype=np.uint8)
-            
-            # ---> NEU: Defensive Größenanpassung gegen unsaubere alte ZIPs <---
-            if img.shape[:2] != (h, w):
-                img = cv2.resize(img, (w, h), interpolation=cv2.INTER_NEAREST)
-                
-            if len(img.shape) == 2: return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-            return img
-
-        diff_bgr = to_bgr(self.last_diff_img)
-        
-        # Entscheidung, was rechts angezeigt werden soll
-        if mode == 1:
-            right_img = diff_bgr
-        elif mode == 2:
-            right_img = to_bgr(self.last_diff_gesamt_img)
-        elif mode == 4: 
-            # ---> DIE MAGISCHE HEATMAP (Neue Logik: Erst stanzen, dann flicken!) <---
-            raw = getattr(self, 'last_raw_diff', np.zeros((h, w), dtype=np.uint8))
-            thresh_raw = getattr(self, 'last_thresh_raw', np.zeros((h, w), dtype=np.uint8))
-            hist_mask = getattr(self, 'last_history_mask', np.zeros((h, w), dtype=np.uint8))
-            
-            # Hintergrund bereinigen
-            raw_display = raw.copy()
-            if hist_mask is not None and cv2.countNonZero(hist_mask) > 0:
-                raw_display[hist_mask > 0] = 0
-                
-            # ====================================================================
-            # ---> NEU: Der statische visuelle Boost (ELA-Gradationskurve) <---
-            # Wir ziehen nur die rohen Differenzwerte für das Auge künstlich hoch.
-            # Ein konstanter Faktor (2.5) sorgt für 100% Vergleichbarkeit über alle ZIPs!
-            # ====================================================================
-            optischer_boost = 3.5 #2.5 
-            # Multiplizieren und bei 255 (Weiß) abriegeln
-            raw_boosted = np.clip(raw_display.astype(np.float32) * optischer_boost, 0, 255).astype(np.uint8)
-            
-            # Aus dem helleren Graubild machen wir nun das farbige Basis-Bild
-            base_gray = cv2.cvtColor(raw_boosted, cv2.COLOR_GRAY2BGR)
-            
-            # 1. ERST die Historie abziehen! (Wir erhalten isolierte, nackte Risse)
-            if hist_mask is not None and cv2.countNonZero(hist_mask) > 0:
-                new_fragments_raw = cv2.subtract(thresh_raw, hist_mask)
-            else:
-                new_fragments_raw = thresh_raw.copy()
-                
-            # Reste köpfen
-            _, new_fragments_raw = cv2.threshold(new_fragments_raw, 127, 255, cv2.THRESH_BINARY)
-            
-            # 2. DANN den Morph-Filter anwenden (Schließt jetzt echte Lücken!)
-            k_size = self.morph_kernel_var.get()
-            if k_size > 0:
-                kernel = np.ones((k_size, k_size), np.uint8)
-                new_fragments_morphed = cv2.morphologyEx(new_fragments_raw, cv2.MORPH_CLOSE, kernel)
-            else:
-                new_fragments_morphed = new_fragments_raw.copy()
-
-            # 3. Differenz bilden: Was genau hat der Morph-Filter hinzugefügt?
-            added_by_morph = cv2.subtract(new_fragments_morphed, new_fragments_raw)
-            
-            # 4. Einfärben: Rot = Nackter Riss | Blau = Neue Morph-Brücke
-            bool_base = new_fragments_raw > 0
-            bool_morph = added_by_morph > 0
-            
-            red_overlay = np.zeros_like(base_gray)
-            # ---> KORREKTUR: Wir nutzen auch hier das hellere Bild für die rote Sättigung <---
-            red_overlay[:,:,2] = np.maximum(raw_boosted, 100) 
-            
-            blue_overlay = np.zeros_like(base_gray)
-            blue_overlay[:,:,0] = 255 
-            
-            right_img = base_gray.copy()
-            right_img[bool_base] = red_overlay[bool_base]
-            right_img[bool_morph] = blue_overlay[bool_morph]
-            
-            # ---> NEU: Die Abrisskante in leuchtendem Grün überlagern! <---
-            abriss_mask = getattr(self, 'last_abrisskante', None)
-            if abriss_mask is not None:
-                if abriss_mask.shape[:2] != (h, w):
-                    abriss_mask = cv2.resize(abriss_mask, (w, h), interpolation=cv2.INTER_NEAREST)
-                    
-                bool_abriss = abriss_mask > 0
-                green_overlay = np.zeros_like(base_gray)
-                green_overlay[:,:,1] = 255 # Reines Grün im BGR-Farbraum
-                
-                right_img[bool_abriss] = green_overlay[bool_abriss]
-        elif mode == 5:
-            # ---> NEU: Das völlig rohe, nackte Bild <---
-            if hasattr(self, 'last_clean_live_img'):
-                right_img = self.last_clean_live_img.copy()
-            else:
-                right_img = np.zeros((h, w, 3), dtype=np.uint8)
-                
-        
-        
-        
-        else: # Modus 3: Die Überlagerung
-                    ref = to_bgr(self.last_ref_img)
-                    
-                    # Mitte: Aktuelles Diff-Bild mit 80% Transparenz auf das Referenzbild legen
-                    composite = cv2.addWeighted(ref, 0.65, diff_bgr, 0.65, 0)
-                    
-                    # Oben: Diff-Gesamt-Bild (Schwarz ausblenden, Weiß zu Grün machen)
-                    diff_gesamt = self.last_diff_gesamt_img
-                    if diff_gesamt is not None:
-                        if diff_gesamt.shape[:2] != (h, w):
-                            diff_gesamt = cv2.resize(diff_gesamt, (w, h), interpolation=cv2.INTER_NEAREST)
-                        
-                        mask = (cv2.cvtColor(diff_gesamt, cv2.COLOR_BGR2GRAY) < 127) if len(diff_gesamt.shape) == 3 else (diff_gesamt < 127)
-                        green_overlay = np.zeros_like(composite)
-                        green_overlay[:] = (0, 255, 0)
-                        composite[mask] = cv2.addWeighted(composite[mask], 0.5, green_overlay[mask], 0.5, 0)
-                        
-                    right_img = composite
-
-        # =========================================================================
-        # ---> Tactic-Overlay: NUR in Ansicht 4 (Raw-Diff), nur für Abrisskanten-Sieger <---
-        # =========================================================================
-        if mode == 4:
-            side = getattr(self, 'current_side', self.active_camera_var.get())
-            # Nur Treffer zeichnen, die im AKTUELL angezeigten Labor-Bild entstanden sind.
-            # current_index ist bei normalen Bildern direkt die 1-basierte Bildnummer.
-            current_frame_num = self.current_index
-
-            if hasattr(self, 'current_engine_shots'):
-                for shot in self.current_engine_shots:
-                    if shot.get('side') != side:
-                        continue
-
-                    # Historische Abrisskanten anderer Bilder bleiben unsichtbar.
-                    if shot.get('labor_frame_num') != current_frame_num:
-                        continue
-
-                    winner_method = shot.get('winner_method', '')
-                    if "Abriss" not in winner_method:
-                        continue
-
-                    # Start = exakt gefundene Abrisskante
-                    bx, by = shot.get('base_pos', (0, 0))
-                    # Ende = die beim Gewinner hinterlegte rohe CoG-/MEC-Position
-                    ex, ey = shot.get('end_pos', (0, 0))
-
-                    # ---> DER FIX: Für OpenCV wieder runden! <---
-                    start_pt = (int(round(bx)), int(round(by)))
-                    end_pt = (int(round(ex)), int(round(ey)))
-
-                    hellblau = (255, 200, 0)  # BGR: hellblau
-                    gruen = (0, 255, 0) 
-                    
-                    if start_pt != end_pt:
-                        # Verbindung nur in Ansicht 4 zeichnen
-                        cv2.line(right_img, start_pt, end_pt, gruen, 1, cv2.LINE_8) #cv2.LINE_AA)
-
-                    # Beide Endpunkte: Abrisskante + gefundener CoG/MEC-Punkt
-                    cv2.circle(right_img, start_pt, 2, hellblau, -1)
-                    cv2.circle(right_img, end_pt, 2, hellblau, -1)
-
-        # Zoom-Faktor einrechnen
-        self.current_scale = (550 / h) * self.zoom_factor
-        self.current_img_w = int(w * self.current_scale)
-        new_h = int(h * self.current_scale)
-        
-        # NEAREST-Interpolation für scharfe Pixel-Grenzen beim Zoomen
-        resized_live = cv2.resize(self.last_live_img, (self.current_img_w, new_h), interpolation=cv2.INTER_NEAREST)
-        resized_right = cv2.resize(right_img, (self.current_img_w, new_h), interpolation=cv2.INTER_NEAREST)
-        
-        combined = np.hstack((resized_live, resized_right))
-        
-        # =========================================================================
-        # ---> NEU: Zielscheiben-Ringe (Ellipsen) hochauflösend auf dem GUI-Bild <---
-        # =========================================================================
-        if getattr(self, 'show_target_rings_var', None) and self.show_target_rings_var.get():
-            meta = getattr(self, 'original_match_data', {})
-            if meta:
-                meta = meta.get("metadata", {})
-                
-            # ---> ELA FIX: Wir holen uns die Seite immer absolut verlässlich direkt vom Radiobutton! <---
-            side = self.active_camera_var.get()
-            center_key = 'center_l' if side == 'left' else 'center_r'
-            center_pts = meta.get(center_key)
-            
-            if center_pts:
-                cx, cy = center_pts
-                d_config = self.package_data['config']  # <--- ELA FIX
-                aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-                targets = self.dm.load_targets()
-                
-                if aktive_scheibe in targets:
-                    target_data = targets[aktive_scheibe]
-                    ringe = target_data.get('ringe_durchmesser_mm', {})
-                    innenzehner = target_data.get('innenzehner_mm', 0.0)
-                    
-                    seite_str = "links" if side == 'left' else "rechts"
-                    px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-                    px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-                    korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) # <--- NEU
-                    
-                    # 1. Nullpunkt skalieren und für das rechte Bild verschieben (+ current_img_w)
-                    scaled_cx = round(cx * self.current_scale) + self.current_img_w
-                    scaled_cy = round(cy * self.current_scale)
-                    
-                    
-                    #ring_color = (0, 255, 0)
-                    ring_color = (255, 255, 0) # Cyan (BGR)
-                    
-                    # =========================================================================
-                    # ---> ELA HILFSFUNKTION: Gestrichelte Ellipsen zeichnen (1/3 Linie, 2/3 Lücke) <---
-                    # =========================================================================
-                    def draw_dashed_ellipse(img, center, rx, ry, color):
-                        for angle in range(1, 361, 6): # um 1° verdreht # for angle in range(0, 360, 6): # um 1° verdreht
-                            cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 2, color, 1, cv2.LINE_8) #cv2.LINE_AA)
-                    
-                    # 2. Alle Standard-Ringe gestrichelt zeichnen
-                    seite_str = "links" if side == 'left' else "rechts"
-                    px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-                    px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-                    korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) # <--- NEU
-                    
-                    # ... [Code für Mittelpunkt bleibt gleich] ...
-                    
-                    for ring_name, d_mm in ringe.items():
-                        r_mm_base = float(d_mm) / 2.0
-                        # ---> NEU: Optische Umkehr-Korrektur zum Zeichnen! <---
-                        r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) 
-                        
-                        rx = round((r_mm_draw * px_x) * self.current_scale)
-                        ry = round((r_mm_draw * px_y) * self.current_scale)
-                        draw_dashed_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, ring_color)
-                        
-                    if innenzehner > 0:
-                        r_mm_base = float(innenzehner) / 2.0
-                        r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) # <--- NEU
-                        rx = round((r_mm_draw * px_x) * self.current_scale)
-                        ry = round((r_mm_draw * px_y) * self.current_scale)
-                        draw_dashed_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, ring_color)
-        
-                    # =========================================================================
-                    # ---> OPTIONAL: Zehntel-Ringe auf der Pappe (Orange) & 10er-Wertung (Lila) <---
-                    # =========================================================================
-                    ZEHNTEL_RINGE_AN = True 
-                    
-                    if ZEHNTEL_RINGE_AN and '10' in ringe:
-                        # Orange: 12-Grad-Raster ab 0 Grad
-                        def draw_orange_ellipse(img, center, rx, ry, color):
-                            if rx <= 0 or ry <= 0: return
-                            for angle in range(0, 360, 12):
-                                cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 4, color, 1, cv2.LINE_8) #cv2.LINE_AA)
-                                
-                        # Lila: 12-Grad-Raster ab 6 Grad (versetzt in die Lücken)
-                        def draw_purple_ellipse(img, center, rx, ry, color):
-                            if rx <= 0 or ry <= 0: return
-                            for angle in range(6, 360, 12):
-                                cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 4, color, 1, cv2.LINE_8) #cv2.LINE_AA)
-                                
-                        color_outer = (0, 165, 255) # Kräftiges Orange (Pappe 1 bis 10)
-                        color_inner = (82, 4, 87)   # Lila (10er-Mittelpunktwertung)
-                        
-                        # --- TEIL 1: Ringe 1 bis 10 exakt auf der Pappe (OHNE r_bullet!) ---
-                        sorted_ring_items = sorted(ringe.items(), key=lambda x: int(x[0]))
-                        radii_list = [(int(r_name), float(d_val) / 2.0) for r_name, d_val in sorted_ring_items]
-                        radii_list.sort(key=lambda x: x[0])
-                        
-                        for idx in range(len(radii_list) - 1):
-                            r_outer_num, r_outer_mm = radii_list[idx]     
-                            r_inner_num, r_inner_mm = radii_list[idx+1]   
-                            
-                            for step in range(1, 10):
-                                fraction = step / 10.0
-                                r_mm_base = r_outer_mm + (r_inner_mm - r_outer_mm) * fraction
-                                r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) 
-                                
-                                rx = round((r_mm_draw * px_x) * self.current_scale)
-                                ry = round((r_mm_draw * px_y) * self.current_scale)
-                                draw_orange_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, color_outer)
-                        
-                        # --- TEIL 2: Die 10er-Wertung (Lila) ---
-                        d_10 = float(ringe['10'])
-                        kaliber_mm = float(target_data.get('kaliber_mm', 4.5))
-                        radius_10_score = (d_10 + kaliber_mm) / 2.0
-                        
-                        for target_score in [10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 10.9]:
-                            prozent = (target_score - 10.0) / 0.99
-                            r_mm_base = radius_10_score * (1.0 - prozent)
-                            
-                            if r_mm_base > 0:
-                                r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) 
-                                rx = round((r_mm_draw * px_x) * self.current_scale)
-                                ry = round((r_mm_draw * px_y) * self.current_scale)
-                                draw_purple_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, color_inner)
-        
-        # =========================================================================
-        # ---> NEU: Original-Treffer als hochauflösende GUI-Kreise im rechten Bild <---
-        # =========================================================================
-        if getattr(self, 'show_orig_hits_var', None) and self.show_orig_hits_var.get():
-            orig_shots = getattr(self, 'last_orig_shots_to_draw', [])
-            if orig_shots:
-                # Offiziellen Radius passend zum aktuellen Zoom skalieren
-                base_r = getattr(self, 'official_radius_px', 15)
-                scaled_r = round(base_r * self.current_scale)
-                
-                for s in orig_shots:
-                    hx, hy = s['x'], s['y']
-                    # Skalieren und um die linke Bildbreite nach rechts verschieben
-                    scaled_x = round(hx * self.current_scale) + self.current_img_w
-                    scaled_y = round(hy * self.current_scale)
-                    
-                    # Haardünner gelber Kreis (BGR: 0, 255, 255) mit Kantenglättung (LINE_AA)
-                    cv2.circle(combined, (scaled_x, scaled_y), scaled_r, (0, 255, 255), 1, cv2.LINE_8) #cv2.LINE_AA)
-                    # Winziger Mittelpunkt für absolute Präzision
-                    cv2.circle(combined, (scaled_x, scaled_y), 1, (0, 255, 255), -1, cv2.LINE_8) #cv2.LINE_AA)
-        
-        # =========================================================================
-        # ---> NEU: Blinkende orangene Ellipsen für AKTUELLE Treffer im rechten Bild 
-        # (Inklusive exakter Fischaugen-Korrektur und radialer/tangentialer Ovalität)
-        # =========================================================================
-        if getattr(self, 'blink_state', True) and hasattr(self, 'current_engine_shots'):
-            side = getattr(self, 'current_side', self.active_camera_var.get())
-            current_frame_num = self.current_index
-            
-            # Basis-Daten für Fischaugenkorrektur und Skalierung holen
-            d_config = self.package_data['config']
-            seite_str = "links" if side == 'left' else "rechts"
-            px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-            px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-            korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
-            
-            # Offizielles Kaliber in mm ermitteln (Radius in mm)
-            aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-            ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
-            targets = self.dm.load_targets()
-            if aktive_scheibe in targets and ringwertung_aktiv:
-                offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
-            else:
-                offizielles_kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
-            r_shot_mm = offizielles_kaliber_mm / 2.0
-            
-            # Zentrum (cx, cy) für die Berechnung des Abstands und Winkels ermitteln
-            meta = getattr(self, 'original_match_data', {})
-            if meta and "metadata" in meta:
-                meta_dict = meta.get("metadata", {})
-            else:
-                meta_dict = meta if isinstance(meta, dict) else {}
-            center_key = 'center_l' if side == 'left' else 'center_r'
-            center_pts = meta_dict.get(center_key)
-            
-            avg_px = (px_x + px_y) / 2.0
-            fallback_r = int(r_shot_mm * avg_px * self.current_scale)
-            
-            for shot in self.current_engine_shots:
-                if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
-                    hx, hy = shot['pos']
-                    
-                    # Koordinaten für das rechte Bild verschieben
-                    scaled_x1 = round(hx * self.current_scale)
-                    scaled_y = round(hy * self.current_scale)
-                    scaled_x2 = scaled_x1 + self.current_img_w 
-                    
-                    if center_pts:
-                        cx, cy = center_pts
-                        # Exakter Abstand vom Zentrum in mm
-                        dx_mm = (hx - cx) / px_x
-                        dy_mm = (hy - cy) / px_y
-                        r_mm = math.hypot(dx_mm, dy_mm)
-                        
-                        if r_mm > 0.05:
-                            # Vektor-Winkel zum Zentrum berechnen (für die Ellipsen-Drehung)
-                            angle_deg = math.degrees(math.atan2(dy_mm, dx_mm))
-                            
-                            # Ableitung der Verzeichnung: Radial staucht es doppelt so stark wie tangential
-                            scale_radial = 1.0 + (2.0 * r_mm * korrektur)
-                            scale_tangential = 1.0 + (r_mm * korrektur)
-                            
-                            r_rad_mm = r_shot_mm * scale_radial
-                            r_tan_mm = r_shot_mm * scale_tangential
-                            
-                            # In Pixel umrechnen und mit dem Zoom skalieren
-                            rx = round((r_rad_mm * px_x) * self.current_scale)
-                            ry = round((r_tan_mm * px_y) * self.current_scale)
-                            
-                            # Perfekt korrigierte, ausgerichtete Ellipse zeichnen
-                            cv2.ellipse(combined, (scaled_x2, scaled_y), (int(rx), int(ry)), angle_deg, 0, 360, (0, 165, 255), 1, cv2.LINE_8) #cv2.LINE_AA)
-                        else:
-                            # Fallback exakt im Zentrum
-                            cv2.circle(combined, (scaled_x2, scaled_y), fallback_r, (0, 165, 255), 1, cv2.LINE_8) #cv2.LINE_AA)
-                    else:
-                        # Fallback ohne bekanntes Zentrum
-                        cv2.circle(combined, (scaled_x2, scaled_y), fallback_r, (0, 165, 255), 1, cv2.LINE_8) #cv2.LINE_AA)
-                        
-                    # Kleiner schwarzer Kontrastpunkt im Zentrum des Treffers
-                    cv2.circle(combined, (scaled_x2, scaled_y), 1, (0, 0, 0), -1)
-
-        # =========================================================================
-        # ---> NEU: Das präzise, dünne Treffer-Highlight (Röntgen-Klick) <---
-        # =========================================================================
-        hl = getattr(self, 'highlighted_shot', None)
-        if hl is not None:
-            # Nur zeichnen, wenn der Klick weniger als 6 Sekunden her ist
-            if time.time() - hl['time'] < 5.0:
-                hx, hy = hl['pos']
-                f_num = hl['frame']
-                
-                # Koordinaten und den exakten optischen Radius passend zum Zoom skalieren
-                scaled_x1 = round(hx * self.current_scale)
-                scaled_y = round(hy * self.current_scale)
-                
-                base_r = getattr(self, 'official_radius_px', 15)
-                scaled_r = round(base_r * self.current_scale)
-                scaled_x2 = scaled_x1 + self.current_img_w # Rechte Bildhälfte
-                
-                # ---> NEU: Leuchtendes Lila (BGR) <---
-                color = (255, 50, 200) 
-                line_thickness = 1 
-                
-                # Highlight Links (Exakter Kaliber-Kreis)
-                cv2.circle(combined, (scaled_x1, scaled_y), scaled_r, color, line_thickness)
-                cv2.circle(combined, (scaled_x1, scaled_y), 4, (0, 0, 0), -1)    # <--- Schwarzer Hintergrund-Ring für Kontrast
-                cv2.circle(combined, (scaled_x1, scaled_y), 2, color, -1)        # <--- Der eigentliche lila Punkt
-                
-                # ---> NEU: Fette, große Schrift (Scale 1.2, Dicke 2) <---
-                cv2.putText(combined, f"#{f_num}", (scaled_x1 - 25, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2, cv2.LINE_8) #cv2.LINE_AA)
-                
-                # Highlight Rechts (Gespiegelt)
-                cv2.circle(combined, (scaled_x2, scaled_y), scaled_r, color, line_thickness)
-                cv2.circle(combined, (scaled_x2, scaled_y), 4, (0, 0, 0), -1)    # <--- Schwarzer Hintergrund-Ring
-                cv2.circle(combined, (scaled_x2, scaled_y), 2, color, -1)        # <--- Der eigentliche lila Punkt
-                
-                # ---> NEU: Auf der rechten Seite noch einen Tick größer (Scale 1.5, Dicke 3) <---
-                cv2.putText(combined, f"#{f_num}", (scaled_x2 - 30, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_8) #cv2.LINE_AA)
-        
-        # =========================================================================
-        # ---> NEU: Dynamischer ELA-Layer für den Kalibrierungs-Assistenten <---
-        # =========================================================================
-        if getattr(self, 'calib_mode_active', False) and hasattr(self, 'calib_points'):
-            for pt in self.calib_points:
-                # pt[0] und pt[1] sind die ECHTEN, unskalierten Bildkoordinaten
-                scaled_x = round(pt[0] * self.current_scale)
-                scaled_y = round(pt[1] * self.current_scale)
-                
-                # Globale Skalierung und Fenster-Offset addieren
-                final_x = scaled_x + getattr(self, 'pad_x', 0)
-                final_y = scaled_y + getattr(self, 'pad_y', 0)
-                
-                # Leuchtend roter Punkt mit leichtem schwarzen Rand für Kontrast
-                # (Wird immer auf der linken Bildhälfte gezeichnet)
-                cv2.circle(combined, (final_x, final_y), 4, (0, 0, 0), -1)
-                cv2.circle(combined, (final_x, final_y), 3, (0, 0, 255), -1)
-        
-        # ---> NEU: Das nackte Bild ohne Maus-Overlay als Base-Image merken <---
-        self.base_combined_img = combined.copy()
-        
-        img_pil = Image.fromarray(cv2.cvtColor(combined, cv2.COLOR_BGR2RGB))
-        self.tk_image = ImageTk.PhotoImage(img_pil)
-        self.lbl_image.config(image=self.tk_image, text="")
-
-    def open_all_settings_dialog(self):
-        """Öffnet ein dynamisches Fenster mit allen ERWEITERTEN Werten aus der aktuellen config.ini."""
-        if not getattr(self, 'package_data', None) or not self.package_data.get('config'):
-            messagebox.showwarning("Fehler", "Es ist kein ZIP-Paket geladen!")
-            return
-
-        parser = self.package_data['config']
-
-        ## ---> NEU: Diese Keys haben bereits einen Slider in der Haupt-GUI und werden hier versteckt <---
-        #ignore_keys = {
-        #    'hit_tolerance', 'min_hole_area', 'caliber_radius', 'caliber_durchmesser',
-        #    'hybrid_sichel_faktor', 'hybrid_riss_faktor', 'hybrid_discard_faktor', 
-        #    'hough_min_faktor', 'hough_max_faktor', 'hough_param1', 'hough_param2', 
-        #    'morph_kernel_size', 'max_aspect_ratio', 'gesamt_anteil_am_200score'
-        #}
-        
-        # ---> NEU: Wir holen uns einfach die Keys aus unserem neuen Dictionary! <---
-        ignore_keys = set(self.registered_sliders.keys())
-        ignore_keys.add('caliber_radius') # Den alten Legacy-Key manuell verstecken
-        
-        # ---> DER FIX: Die Kamera-spezifischen Slider-Werte manuell aus dem Einstellungsfenster verbannen! <---
-        ignore_keys.update([
-            'px_pro_mm_x_links', 'px_pro_mm_y_links', 'fischaugenkorrektur_links',
-            'px_pro_mm_x_rechts', 'px_pro_mm_y_rechts', 'fischaugenkorrektur_rechts'
-        ])
-
-        # Neues Fenster erstellen
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Erweiterte Einstellungen (Live Data-Binding)")
-        
-        # ---> NEU: DPI-Awareness für 4K-TVs <---
-        sf = self.root.winfo_fpixels('1i') / 96.0
-        w, h = int(550 * sf), int(800 * sf)
-        dialog.geometry(f"{w}x{h}")
-        
-        # =========================================================================
-        # ---> DER FIX: Die Hierarchie für Windows & Tkinter klarstellen <---
-        # =========================================================================
-        dialog.transient(self.root)  # Zwingt das Unterfenster über das Labor-Hauptfenster
-        # WICHTIG: KEIN dialog.attributes('-topmost', True) hier!
-        dialog.focus_force()         # Holt den Cursor aktiv in das neue Fenster
-
-        # =========================================================================
-        # ---> NEU: Der universelle, wartungsfreie Hinweis-Banner <---
-        # =========================================================================
-        info_frame = tk.Frame(dialog, bg="#fff3cd", bd=1, relief=tk.SOLID)
-        info_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
-        info_lbl = tk.Label(info_frame, 
-                            text="⚠️ WICHTIGER HINWEIS:\nTiefe Systemeinstellungen (wie Kameras, Bild-Zuschnitte/Crops oder Vollbild)\nwerden erst nach einem Neustart von TargetVision aktiv.\nAlle Erkennungs-Parameter (Filter, Toleranzen) greifen sofort!",
-                            bg="#fff3cd", fg="#856404", font=("Arial", 9), justify=tk.CENTER)
-        info_lbl.pack(padx=5, pady=5)
-        # =========================================================================
-
-        # Scrollbereich aufbauen
-        canvas = tk.Canvas(dialog, borderwidth=0, highlightthickness=0)
-        scrollbar = tk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
-        scrollable_frame = tk.Frame(canvas)
-
-        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_window, width=e.width))
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # Zielscheiben für das Dropdown laden
-        targets = list(self.dm.load_targets().keys()) if self.dm.load_targets() else ["Luftgewehr_10m"]
-
-        # Durch die Config schleifen
-        for section in parser.sections():
-            
-            # ---> NEU: Vorab prüfen, ob überhaupt noch Keys übrig sind, die wir anzeigen wollen <---
-            visible_keys = [k for k in parser.options(section) if k not in ignore_keys]
-            if not visible_keys:
-                continue # Sektion überspringen, falls sie durch den Filter komplett leer wäre
-
-            sec_frame = tk.LabelFrame(scrollable_frame, text=f" {section} ", font=("Arial", 11, "bold"), pady=8, padx=8)
-            sec_frame.pack(fill=tk.X, pady=5, padx=10)
-
-            for key, val in parser.items(section):
-                # ---> NEU: Slider-Keys rigoros ignorieren <---
-                if key in ignore_keys:
-                    continue
-                    
-                val_str = str(val).strip()
-                
-                row = tk.Frame(sec_frame)
-                row.pack(fill=tk.X, pady=2)
-                
-                # ---> NEU: Label in Variable speichern und Tooltip anheften <---
-                lbl_key = tk.Label(row, text=key, width=32, anchor="w")
-                lbl_key.pack(side=tk.LEFT)
-                
-                if key in PARAMETER_LEXIKON:
-                    ToolTip(lbl_key, PARAMETER_LEXIKON[key])
-
-                # Der universelle Trace-Spion
-                def make_trace_cmd(s, k, var_obj):
-                    def cmd(*args):
-                        try:
-                            v = var_obj.get()
-                        except tk.TclError:
-                            # Der Nutzer tippt gerade und das Feld ist leer ("") oder hat nur ein Minus ("-").
-                            # Wir ignorieren das einfach und warten auf die nächste Ziffer!
-                            return
-                            
-                        # Booleans wieder als yes/no in die Config schreiben
-                        if isinstance(v, bool):
-                            v_str = "yes" if v else "no"
-                        else:
-                            v_str = str(v)
-                        
-                        parser.set(s, k, v_str)
-                        # Trigger Live-Update in der Haupt-GUI
-                        self.on_param_change() 
-                    return cmd
-
-                # 1. SPECIAL CASE: Aktive Scheibe
-                if key == 'aktive_scheibe':
-                    var = tk.StringVar(value=val_str)
-                    cb = ttk.Combobox(row, textvariable=var, values=targets, state="readonly", width=20)
-                    cb.pack(side=tk.RIGHT)
-                    
-                    # ---> DER FIX: Wir zwingen Python, die Variable am Leben zu lassen! <---
-                    cb.var_ref = var 
-                    
-                    var.trace_add("write", make_trace_cmd(section, key, var))
-
-                # 2. BOOLEAN (yes/no) - '0' und '1' wurden hier als Trigger entfernt!
-                elif val_str.lower() in ['yes', 'no', 'true', 'false', 'on', 'off']:
-                    is_true = val_str.lower() in ['yes', 'true', 'on']
-                    var = tk.BooleanVar(value=is_true)
-                    chk = tk.Checkbutton(row, text="Aktiv", variable=var)
-                    chk.pack(side=tk.RIGHT)
-                    var.trace_add("write", make_trace_cmd(section, key, var))
-
-                # 3. FLOAT (Hat einen Punkt und besteht sonst aus Zahlen/Minus)
-                elif '.' in val_str and val_str.replace('.', '', 1).replace('-', '', 1).isdigit():
-                    var = tk.DoubleVar(value=float(val_str))
-                    # ---> NEU: validatecommand=self.vcmd_float <---
-                    entry = tk.Entry(row, textvariable=var, width=12, justify="right", validate="key", validatecommand=self.vcmd_float)
-                    entry.pack(side=tk.RIGHT)
-                    var.trace_add("write", make_trace_cmd(section, key, var))
-
-                # 4. INTEGER (Besteht nur aus Zahlen/Minus)
-                elif val_str.replace('-', '', 1).isdigit():
-                    var = tk.IntVar(value=int(val_str))
-                    # ---> NEU: validatecommand=self.vcmd_int <---
-                    entry = tk.Entry(row, textvariable=var, width=12, justify="right", validate="key", validatecommand=self.vcmd_int)
-                    entry.pack(side=tk.RIGHT)
-                    var.trace_add("write", make_trace_cmd(section, key, var))
-
-                # 5. STRING (Alles andere)
-                else:
-                    var = tk.StringVar(value=val_str)
-                    entry = tk.Entry(row, textvariable=var, width=22, justify="right")
-                    entry.pack(side=tk.RIGHT)
-                    var.trace_add("write", make_trace_cmd(section, key, var))
-
-        # Scroll-Fix fürs Mausrad
-        def _on_mousewheel(event):
-            if event.num == 4 or getattr(event, 'delta', 0) > 0:
-                canvas.yview_scroll(-1, "units")
-            elif event.num == 5 or getattr(event, 'delta', 0) < 0:
-                canvas.yview_scroll(1, "units")
-
-        dialog.bind("<MouseWheel>", _on_mousewheel)
-        dialog.bind("<Button-4>", _on_mousewheel)
-        dialog.bind("<Button-5>", _on_mousewheel)
 
 if __name__ == "__main__":
     import sys 
