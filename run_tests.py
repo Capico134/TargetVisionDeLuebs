@@ -65,7 +65,7 @@ class SmartTestLogger:
 # HAUPT-TEST-LOGIK
 # ==========================================
 def run_all_tests():
-    start_time = time.time()  # <--- HIER MUSS ER HIN!
+    start_time = time.time() 
     test_dir = "testcases"
     report_file = "test_report.txt"
     treffer_log_file = "treffer_log.txt"
@@ -92,8 +92,8 @@ def run_all_tests():
         "⚖️ GLEICHSTAND",
         "🚫 Fehlalarm",
         "🔄 Sichel-Duell",
-        "⚠️ Treffer ignoriert",          # <--- Zählt die "Zu-nah-am-alten-Loch" Tode
-        "✂️ Überzähliger Treffer",     # <--- Zählt die Max-Treffer Tode
+        "⚠️ Treffer ignoriert",          
+        "✂️ Überzähliger Treffer",     
         "⚠️ Abrisskante gescheitert"
     ]
     smart_logger = SmartTestLogger(suchbegriffe)
@@ -179,29 +179,28 @@ def run_all_tests():
                         state = d_sm.state_left if s == 'left' else d_sm.state_right
                         state.cumulative_mask = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
 
-                # ---> NEU: Frame-Zähler für beide Kameras <---
                 frame_counts = {'left': 0, 'right': 0}
 
                 for orig_name in orig_files:
                     img = cv2.imdecode(np.frombuffer(zf.read(orig_name), np.uint8), cv2.IMREAD_COLOR)
                     s = 'left' if 'left' in orig_name else 'right'
                     
-                    # Hochzählen, genau wie in der Labor-GUI
                     frame_counts[s] += 1
                     shots_before = len(d_sm.shots)
                     
                     detector.detect_new_shot(img, s)
                     
-                    # ---> NEU: Den neuen Schüssen die Bildnummer als Stempel aufdrücken <---
                     shots_after = len(d_sm.shots)
                     for j in range(shots_before, shots_after):
                         d_sm.shots[j]['labor_frame_num'] = frame_counts[s]
 
-                # 5. ABWEICHUNG MESSEN
+                # 5. ABWEICHUNG MESSEN (Mittelpunkt UND Ringwertung)
                 match_passed = True
                 error_messages = []
                 
                 tolerance_px = 2.0 
+                # ---> NEU: Erlaubte Abweichung bei der Ringwertung <---
+                tolerance_score = 0.1 
                 
                 for side, side_char in [('left', 'l'), ('right', 'r')]:
                     orig_shots = [s for s in original_match_data.get("timeline", []) if s.get('s') == side_char]
@@ -213,16 +212,26 @@ def run_all_tests():
                         continue
                         
                     for idx, (orig, curr) in enumerate(zip(orig_shots, curr_shots)):
-                        # ---> ELA FIX: Subpixel-Präzision auch beim Testen! <---
                         ox, oy = float(orig['x']), float(orig['y'])
                         cx, cy = float(curr['pos'][0]), float(curr['pos'][1])
                         dist = np.hypot(cx - ox, cy - oy)
                         
+                        f_num = curr.get('labor_frame_num', '?')
+                        
+                        # ---> NEU: Score vergleichen <---
+                        orig_score = float(orig.get('score', -1.0))
+                        curr_score = float(curr.get('score', -1.0))
+                        score_diff = abs(curr_score - orig_score)
+                        
                         if dist > tolerance_px:
                             match_passed = False
-                            # ---> NEU: Bild-Nummer auslesen und mit ins Log schreiben <---
-                            f_num = curr.get('labor_frame_num', '?')
-                            error_messages.append(f"[{side.upper()}] Bild #{f_num:<3} | Schuss {idx+1} abgewichen um {dist:.1f}px (Erlaubt: {tolerance_px}px)")
+                            error_messages.append(f"[{side.upper()}] Bild #{f_num:<3} | Pos weicht ab um {dist:.1f}px (Erlaubt: {tolerance_px}px)")
+                            
+                        # ---> NEU: Falls der Score um mehr als 0.1 abweicht <---
+                        if orig_score != -1.0 and curr_score != -1.0 and score_diff > tolerance_score:
+                            match_passed = False
+                            error_messages.append(f"[{side.upper()}] Bild #{f_num:<3} | Score weicht ab: Orig {orig_score:.1f} vs Neu {curr_score:.1f}")
+
                 
                 # 6. ERGEBNIS DRUCKEN & LOGGEN
                 if match_passed:
@@ -234,14 +243,12 @@ def run_all_tests():
                         log(f"      {C_RED}-> {err}{C_END}")
                     failed_count += 1
                 
-                # ---> Die echten Treffer auf dem Monitor summieren <---
                 total_valid_hits += len(d_sm.shots)
                     
         except Exception as e:
             log(f"{C_RED}⚠️ ERROR bei {zip_file}:{C_END} {str(e)}")
             failed_count += 1
 
-        # ---> Die intern geprüften Matrix-Kandidaten summieren <---
         total_kandidaten_gesamt += detector.eval_counter
 
     # ZUSAMMENFASSUNG
@@ -261,7 +268,6 @@ def run_all_tests():
         
     log("-" * 70)
     
-    # Durchschnitt ausrechnen (Verhindert Division durch 0)
     avg_kandidaten = (total_kandidaten_gesamt / smart_logger.battle_royales) if smart_logger.battle_royales > 0 else 0
     
     log(f"📈 ENGINE STATISTIKEN:")
