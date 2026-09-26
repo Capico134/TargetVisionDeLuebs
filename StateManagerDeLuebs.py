@@ -168,19 +168,34 @@ class StateManager:
             dx_px = abs(cx - nullpunkt[0])
             dy_px = abs(cy - nullpunkt[1])
             
-            dx_mm = dx_px / px_x
-            dy_mm = dy_px / px_y
-            dist_mm = math.sqrt(dx_mm**2 + dy_mm**2)
+            # 1. Den gemessenen Pixel-Radius ausrechnen
+            # Anstatt getrennte X/Y-Strecken zu nehmen, mitteln wir die Pixel-Skalierung für den Radius
+            avg_px = (px_x + px_y) / 2.0
+            dist_px = math.hypot(dx_px, dy_px)
             
             # =========================================================================
-            # ---> NEU: Linsenverzerrung (Fischauge) korrigieren <---
+            # ---> DER FIX: Korrekte Fischaugen-Umkehrfunktion für die Distanz! <---
             # =========================================================================
             korrektur = self.config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
+            
             if korrektur != 0.0:
-                # Wir stauchen/strecken die mathematische Distanz zum Zentrum progressiv.
-                # Positive Werte (z.B. 0.002) ziehen weite Treffer "näher" ans Zentrum,
-                # um die optische Stauchung der Kameralinse am Bildrand auszugleichen.
-                dist_mm = dist_mm * (1.0 - (dist_mm * korrektur))
+                # Wir suchen die ECHTEN Millimeter (dist_mm), wissen aber nur, wie viele Pixel 
+                # der Detector auf dem verbogenen Bild gesehen hat.
+                # Formel (vom Zeichnen): dist_px = dist_mm * (1 + dist_mm * k) * avg_px
+                # Umgestellt nach dist_mm mittels p-q-Formel:
+                a = korrektur
+                b = 1.0
+                c = - (dist_px / avg_px)
+                
+                diskriminante = b**2 - 4*a*c
+                if diskriminante >= 0:
+                    # Wir nehmen die positive Wurzel
+                    dist_mm = (-b + math.sqrt(diskriminante)) / (2*a)
+                else:
+                    dist_mm = dist_px / avg_px # Fallback bei mathematisch unmöglichen Werten
+            else:
+                # Keine Korrektur aktiv
+                dist_mm = dist_px / avg_px
             
             aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
             targets = self.dm.load_targets()
@@ -192,9 +207,6 @@ class StateManager:
                 
                 # =========================================================================
                 # ---> NEU: ELA-Entkopplung von Erkennung und Ringwertung! <---
-                # Wir zwingen die Ringwertung nun AUSSCHLIESSLICH, den offiziellen
-                # Wettkampf-Durchmesser der Zielscheibe (z.B. 4.5mm) zu verwenden, 
-                # egal was im Labor für die optische Loch-Erkennung eingestellt wurde!
                 # =========================================================================
                 offizielles_kaliber_mm = float(target_data.get('kaliber_mm', 4.5))
                 

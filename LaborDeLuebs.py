@@ -2883,7 +2883,7 @@ class LaborApp:
                     # ---> ELA HILFSFUNKTION: Gestrichelte Ellipsen zeichnen (1/3 Linie, 2/3 Lücke) <---
                     # =========================================================================
                     def draw_dashed_ellipse(img, center, rx, ry, color):
-                        for angle in range(0, 360, 6):
+                        for angle in range(1, 361, 6): # um 1° verdreht # for angle in range(0, 360, 6): # um 1° verdreht
                             cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 2, color, 1, cv2.LINE_AA)
                     
                     # 2. Alle Standard-Ringe gestrichelt zeichnen
@@ -2910,55 +2910,139 @@ class LaborApp:
                         ry = round((r_mm_draw * px_y) * self.current_scale)
                         draw_dashed_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, ring_color)
         
-        # =========================================================================
-        # ---> NEU: Original-Treffer als hochauflösende GUI-Kreise im rechten Bild <---
-        # =========================================================================
-        if getattr(self, 'show_orig_hits_var', None) and self.show_orig_hits_var.get():
-            orig_shots = getattr(self, 'last_orig_shots_to_draw', [])
-            if orig_shots:
-                # Offiziellen Radius passend zum aktuellen Zoom skalieren
-                base_r = getattr(self, 'official_radius_px', 15)
-                scaled_r = round(base_r * self.current_scale)
-                
-                for s in orig_shots:
-                    hx, hy = s['x'], s['y']
-                    # Skalieren und um die linke Bildbreite nach rechts verschieben
-                    scaled_x = round(hx * self.current_scale) + self.current_img_w
-                    scaled_y = round(hy * self.current_scale)
+                    # =========================================================================
+                    # ---> OPTIONAL: Zehntel-Ringe auf der Pappe (Orange) & 10er-Wertung (Lila) <---
+                    # =========================================================================
+                    ZEHNTEL_RINGE_AN = True 
                     
-                    # Haardünner gelber Kreis (BGR: 0, 255, 255) mit Kantenglättung (LINE_AA)
-                    cv2.circle(combined, (scaled_x, scaled_y), scaled_r, (0, 255, 255), 1, cv2.LINE_AA)
-                    # Optional: Ein winziger, kaum sichtbarer Mittelpunkt, um das absolute Zentrum zu sehen
-                    cv2.circle(combined, (scaled_x, scaled_y), 1, (0, 255, 255), -1, cv2.LINE_AA)
+                    if ZEHNTEL_RINGE_AN and '10' in ringe:
+                        # Orange: 12-Grad-Raster ab 0 Grad
+                        def draw_orange_ellipse(img, center, rx, ry, color):
+                            if rx <= 0 or ry <= 0: return
+                            for angle in range(0, 360, 12):
+                                cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 4, color, 1, cv2.LINE_AA)
+                                
+                        # Lila: 12-Grad-Raster ab 6 Grad (versetzt in die Lücken)
+                        def draw_purple_ellipse(img, center, rx, ry, color):
+                            if rx <= 0 or ry <= 0: return
+                            for angle in range(6, 360, 12):
+                                cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 4, color, 1, cv2.LINE_AA)
+                                
+                        color_outer = (0, 165, 255) # Kräftiges Orange (Pappe 1 bis 10)
+                        color_inner = (82, 4, 87)   # Lila (10er-Mittelpunktwertung)
+                        
+                        # --- TEIL 1: Ringe 1 bis 10 exakt auf der Pappe (OHNE r_bullet!) ---
+                        sorted_ring_items = sorted(ringe.items(), key=lambda x: int(x[0]))
+                        radii_list = [(int(r_name), float(d_val) / 2.0) for r_name, d_val in sorted_ring_items]
+                        radii_list.sort(key=lambda x: x[0])
+                        
+                        for idx in range(len(radii_list) - 1):
+                            r_outer_num, r_outer_mm = radii_list[idx]     
+                            r_inner_num, r_inner_mm = radii_list[idx+1]   
+                            
+                            for step in range(1, 10):
+                                fraction = step / 10.0
+                                r_mm_base = r_outer_mm + (r_inner_mm - r_outer_mm) * fraction
+                                r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) 
+                                
+                                rx = round((r_mm_draw * px_x) * self.current_scale)
+                                ry = round((r_mm_draw * px_y) * self.current_scale)
+                                draw_orange_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, color_outer)
+                        
+                        # --- TEIL 2: Die 10er-Wertung (Lila) ---
+                        d_10 = float(ringe['10'])
+                        kaliber_mm = float(target_data.get('kaliber_mm', 4.5))
+                        radius_10_score = (d_10 + kaliber_mm) / 2.0
+                        
+                        for target_score in [10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 10.9]:
+                            prozent = (target_score - 10.0) / 0.99
+                            r_mm_base = radius_10_score * (1.0 - prozent)
+                            
+                            if r_mm_base > 0:
+                                r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) 
+                                rx = round((r_mm_draw * px_x) * self.current_scale)
+                                ry = round((r_mm_draw * px_y) * self.current_scale)
+                                draw_purple_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, color_inner)
         
         # =========================================================================
-        # ---> NEU: Blinkende orangene Kreise für AKTUELLE Treffer im rechten Bild <---
+        # ---> NEU: Blinkende orangene Ellipsen für AKTUELLE Treffer im rechten Bild 
+        # (Inklusive exakter Fischaugen-Korrektur und radialer/tangentialer Ovalität)
         # =========================================================================
         if getattr(self, 'blink_state', True) and hasattr(self, 'current_engine_shots'):
-            # Wir nutzen den exakten Erkennungs-Radius, passend zum Zoom skaliert
-            base_r = getattr(self, 'current_radius_px', 15)
-            scaled_r = round(base_r * self.current_scale)
-            
             side = getattr(self, 'current_side', self.active_camera_var.get())
             current_frame_num = self.current_index
             
+            # Basis-Daten für Fischaugenkorrektur und Skalierung holen
+            d_config = self.package_data['config']
+            seite_str = "links" if side == 'left' else "rechts"
+            px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+            px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+            korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
+            
+            # Offizielles Kaliber in mm ermitteln (Radius in mm)
+            aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+            ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+            targets = self.dm.load_targets()
+            if aktive_scheibe in targets and ringwertung_aktiv:
+                offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
+            else:
+                offizielles_kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
+            r_shot_mm = offizielles_kaliber_mm / 2.0
+            
+            # Zentrum (cx, cy) für die Berechnung des Abstands und Winkels ermitteln
+            meta = getattr(self, 'original_match_data', {})
+            if meta and "metadata" in meta:
+                meta_dict = meta.get("metadata", {})
+            else:
+                meta_dict = meta if isinstance(meta, dict) else {}
+            center_key = 'center_l' if side == 'left' else 'center_r'
+            center_pts = meta_dict.get(center_key)
+            
+            avg_px = (px_x + px_y) / 2.0
+            fallback_r = int(r_shot_mm * avg_px * self.current_scale)
+            
             for shot in self.current_engine_shots:
-                # Nur Treffer dieser Kamera und dieses exakten Frames!
                 if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
                     hx, hy = shot['pos']
                     
-                    # Koordinaten auf das linke Bild skalieren...
+                    # Koordinaten für das rechte Bild verschieben
                     scaled_x1 = round(hx * self.current_scale)
                     scaled_y = round(hy * self.current_scale)
-                    
-                    # ...und für das rechte Bild verschieben!
                     scaled_x2 = scaled_x1 + self.current_img_w 
                     
-                    # Haardünner, orangener Kreis mit perfekter Kantenglättung
-                    cv2.circle(combined, (scaled_x2, scaled_y), scaled_r, (0, 165, 255), 1, cv2.LINE_AA)
-                    
-                    # Optional: Ein winziger, schwarzer Punkt in der Mitte für mehr Kontrast
-                    cv2.circle(combined, (scaled_x2, scaled_y), 1, (0, 0, 0), -1, cv2.LINE_AA)
+                    if center_pts:
+                        cx, cy = center_pts
+                        # Exakter Abstand vom Zentrum in mm
+                        dx_mm = (hx - cx) / px_x
+                        dy_mm = (hy - cy) / px_y
+                        r_mm = math.hypot(dx_mm, dy_mm)
+                        
+                        if r_mm > 0.05:
+                            # Vektor-Winkel zum Zentrum berechnen (für die Ellipsen-Drehung)
+                            angle_deg = math.degrees(math.atan2(dy_mm, dx_mm))
+                            
+                            # Ableitung der Verzeichnung: Radial staucht es doppelt so stark wie tangential
+                            scale_radial = 1.0 + (2.0 * r_mm * korrektur)
+                            scale_tangential = 1.0 + (r_mm * korrektur)
+                            
+                            r_rad_mm = r_shot_mm * scale_radial
+                            r_tan_mm = r_shot_mm * scale_tangential
+                            
+                            # In Pixel umrechnen und mit dem Zoom skalieren
+                            rx = round((r_rad_mm * px_x) * self.current_scale)
+                            ry = round((r_tan_mm * px_y) * self.current_scale)
+                            
+                            # Perfekt korrigierte, ausgerichtete Ellipse zeichnen
+                            cv2.ellipse(combined, (scaled_x2, scaled_y), (int(rx), int(ry)), angle_deg, 0, 360, (0, 165, 255), 1, cv2.LINE_AA)
+                        else:
+                            # Fallback exakt im Zentrum
+                            cv2.circle(combined, (scaled_x2, scaled_y), fallback_r, (0, 165, 255), 1, cv2.LINE_AA)
+                    else:
+                        # Fallback ohne bekanntes Zentrum
+                        cv2.circle(combined, (scaled_x2, scaled_y), fallback_r, (0, 165, 255), 1, cv2.LINE_AA)
+                        
+                    # Kleiner schwarzer Kontrastpunkt im Zentrum des Treffers
+                    cv2.circle(combined, (scaled_x2, scaled_y), 1, (0, 0, 0), -1)
 
         # =========================================================================
         # ---> NEU: Das präzise, dünne Treffer-Highlight (Röntgen-Klick) <---

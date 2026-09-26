@@ -601,78 +601,84 @@ class TargetTracker:
         
         # --- VISUELLES FEEDBACK ---
         current_time = time.time()
-        # ---> NEU: Wir lesen unsere EIGENEN Variablen! <---
         for s, feedback in [('left', self.calib_feedback_left), 
                             ('right', self.calib_feedback_right)]:
-            # HIER STECKT DER TIMER (15.0 Sekunden)
             if feedback and (current_time - feedback['time'] < 15.0):
                 use_cam = self.nutze_kamera_links if s == 'left' else self.nutze_kamera_rechts
                 if use_cam:
                     offset_x = 0 if s == 'left' else scaled_w_left
                     
-                    # ---> NEU: self.pad_x und self.pad_y auf die Zentren addieren! <---
                     fb_cx = int(round(feedback['cx'] * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
                     fb_cy = int(round(feedback['cy'] * self.scale_y)) + getattr(self, 'pad_y', 0)
                     
-                    fb_ideal_rx = int(round(feedback['ideal_rx'] * self.scale_x))
-                    fb_ideal_ry = int(round(feedback['ideal_ry'] * self.scale_y))
-                    
-                    # ---> NEU: Auch beim roten Fehler-Kreis den Offset addieren! <---
                     fb_red_cx = int(round(feedback['red_cx'] * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
                     fb_red_cy = int(round(feedback['red_cy'] * self.scale_y)) + getattr(self, 'pad_y', 0)
-                    
                     fb_red_rx = int(round(feedback['red_rx'] * self.scale_x))
                     fb_red_ry = int(round(feedback['red_ry'] * self.scale_y))
 
-                    # =========================================================================
-                    # ---> ELA HILFSFUNKTION: Gestrichelte Ellipsen zeichnen (1/3 Linie, 2/3 Lücke) <---
-                    # =========================================================================
                     def draw_dashed_ellipse(img, center, rx, ry, color):
-                        # Sicherheitscheck: OpenCV crasht bei Radien <= 0
-                        if rx <= 0 or ry <= 0:
-                            return
-                            
-                        # 60 kleine Segmente (alle 6 Grad). Davon 2 Grad Linie, 4 Grad Lücke.
+                        if rx <= 0 or ry <= 0: return
                         for angle in range(0, 360, 6):
                             cv2.ellipse(img, center, (int(rx), int(ry)), 0, angle, angle + 2, color, 1, cv2.LINE_AA)
 
-                    if feedback['show_red']:
+                    if feedback.get('show_red', False) or feedback.get('show_red') == True:
                         draw_dashed_ellipse(combined_view, (fb_red_cx, fb_red_cy), fb_red_rx, fb_red_ry, (0, 0, 255))
                     
-                    # 1. Den Standard "Spiegel" (Zentrum) zeichnen
-                    draw_dashed_ellipse(combined_view, (fb_cx, fb_cy), fb_ideal_rx, fb_ideal_ry, (0, 255, 0))
-                    
-                    # ---> NEU: Ein feines Kreuz im exakten Zentrum <---
-                    cross_size = 6
-                    cv2.line(combined_view, (fb_cx - cross_size, fb_cy), (fb_cx + cross_size, fb_cy), (0, 255, 0), 1, cv2.LINE_AA)
-                    cv2.line(combined_view, (fb_cx, fb_cy - cross_size), (fb_cx, fb_cy + cross_size), (0, 255, 0), 1, cv2.LINE_AA)
-                    
                     # =========================================================================
-                    # ---> ELA: Die beiden äußersten Ringe zur optischen Kontrolle zeichnen <---
+                    # ---> FIX: Fischaugenkorrektur AUCH für den Spiegel im 15s-Feedback! <---
                     # =========================================================================
+                    seite_str = "links" if s == 'left' else "rechts"
+                    px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+                    px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+                    korrektur = self.fischaugenkorrektur_links if s == 'left' else self.fischaugenkorrektur_rechts
+                    
                     aktive_scheibe = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
                     targets = self.dm.load_targets()
                     
                     if aktive_scheibe in targets:
-                        ringe = targets[aktive_scheibe].get('ringe_durchmesser_mm', {})
+                        target_data = targets[aktive_scheibe]
+                        spiegel_mm = float(target_data.get('spiegel_durchmesser_mm', 30.5))
+                        
+                        # Exakt die gleiche Formel wie bei den anderen Ringen!
+                        r_mm_base = spiegel_mm / 2.0
+                        r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur))
+                        fb_ideal_rx = round((r_mm_draw * px_x) * self.scale_x)
+                        fb_ideal_ry = round((r_mm_draw * px_y) * self.scale_y)
+                    else:
+                        fb_ideal_rx = int(round(feedback['ideal_rx'] * self.scale_x))
+                        fb_ideal_ry = int(round(feedback['ideal_ry'] * self.scale_y))
+
+                    # Debug-Ausgabe (jetzt SICHER, weil korrektur definiert ist!)
+                    #print(f"\n🔍 [DEBUG 15s-FEEDBACK] Kamera: {s.upper()} | Zentrum: X:{fb_cx}, Y:{fb_cy}")
+                    #print(f"   Spiegel (korrigiert): rx={fb_ideal_rx} px | Korrektur-Faktor: {korrektur}")
+
+                    # 1. Den korrigierten Spiegel zeichnen
+                    draw_dashed_ellipse(combined_view, (fb_cx, fb_cy), fb_ideal_rx, fb_ideal_ry, (0, 255, 0))
+                    
+                    # Zentrumskreuz
+                    cross_size = 6
+                    cv2.line(combined_view, (fb_cx - cross_size, fb_cy), (fb_cx + cross_size, fb_cy), (0, 255, 0), 1, cv2.LINE_AA)
+                    cv2.line(combined_view, (fb_cx, fb_cy - cross_size), (fb_cx, fb_cy + cross_size), (0, 255, 0), 1, cv2.LINE_AA)
+                    
+                    # 2. Die 2 äußersten Ringe zur Kontrolle
+                    if aktive_scheibe in targets:
+                        ringe = target_data.get('ringe_durchmesser_mm', {})
                         if ringe:
-                            # Wir sortieren alle Durchmesser absteigend und schnappen uns die zwei größten!
                             alle_durchmesser = sorted([float(d) for d in ringe.values()], reverse=True)
                             aeusserste_zwei = alle_durchmesser[:2]
                             
-                            seite_str = "links" if s == 'left' else "rechts"
-                            px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-                            px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-                            korrektur = self.fischaugenkorrektur_links if s == 'left' else self.fischaugenkorrektur_rechts
-                            
                             for d_mm in aeusserste_zwei:
                                 r_mm_base = d_mm / 2.0
-                                r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) # <--- NEU
-                                ring_rx = round((r_mm_draw * px_x) * self.scale_x)
-                                ring_ry = round((r_mm_draw * px_y) * self.scale_y)
+                                r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur))
+                                rx = round((r_mm_draw * px_x) * self.scale_x)
+                                ry = round((r_mm_draw * px_y) * self.scale_y)
+                                #print(f"   -> [15s] Äußerster Ring d={d_mm}mm -> Pixel (rx:{rx}, ry:{ry})")
                                 
-                                # Gestrichelte äußere Ringe zeichnen
-                                draw_dashed_ellipse(combined_view, (fb_cx, fb_cy), ring_rx, ring_ry, (0, 255, 0))
+                                draw_dashed_ellipse(combined_view, (fb_cx, fb_cy), rx, ry, (0, 255, 0))
+                    # ---> NEU: Ein feines Kreuz im exakten Zentrum <---
+                    cross_size = 6
+                    cv2.line(combined_view, (fb_cx - cross_size, fb_cy), (fb_cx + cross_size, fb_cy), (0, 255, 0), 1, cv2.LINE_AA)
+                    cv2.line(combined_view, (fb_cx, fb_cy - cross_size), (fb_cx, fb_cy + cross_size), (0, 255, 0), 1, cv2.LINE_AA)
         
         # =========================================================================
         # ---> NEU: Dauerhafte Zielscheiben-Ringe (Ein/Aus-Schalter) <---
@@ -684,6 +690,8 @@ class TargetTracker:
                     offset_x = 0 if s == 'left' else scaled_w_left
                     cx = int(round(fb['cx'] * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
                     cy = int(round(fb['cy'] * self.scale_y)) + getattr(self, 'pad_y', 0)
+                    
+                    #print(f"   Kamera: {s.upper()} | Zentrum (cx, cy): {cx}, {cy}")
                     
                     aktive_scheibe = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
                     targets = self.dm.load_targets()
@@ -703,15 +711,18 @@ class TargetTracker:
                                 
                         for ring_name, d_mm in ringe.items():
                             r_mm_base = float(d_mm) / 2.0
-                            r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) # <--- NEU
+                            r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) 
                             rx = round((r_mm_draw * px_x) * self.scale_x)
                             ry = round((r_mm_draw * px_y) * self.scale_y)
+                            #print(f"   -> [An] Ring '{ring_name}' (d={d_mm}mm) -> Pixel (rx:{rx}, ry:{ry})")
                             draw_dashed_ellipse_perm(combined_view, (cx, cy), rx, ry, (0, 255, 0))
                             
                         if innenzehner > 0:
-                            r_mm = float(innenzehner) / 2.0
-                            rx = round((r_mm * px_x) * self.scale_x)
-                            ry = round((r_mm * px_y) * self.scale_y)
+                            r_mm_base = float(innenzehner) / 2.0
+                            r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur))
+                            rx = round((r_mm_draw * px_x) * self.scale_x)
+                            ry = round((r_mm_draw * px_y) * self.scale_y)
+                            #print(f"   -> [An] Innenzehner (d={innenzehner}mm) -> Pixel (rx:{rx}, ry:{ry})")
                             draw_dashed_ellipse_perm(combined_view, (cx, cy), rx, ry, (0, 255, 0))
         
         # --- BUTTON-LEISTE OBEN RECHTS ---
@@ -1017,9 +1028,9 @@ class TargetTracker:
                 elif raw_key in (2424832, 65361) or key == ord('a'): dx = -0.2
                 elif raw_key in (2555904, 65363) or key == ord('d'): dx =  0.2
                 
-                # 1. Koordinaten um exakt 1 Pixel verschieben
-                new_x = active_fb['cx'] + dx
-                new_y = active_fb['cy'] + dy
+                # 1. Koordinaten um 0.2 Pixel verschieben und direkt runden!
+                new_x = round(active_fb['cx'] + dx, 3)
+                new_y = round(active_fb['cy'] + dy, 3)
                 
                 # 2. Ins System schreiben
                 self.sm.set_nullpunkt(active_side, new_x, new_y)
@@ -1036,7 +1047,8 @@ class TargetTracker:
                         shot['score'] = new_score
                         shot['raw_score'] = raw_score
                         
-                self.log("SYSTEM", f"🎯 Zentrum {active_side.upper()} feinjustiert: X:{new_x} Y:{new_y}", True)
+                # Log-Ausgabe zwingend auf 3 Nachkommastelle formatieren
+                self.log("SYSTEM", f"🎯 Zentrum {active_side.upper()} feinjustiert: X:{new_x:.3f} Y:{new_y:.3f}", True)
 
         return False
 
@@ -1069,15 +1081,12 @@ class TargetTracker:
                 raw_x = max(0.0, raw_x)
                 picked_x, picked_y = int(raw_x), int(raw_y)
                 
-                # ==============================================================
-                # ---> NEU: Weiche für Editieren vs. Zentrum setzen <---
-                # ==============================================================
                 if mode == 'center':
                     # 1. Den Nullpunkt im System überschreiben
                     self.sm.set_nullpunkt(s, picked_x, picked_y)
                     self.log("SYSTEM", f"🎯 Neues Zentrum {s.upper()} gesetzt: X:{picked_x} Y:{picked_y}", True)
                     
-                    # 2. Visuelles Feedback aktualisieren (Grüner Kreis rutscht zur Maus)
+                    # 2. Visuelles Feedback aktualisieren (Wir füttern die manuellen Klick-Koordinaten direkt ins HUD!)
                     old_fb = self.calib_feedback_left if s == 'left' else self.calib_feedback_right
                     new_fb = {
                         'cx': picked_x, 'cy': picked_y,
@@ -1086,7 +1095,7 @@ class TargetTracker:
                         'ideal_ry': old_fb['ideal_ry'] if old_fb else 150,
                         'red_rx': 0, 'red_ry': 0,
                         'show_red': False,
-                        'time': time.time() # Startet den Timer für die Anzeige neu
+                        'time': time.time() # Startet den 15s Timer
                     }
                     if s == 'left': self.calib_feedback_left = new_fb
                     else: self.calib_feedback_right = new_fb
