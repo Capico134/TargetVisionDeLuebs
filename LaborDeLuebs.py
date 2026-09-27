@@ -231,15 +231,16 @@ class LaborApp:
         #self.root.bind('<KeyRelease-Control_L>', lambda e: setattr(self, 'ctrl_is_pressed', False))
         #self.root.bind('<KeyRelease-Control_R>', lambda e: setattr(self, 'ctrl_is_pressed', False))
         
+        
     def _toggle_blink(self):
         """Kippt das Blink-Flag alle 1000ms und erzwingt einen GUI-Redraw."""
         self.blink_state = not getattr(self, 'blink_state', True)
         
         if getattr(self, 'base_combined_img', None) is not None:
             # =========================================================================
-            # ---> NEU: Während des Rahmen-Ziehens blockieren wir den Blink-Timer! <---
+            # ---> NEU: Blockiert das Blinken bei JEGLICHER Interaktion (Zoom, Panning)! <---
             # =========================================================================
-            if getattr(self, 'is_zoom_box_active', False):
+            if self.is_interacting:
                 self.root.after(1000, self._toggle_blink)
                 return
 
@@ -256,6 +257,16 @@ class LaborApp:
                 self.renderer.update_image_display(full_rebuild=False, push_to_gui=True)
             
         self.root.after(1000, self._toggle_blink)
+
+    @property
+    def is_interacting(self):
+        """
+        Zentraler Schalter: Gibt True zurück, wenn der User gerade aktiv zieht oder zoomt.
+        Kann in Zukunft für neue Maus-Gesten beliebig erweitert werden.
+        """
+        is_zooming = getattr(self, 'is_zoom_box_active', False)
+        is_panning = getattr(self, 'drag_start_x', None) is not None
+        return is_zooming or is_panning
         
     def validate_float_chars(self, P):
         """Erlaubt nur Ziffern, Punkt, Minus, Plus und E (für wissenschaftliche Notation)"""
@@ -609,8 +620,8 @@ class LaborApp:
         if getattr(self, 'base_combined_img', None) is None or not hasattr(self, 'current_scale'):
             return
 
-        # ---> NEU: Kein Fadenkreuz zeichnen, während der Zoom-Rahmen aktiv ist! <---
-        if getattr(self, 'is_zoom_box_active', False):
+        # ---> NEU: Kein Fadenkreuz zeichnen, während der User aktiv interagiert! <---
+        if self.is_interacting:
             return
 
         # =========================================================================
@@ -669,7 +680,22 @@ class LaborApp:
             side_name = "Live" if is_left else "Rechts"
             self.lbl_coords.config(text=f"{side_name} X:{real_x:04d} Y:{real_y:04d} | D:{diff_val:03d}{bonus_str}")
             
-            # Direktes, synchrones Zeichnen
+            # =========================================================================
+            # ---> IDEE B: Ab 5-fachem Zoom den Maus-Klon komplett abschalten! <---
+            # =========================================================================
+            if self.zoom_factor >= 5.0:
+                # Falls von vorher noch ein Klon auf dem Monitor klebt, putzen wir ihn EINMALIG weg
+                if getattr(self, '_crosshair_active', False):
+                    # on_mouse_leave stellt das nackte Bild aus dem RGB-Cache wieder her
+                    self.on_mouse_leave(event)
+                    self._crosshair_active = False
+                    
+                # Ab hier: 100 % CPU-Ersparnis! Keine Bildberechnung, kein GUI-Upload mehr.
+                return 
+                
+            self._crosshair_active = True
+            
+            # Direktes, synchrones Zeichnen (nur bei Zoom < 5.0)
             self.renderer.draw_crosshair(x, y)
             
         finally:
@@ -677,15 +703,17 @@ class LaborApp:
             self._is_rendering_crosshair = False
 
     def on_mouse_leave(self, event):
+        # ---> TÜRSTEHER: Kein Neuladen auslösen, während das Bild verschoben wird! <---
+        if self.is_interacting:
+            return
+            
         self.lbl_coords.config(text="Maus nicht im Bild")
-        
-        # ---> NEU: Position löschen, da die Maus nicht mehr da ist <---
         self.last_mouse_x = None
         self.last_mouse_y = None
         
-        # ---> NEU: Wieder das cleane Base-Image anzeigen, wenn die Maus weg ist <---
-        if getattr(self, 'base_combined_img', None) is not None:
-            img_pil = Image.fromarray(cv2.cvtColor(self.base_combined_img, cv2.COLOR_BGR2RGB))
+        # ---> DER FIX: Wir nutzen den fertigen RGB-Cache statt der 1-Sekunden-Konvertierung! <---
+        if getattr(self, 'base_combined_img_rgb', None) is not None:
+            img_pil = Image.fromarray(self.base_combined_img_rgb)
             self.tk_image = ImageTk.PhotoImage(img_pil)
             self.lbl_image.config(image=self.tk_image)
 
@@ -740,13 +768,21 @@ class LaborApp:
         self.start_pan_y = self.pan_y
 
     def on_drag_motion(self, event):
-        """Verschiebt das Bild normal"""
+        """Verschiebt das Bild normal mit FPS-Drossel"""
         if getattr(self, 'tk_image', None) is None: return
         
         # ---> DER TÜRSTEHER GEGEN DEN SONDERFALL <---
-        # Fängt ab, wenn Strg beim Rahmenziehen vorzeitig losgelassen wird!
         if self.drag_start_x is None or self.drag_start_y is None: 
             return
+            
+        # =========================================================================
+        # ---> NEU: FPS-Drossel verhindert den 500ms Tkinter-Geometrie-Stau! <---
+        # =========================================================================
+        current_time = time.time()
+        # Maximal 25 FPS für das Panning erlauben (0.040 Sekunden)
+        if current_time - getattr(self, 'last_pan_update_time', 0) < 0.040:
+            return
+        self.last_pan_update_time = current_time
         
         dx = event.x_root - self.drag_start_x
         dy = event.y_root - self.drag_start_y
