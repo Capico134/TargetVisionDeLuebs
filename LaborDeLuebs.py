@@ -236,10 +236,16 @@ class LaborApp:
         self.blink_state = not getattr(self, 'blink_state', True)
         
         if getattr(self, 'base_combined_img', None) is not None:
+            # =========================================================================
+            # ---> NEU: Während des Rahmen-Ziehens blockieren wir den Blink-Timer! <---
+            # =========================================================================
+            if getattr(self, 'is_zoom_box_active', False):
+                self.root.after(1000, self._toggle_blink)
+                return
+
             mx = getattr(self, 'last_mouse_x', None)
             my = getattr(self, 'last_mouse_y', None)
             
-            # ---> DER FIX: Doppeltes Tkinter-Update bei extremer Größe verhindern! <---
             if mx is not None and my is not None:
                 # Bild stumm im Hintergrund (RAM) updaten, OHNE es an Tkinter zu senden
                 self.renderer.update_image_display(full_rebuild=False, push_to_gui=False)
@@ -250,6 +256,7 @@ class LaborApp:
                 self.renderer.update_image_display(full_rebuild=False, push_to_gui=True)
             
         self.root.after(1000, self._toggle_blink)
+        
     def validate_float_chars(self, P):
         """Erlaubt nur Ziffern, Punkt, Minus, Plus und E (für wissenschaftliche Notation)"""
         return all(c in "0123456789+-.eE" for c in P)
@@ -602,16 +609,20 @@ class LaborApp:
         if getattr(self, 'base_combined_img', None) is None or not hasattr(self, 'current_scale'):
             return
 
+        # ---> NEU: Kein Fadenkreuz zeichnen, während der Zoom-Rahmen aktiv ist! <---
+        if getattr(self, 'is_zoom_box_active', False):
+            return
+
         # =========================================================================
         # ---> DER FIX: Wir verhindern den tödlichen Tkinter-Stau! <---
         # =========================================================================
         if getattr(self, '_is_rendering_crosshair', False):
             return # Ein 500MB-Bild wird gerade verarbeitet -> weitere Maus-Events abprallen lassen!
             
-        import time
+        
         current_time = time.time()
-        # Maximal 50 FPS erlauben
-        if current_time - getattr(self, 'last_mouse_update_time', 0) < 0.02:
+        # Maximal 40 FPS erlauben
+        if current_time - getattr(self, 'last_mouse_update_time', 0) < 0.025:
             return
             
         self.last_mouse_update_time = current_time
@@ -691,8 +702,16 @@ class LaborApp:
         return "break" # Verhindert, dass das normale Klick-Event feuert!
 
     def on_zoom_box_motion(self, event):
-        """Zeichnet den Rahmen (Strg / Shift)"""
+        """Zeichnet den Rahmen (Strg / Shift) mit FPS-Drossel"""
         if getattr(self, 'is_zoom_box_active', False):
+            # 40 FPS Türsteher (0.025 Sekunden)
+            
+            current_time = time.time()
+            #print("on_zoom_box_motion: ",  current_time)
+            if current_time - getattr(self, 'last_zoombox_update_time', 0) < 0.025:
+                return
+            self.last_zoombox_update_time = current_time
+            
             self.renderer.draw_zoom_box(self.zoom_box_start_x, self.zoom_box_start_y, event.x, event.y)
         return "break"
 
@@ -723,7 +742,11 @@ class LaborApp:
     def on_drag_motion(self, event):
         """Verschiebt das Bild normal"""
         if getattr(self, 'tk_image', None) is None: return
-        if self.drag_start_x is None or self.drag_start_y is None: return
+        
+        # ---> DER TÜRSTEHER GEGEN DEN SONDERFALL <---
+        # Fängt ab, wenn Strg beim Rahmenziehen vorzeitig losgelassen wird!
+        if self.drag_start_x is None or self.drag_start_y is None: 
+            return
         
         dx = event.x_root - self.drag_start_x
         dy = event.y_root - self.drag_start_y
@@ -737,7 +760,10 @@ class LaborApp:
         """Normales Loslassen (Verschieben beenden oder Röntgen-Klick)"""
         if getattr(self, 'color_picker_active', False): return
         if getattr(self, 'tk_image', None) is None: return
-        if self.drag_start_x is None or self.drag_start_y is None: return
+        
+        # ---> DER TÜRSTEHER GEGEN DEN SONDERFALL <---
+        if self.drag_start_x is None or self.drag_start_y is None: 
+            return
 
         dx = event.x_root - self.drag_start_x
         dy = event.y_root - self.drag_start_y
@@ -757,9 +783,10 @@ class LaborApp:
         box_w = max_x - min_x
         box_h = max_y - min_y
         
-        # Sicherheits-Check gegen versehentliche Winz-Klicks
+        # ---> DER FIX: Winz-Klicks werden jetzt als Zeitsprung gewertet! <---
         if box_w < 15 or box_h < 15:
-            self.renderer.update_image_display()
+            # Wir rufen den Röntgen-Klick auf und geben ihm den Sprung-Befehl mit
+            self.identify_shot_at_click(x2, y2, jump_to_frame=True)
             return
             
         self.root.update_idletasks()
@@ -1163,23 +1190,9 @@ class LaborApp:
         tk.Button(btn_frame, text="Abbrechen", command=info_win.destroy).pack(side=tk.LEFT, padx=5)
         
         self.renderer.update_image_display()
-        
-    def on_drag_stop(self, event):
-        """Entscheidet beim Loslassen: War es Drag&Drop oder ein Röntgen-Klick?"""
-        if getattr(self, 'color_picker_active', False): return
-        if getattr(self, 'tk_image', None) is None: return
-
-        # Wie weit hat sich die Maus seit dem Klick bewegt?
-        dx = event.x_root - self.drag_start_x
-        dy = event.y_root - self.drag_start_y
-        dist = (dx**2 + dy**2)**0.5
-
-        # Wenn sich die Maus kaum bewegt hat (< 5 Pixel), war es ein Klick!
-        if dist < 5:  
-            self.identify_shot_at_click(event.x, event.y)
-
-    def identify_shot_at_click(self, x, y):
-        """Sucht den Treffer unter der Maus und blendet die Frame-Info ein"""
+  
+    def identify_shot_at_click(self, x, y, jump_to_frame=False):
+        """Sucht den Treffer unter der Maus und blendet die Frame-Info ein (oder springt dorthin)"""
         if getattr(self, 'base_combined_img', None) is None: return
             
         is_left = (x < self.current_img_w)
@@ -1191,7 +1204,6 @@ class LaborApp:
         best_shot = None
         best_dist = float('inf')
 
-        # Alle Treffer durchsuchen, welcher am nächsten am Klick liegt
         for shot in getattr(self, 'current_engine_shots', []):
             sx, sy = shot['pos']
             d = ((sx - real_x)**2 + (sy - real_y)**2)**0.5
@@ -1201,53 +1213,32 @@ class LaborApp:
 
         if best_shot:
             f_num = best_shot.get('labor_frame_num', '?')
-            # 1. Info ins Log schreiben
             self.print_log("SYSTEM", f"🎯 RÖNTGEN-SCAN: Dieser Treffer entstand in BILD #{f_num} (Score: {best_shot.get('score', 0.0):.1f})")
             
-            # 2. Highlight-Daten speichern (für den orangen Kreis)
             self.highlighted_shot = {
                 'pos': best_shot['pos'], 
                 'frame': f_num, 
                 'time': time.time()
             }
             
-            # Bild neu zeichnen, um das Highlight zu zeigen
-            self.renderer.update_image_display(full_rebuild=False) # <--- NEU
+            # ---> NEU: Die Zeitreise-Logik <---
+            if jump_to_frame and isinstance(f_num, int):
+                self.print_log("SYSTEM", f"🚀 ZEITREISE: Springe direkt zu Bild #{f_num}...")
+                self.current_index = f_num
+                self.process_and_display()
+            else:
+                self.renderer.update_image_display(full_rebuild=False)
             
-            # =========================================================================
-            # ---> DER FIX: Den alten Abschalt-Timer stornieren, falls er noch tickt! <---
-            # =========================================================================
             if hasattr(self, '_highlight_timer') and self._highlight_timer is not None:
                 self.root.after_cancel(self._highlight_timer)
-                
-            # Timer setzen und sich die Auftragsnummer merken
             self._highlight_timer = self.root.after(5000, self.clear_highlight)
 
     def clear_highlight(self):
         """Löscht das orangene/lila Highlight nach Ablauf des Timers"""
         self.highlighted_shot = None
-        self._highlight_timer = None  # ---> NEU: Auftraggeber zurücksetzen
-        self.renderer.update_image_display(full_rebuild=False) # <--- NEU
-
-    def clear_highlight(self):
-        """Löscht das orangene Highlight nach Ablauf des Timers"""
-        self.highlighted_shot = None
-        self.renderer.update_image_display()
-
-
-    def on_drag_motion(self, event):
-        """Verschiebt das Bild während des Ziehens"""
-        if getattr(self, 'tk_image', None) is None: return
-        
-        dx = event.x_root - self.drag_start_x
-        dy = event.y_root - self.drag_start_y
-        
-        self.pan_x = self.start_pan_x + dx
-        self.pan_y = self.start_pan_y + dy
-        
-        # Das ist der ganze Trick: Wir verschieben einfach das Tkinter-Label!
-        self.lbl_image.place(x=self.pan_x, y=self.pan_y)
-        
+        self._highlight_timer = None 
+        self.renderer.update_image_display(full_rebuild=False)
+  
     def reset_view(self, event=None):
         """Setzt Zoom und Position zurück (Auto-Fit bei Rechtsklick)"""
         if getattr(self, 'current_zip_path', None):

@@ -365,13 +365,12 @@ class LaborRenderer:
         #t_end = time.perf_counter()
         #dauer_ms = (t_end - t_start) * 1000
         #
-        ### Zeige nur an, wenn der Renderer spürbar arbeiten muss (> 50ms)
-        ##if dauer_ms > 50:
-        ##    modus = "FULL-REBUILD" if full_rebuild else "QUICK-UPDATE"
-        ##    print(f"🐌 Render-Zyklus [{modus} {gui_upload}]: {dauer_ms:.1f} ms")
-        ##    gui_upload = "+ GUI" if push_to_gui else "(RAM ONLY)"
-        
-        # ---> ACHTUNG: Die fehlerhaften doppelten GUI-Updates wurden hier entfernt! <---
+        ## Zeige nur an, wenn der Renderer spürbar arbeiten muss (> 50ms)
+        #if dauer_ms > 50:
+        #    modus = "FULL-REBUILD" if full_rebuild else "QUICK-UPDATE"
+        #    # ---> DER FIX: Erst definieren, dann drucken! <---
+        #    gui_upload = "+ GUI" if push_to_gui else "(RAM ONLY)"
+        #    print(f"🐌 Render-Zyklus [{modus} {gui_upload}]: {dauer_ms:.1f} ms")
 
     def draw_crosshair(self, x, y):
         # Wir nutzen jetzt den RGB-Cache!
@@ -396,9 +395,21 @@ class LaborRenderer:
         self.app.lbl_image.config(image=self.app.tk_image)
         
     def draw_zoom_box(self, x1, y1, x2, y2):
-        if getattr(self.app, 'base_combined_img', None) is None: return
-        temp_img = self.app.base_combined_img.copy()
+        t_start = time.perf_counter() 
+        if getattr(self.app, 'base_combined_img_rgb', None) is None: 
+            return
+            
+        temp_img = self.app.base_combined_img_rgb.copy()
         cv2.rectangle(temp_img, (x1, y1), (x2, y2), (255, 255, 0), 1)
-        img_pil = Image.fromarray(cv2.cvtColor(temp_img, cv2.COLOR_BGR2RGB))
+        
+        img_pil = Image.fromarray(temp_img)
         self.app.tk_image = ImageTk.PhotoImage(img_pil)
         self.app.lbl_image.config(image=self.app.tk_image)
+        
+        # ---> DER FIX: Wir zwingen Tkinter, das Bild SOFORT auf den Monitor 
+        # zu schicken, bevor das nächste Mausevent verarbeitet werden darf! <---
+        self.app.root.update_idletasks()
+        
+        t_end = time.perf_counter()
+        dauer_ms = (t_end - t_start) * 1000
+        #print("draw_zoom_box time: ", dauer_ms)
