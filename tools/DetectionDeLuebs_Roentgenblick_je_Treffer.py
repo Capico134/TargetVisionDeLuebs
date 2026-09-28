@@ -1,0 +1,994 @@
+import cv2
+import numpy as np
+import time
+from datetime import datetime
+
+class TargetDetector:
+    """
+    Diese Klasse kümmert sich AUSSCHLIESSLICH um die Bilderkennung (Computer Vision).
+    Sie weiß nichts von Fenstern, Buttons oder HUDs.
+    """
+    def __init__(self, config, datei_manager, state_manager, log_callback):
+        self.config = config
+        self.dm = datei_manager
+        self.sm = state_manager
+        
+        # Das ist die magische Verbindung zur GUI, damit der Detector in dein Fenster loggen kann
+        self.log = log_callback  
+        
+        # ---> NEU: Einmaliges Laden aller Erkennungs-Parameter in schnelle RAM-Attribute <---
+        self.refresh_settings_from_config()
+
+        # ---> NEU: Interner Zähler für die Test-Suite (bleibt im Live-Betrieb stumm) <---
+        self.eval_counter = 0
+
+        # Internes Gedächtnis des Detectors
+        self.ref_left = None
+        self.ref_right = None
+        #self.calib_feedback_left = None #JETZT IN DER GUI
+        #self.calib_feedback_right = None #JETZT IN DER GUI
+
+    def refresh_settings_from_config(self):
+        """Lädt alle performance-kritischen Parameter aus der Config in schnelle Objekt-Attribute."""
+        self.min_hole_area = self.config.getint('Erkennung', 'min_hole_area')
+        self.hit_tolerance = self.config.getint('Erkennung', 'hit_tolerance', fallback=25)
+        self.erkennungs_methode = self.config.get('Erkennung', 'erkennungs_methode', fallback='C').upper()
+        self.hybrid_discard_faktor = self.config.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5)
+        self.hough_min_faktor = self.config.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85)
+        self.hough_max_faktor = self.config.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15)
+        self.ausloeser_durch_erschuetterung = self.config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
+        self.max_image_change_percent = self.config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
+        self.debug_alle_bilder_speichern = self.config.getboolean('Erkennung', 'debug_alle_bilder_speichern', fallback=False)
+        self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+        self.hough_param1 = self.config.getint('Erkennung', 'hough_param1', fallback=25)
+        self.hough_param2 = self.config.getint('Erkennung', 'hough_param2', fallback=4)
+        self.morph_kernel_size = self.config.getint('Erkennung', 'morph_kernel_size', fallback=5)
+        self.max_aspect_ratio = self.config.getfloat('Erkennung', 'max_aspect_ratio', fallback=3.5)
+        self.gesamt_anteil_am_200score = self.config.getfloat('Erkennung', 'gesamt_anteil_am_200score', fallback=0.667)
+        self.abriss_max_edge_percent = self.config.getfloat('Erkennung', 'abriss_max_edge_percent', fallback=0.75)
+        self.abriss_base_bonus = self.config.getfloat('Erkennung', 'abriss_base_bonus', fallback=10.0)
+        self.min_score_valid = self.config.getfloat('Erkennung', 'min_score_valid', fallback=70.0)
+        self.clipping_factor_history = self.config.getfloat('Erkennung', 'clipping_factor_history', fallback=0.15)
+        self.clipping_factor_current = self.config.getfloat('Erkennung', 'clipping_factor_current', fallback=0.95)
+        self.max_treffer_je_frame = self.config.getint('Erkennung', 'max_treffer_je_frame', fallback=0)
+        self.randaufschlag_cumulative = self.config.getint('Erkennung', 'randaufschlag_cumulative', fallback=0)
+        
+        # Farb-Bonus System
+        self.farb_bonus_aktiv = self.config.getboolean('Erkennung', 'farb_bonus_aktiv', fallback=False)
+        self.farb_bonus_limit = self.config.getfloat('Erkennung', 'farb_bonus_limit', fallback=150.0)
+        self.farb_bonus_kurve = self.config.getfloat('Erkennung', 'farb_bonus_kurve', fallback=2.0)
+        self.grenzwert_hough = self.config.getfloat('Erkennung', 'grenzwert_hough', fallback=7.0)
+        self.abriss_min_hebel = self.config.getfloat('Erkennung', 'abriss_min_hebel', fallback=0.0)
+        
+        # ---> NEU: Optische Parameter cachen <---
+        self.caliber_durchmesser = self.config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
+        self.px_x_links = self.config.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0)
+        self.px_y_links = self.config.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0)
+        self.px_x_rechts = self.config.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0)
+        self.px_y_rechts = self.config.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0)
+        
+        self.blur_kernel_size = self.config.getint('Erkennung', 'blur_kernel_size', fallback=7)
+
+    def save_debug_image(self, name, image):
+        # Der Live-Manager schiebt das Bild in die Warteschlange.
+        # Der DummyManager (Labor) blockiert oder speichert physisch.
+        result = self.dm.save_debug_image(name, image)
+        
+        # ---> DER FIX: Wir loggen das Bild NUR, wenn der Manager explizit True zurückgibt!
+        if result is True:
+            self.log("SYSTEM", f"📸 Debug-Bild gespeichert: {name}")
+
+    def normalize_brightness(self, ref, live):
+        mean_ref = cv2.mean(ref)[:3]
+        mean_live = cv2.mean(live)[:3]
+        diff = np.array(mean_ref) - np.array(mean_live)
+        live_float = live.astype(np.float32)
+        live_float += diff
+        return np.clip(live_float, 0, 255).astype(np.uint8)
+
+    def calculate_hole_score(self, cx, cy, radius, thresh_new, thresh_raw, display_details=False):
+        """
+        Berechnet den Score mit unbestechlichem harten Supersampling (keine Kantenglättungs-Fehler!).
+        """
+        # ---> NEU: Jeder Aufruf zählt, ganz ohne Log-Eintrag! <---
+        self.eval_counter += 1
+        
+        # 1. Bounding Box (ROI) um den Treffer berechnen (+2 Pixel Puffer)
+        r_int = int(radius) + 2
+        x1 = max(0, int(cx) - r_int)
+        y1 = max(0, int(cy) - r_int)
+        x2 = min(thresh_new.shape[1], int(cx) + r_int)
+        y2 = min(thresh_new.shape[0], int(cy) + r_int)
+        
+        roi_w = x2 - x1
+        roi_h = y2 - y1
+        if roi_w <= 0 or roi_h <= 0:
+            return 0.0, 0.0, 0.0
+            
+        local_cx = cx - x1
+        local_cy = cy - y1
+        
+        # ---> NEU: Echter Supersampling-Faktor (1 physischer Pixel wird zu 4x4=16 Subpixeln) <---
+        scale = 4
+        
+        # 2. Die originalen ROIs ausschneiden
+        roi_new = thresh_new[y1:y2, x1:x2]
+        roi_raw = thresh_raw[y1:y2, x1:x2]
+        
+        # 3. Hartes Hochskalieren (NEAREST bewahrt die pixeligen, harten Treppenstufen!)
+        roi_new_highres = cv2.resize(roi_new, (roi_w * scale, roi_h * scale), interpolation=cv2.INTER_NEAREST)
+        roi_raw_highres = cv2.resize(roi_raw, (roi_w * scale, roi_h * scale), interpolation=cv2.INTER_NEAREST)
+        
+        # 4. Hochauflösende Kreis-Maske erstellen
+        circle_mask_highres = np.zeros((roi_h * scale, roi_w * scale), dtype=np.uint8)
+        
+        # ---> DER RÜCKBAU: Wir vertrauen der OpenCV-Rasterung ohne künstlichen Offset! <---
+        scaled_cx = int(round(local_cx * scale))
+        scaled_cy = int(round(local_cy * scale))
+        #scaled_cx = int(round((local_cx + 0.5) * scale - 0.5))
+        #scaled_cy = int(round((local_cy + 0.5) * scale - 0.5))
+        scaled_r = int(round(radius * scale))
+        
+        cv2.circle(circle_mask_highres, (scaled_cx, scaled_cy), scaled_r, 255, -1, cv2.LINE_8)
+        
+        pixels_in_circle = cv2.countNonZero(circle_mask_highres)
+        if pixels_in_circle == 0: 
+            return 0.0, 0.0, 0.0
+            
+        # 5. Echte, binäre Schnittmengen bilden (0 oder 255, keine Graustufen!)
+        intersection_new = cv2.bitwise_and(circle_mask_highres, roi_new_highres)
+        intersection_raw = cv2.bitwise_and(circle_mask_highres, roi_raw_highres)
+        
+        pixels_in_new = cv2.countNonZero(intersection_new)
+        pixels_in_raw = cv2.countNonZero(intersection_raw)
+        
+        coverage_new = (pixels_in_new / pixels_in_circle) * 100.0
+        coverage_raw = (pixels_in_raw / pixels_in_circle) * 100.0
+        
+        weight_new = 1.0 - self.gesamt_anteil_am_200score
+        total_score = 2.0 * ((coverage_new * weight_new) + (coverage_raw * self.gesamt_anteil_am_200score))
+        
+        # =========================================================================
+        # 🔬 QUICK & DIRTY: SUPERSAMPLING RÖNTGENBLICK (Side-by-Side Vergleich)
+        # =========================================================================
+        if display_details:
+            if not hasattr(self, '_debug_sleep_until'):
+                self._debug_sleep_until = 0
+
+            if time.time() > self._debug_sleep_until:
+                vis_h, vis_w = roi_new_highres.shape
+                
+                # --- BILD 1: OHNE OFFSET (Aktuelle Version) ---
+                debug_vis_1 = np.zeros((vis_h, vis_w, 3), dtype=np.uint8)
+                debug_vis_1[roi_raw_highres > 0] = (50, 0, 0)
+                debug_vis_1[roi_new_highres > 0] = (0, 100, 255)
+                debug_vis_1[intersection_new > 0] = (0, 255, 0) # Nutzt den oben bereits errechneten Stand
+                
+                cv2.circle(debug_vis_1, (scaled_cx, scaled_cy), scaled_r, (0, 0, 255), 1, cv2.LINE_8)
+                cv2.circle(debug_vis_1, (scaled_cx, scaled_cy), 2, (0, 255, 255), -1, cv2.LINE_8)
+
+                # --- BILD 2: MIT SUBPIXEL-OFFSET (+0.5) ---
+                scaled_cx_2 = int(round((local_cx + 0.5) * scale - 0.5))
+                scaled_cy_2 = int(round((local_cy + 0.5) * scale - 0.5))
+                
+                circle_mask_2 = np.zeros((vis_h, vis_w), dtype=np.uint8)
+                cv2.circle(circle_mask_2, (scaled_cx_2, scaled_cy_2), scaled_r, 255, -1, cv2.LINE_8)
+                intersection_new_2 = cv2.bitwise_and(circle_mask_2, roi_new_highres)
+                
+                debug_vis_2 = np.zeros((vis_h, vis_w, 3), dtype=np.uint8)
+                debug_vis_2[roi_raw_highres > 0] = (50, 0, 0)
+                debug_vis_2[roi_new_highres > 0] = (0, 100, 255)
+                debug_vis_2[intersection_new_2 > 0] = (0, 255, 0)
+                
+                cv2.circle(debug_vis_2, (scaled_cx_2, scaled_cy_2), scaled_r, (0, 0, 255), 1, cv2.LINE_8)
+                cv2.circle(debug_vis_2, (scaled_cx_2, scaled_cy_2), 2, (0, 255, 255), -1, cv2.LINE_8)
+
+                # --- BILDER ZUSAMMENFÜGEN UND ANZEIGEN ---
+                combined_vis = np.hstack((debug_vis_1, debug_vis_2))
+                
+                # 1. Erst das grobe Pixelbild auf 800px aufblasen (OHNE den roten Kreis!)
+                display_scale = max(1, 800 // max(vis_w, vis_h))
+                large_1 = cv2.resize(debug_vis_1, (vis_w * display_scale, vis_h * display_scale), interpolation=cv2.INTER_NEAREST)
+                large_2 = cv2.resize(debug_vis_2, (vis_w * display_scale, vis_h * display_scale), interpolation=cv2.INTER_NEAREST)
+
+                # 2. JETZT den glatten, perfekten Kreis im hochauflösenden Monitor-Raum zeichnen:
+                # Variante 1 (Links)
+                mon_cx_1 = int(round(local_cx * scale * display_scale))
+                mon_cy_1 = int(round(local_cy * scale * display_scale))
+                mon_r = int(round(radius * scale * display_scale))
+                cv2.circle(large_1, (mon_cx_1, mon_cy_1), mon_r, (0, 0, 255), 1, cv2.LINE_AA)
+
+                # Variante 2 (Rechts)
+                mon_cx_2 = int(round(((local_cx + 0.5) * scale - 0.5) * display_scale))
+                mon_cy_2 = int(round(((local_cy + 0.5) * scale - 0.5) * display_scale))
+                cv2.circle(large_2, (mon_cx_2, mon_cy_2), mon_r, (0, 0, 255), 1, cv2.LINE_AA)
+
+                # 3. Zusammenkleben
+                combined_large = np.hstack((large_1, large_2))
+                
+                # Weiße Trennlinie in der Mitte
+                center_x = vis_w * display_scale
+                cv2.line(combined_large, (center_x, 0), (center_x, vis_h * display_scale), (255, 255, 255), 2)
+                
+                # Text-HUD
+                cv2.putText(combined_large, "LINKS: Ohne Offset (Aktuell)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(combined_large, "RECHTS: Mit Subpixel-Offset", (center_x + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                
+                info = "[LEERTASTE]=Weiter | [S]=2 Sek Sleep | [ESC]=Beenden"
+                cv2.putText(combined_large, info, (10, vis_h * display_scale - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+
+                cv2.imshow("Supersampling Vergleich", combined_large)
+                
+                while True:
+                    key = cv2.waitKey(0) & 0xFF
+                    if key == 32:  # Leertaste
+                        break
+                    elif key == ord('s') or key == ord('S'):  # 2 Sekunden überspringen
+                        self._debug_sleep_until = time.time() + 2.0
+                        break
+                    elif key == 27:  # ESC
+                        self._debug_sleep_until = float('inf')
+                        cv2.destroyWindow("Supersampling Vergleich")
+                        break
+        
+        return total_score, coverage_new, coverage_raw
+        
+    def ninja_kalibrierungs_check(self, ref_bgr, side):
+        """Findet den Nullpunkt mit dem unbestechlichen 'Weißen-Punkt-Sniper'."""
+        aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+        targets = self.dm.load_targets()
+        
+        if aktive_scheibe_id not in targets: return None
+            
+        spiegel_mm = targets[aktive_scheibe_id].get('spiegel_durchmesser_mm', 30.5)
+        gray_frame = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
+        
+        _, thresh = cv2.threshold(gray_frame, 100, 255, cv2.THRESH_BINARY_INV)
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours: return None
+            
+        groesste_kontur = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(groesste_kontur) < 1000: return None
+            
+        x, y, w, h = cv2.boundingRect(groesste_kontur)
+
+        mask = np.zeros_like(gray_frame)
+        cv2.drawContours(mask, [groesste_kontur], -1, 255, -1)
+        
+        shrink_size = int(w * 0.15)
+        kernel = np.ones((shrink_size, shrink_size), np.uint8)
+        mask_shrunk = cv2.erode(mask, kernel, iterations=1)
+        
+        masked_gray = cv2.bitwise_and(gray_frame, gray_frame, mask=mask_shrunk)
+        blurred_gray = cv2.GaussianBlur(masked_gray, (5, 5), 0)
+        _, max_val, _, max_loc = cv2.minMaxLoc(blurred_gray)
+        
+        if max_val > 100:
+            cx, cy = max_loc
+            self.log("SYSTEM", f"🎯 Weißer Punkt exakt zentriert auf X:{cx} Y:{cy}", True)
+            punkt_gefunden = True
+        else:
+            cx, cy = int(x + (w / 2)), int(y + (h / 2))
+            self.log("SYSTEM", f"⚠️ Kein weißer Punkt! Fallback auf Erdnuss-Mitte.", True)
+            punkt_gefunden = False
+
+        seite_str = "links" if side == 'left' else "rechts"
+        config_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+        config_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+        
+        ideal_rx = int((spiegel_mm * config_x) / 2)
+        ideal_ry = int((spiegel_mm * config_y) / 2)
+        is_erdnuss = (w > ideal_rx * 2.2) or (h > ideal_ry * 2.2)
+
+        feedback_data = {
+            'cx': cx, 'cy': cy,
+            'red_cx': int(x + w/2), 'red_cy': int(y + h/2),
+            'ideal_rx': ideal_rx, 'ideal_ry': ideal_ry,
+            'red_rx': int(w/2), 'red_ry': int(h/2),
+            'show_red': is_erdnuss,
+            'time': time.time()
+        }
+        
+        # ---> NEU: Wir geben das ganze Paket sauber zurück! <---
+        return feedback_data
+
+    def set_reference_image(self, frame, side):
+        k = self.blur_kernel_size
+        bgr_blur = cv2.GaussianBlur(frame, (k, k), 0)
+        
+        if side == 'left': self.ref_left = bgr_blur
+        else: self.ref_right = bgr_blur
+        self.save_debug_image(f"referenz_{side}", frame)
+        feedback = None
+        if self.ringwertung_aktiv:
+            feedback = self.ninja_kalibrierungs_check(bgr_blur, side)
+            if feedback:
+                self.sm.set_nullpunkt(side, feedback['cx'], feedback['cy']) 
+                self.log("SYSTEM", f"🎯 Nullpunkt {side.upper()} gesetzt auf X:{int(feedback['cx'])} Y:{int(feedback['cy'])}", True)
+        # ---> NEU: Daten an den Aufrufer (die GUI) weitergeben <---
+        return feedback
+
+    def get_caliber_radius(self, side):
+        """Berechnet den dynamischen Pixel-Radius anhand der optischen Linsen-Kalibrierung."""
+        radius_mm = self.caliber_durchmesser / 2.0
+        if side == 'left':
+            return radius_mm * ((self.px_x_links + self.px_y_links) / 2.0)
+        else:
+            return radius_mm * ((self.px_x_rechts + self.px_y_rechts) / 2.0)
+
+    def detect_new_shot(self, frame, side):
+        current_caliber_radius = self.get_caliber_radius(side)
+        state = self.sm.state_left if side == 'left' else self.sm.state_right
+        reference_bgr = self.ref_left if side == 'left' else self.ref_right
+        
+        # 1. ERST auf None prüfen:
+        if reference_bgr is None or frame is None: 
+            self.log(side, "Fehler: Keine Referenz oder kein Frame vorhanden!")
+            return False
+        
+        # 2. DANN erst auf die Bilddimensionen zugreifen:
+        if reference_bgr.shape != frame.shape:
+            self.log(side, "⚠️ Bildgröße hat sich geändert (Crop)! Erneuere Referenz automatisch...", True)
+            self.set_reference_image(frame, side)
+            return False
+        
+        k = self.blur_kernel_size
+        current_bgr_blur = cv2.GaussianBlur(frame, (k, k), 0) 
+        current_normalized = self.normalize_brightness(reference_bgr, current_bgr_blur)
+        
+        #ALTE FARBERKENNUNG
+        #diff_bgr = cv2.absdiff(reference_bgr, current_normalized) 
+        #diff_gray = cv2.cvtColor(diff_bgr, cv2.COLOR_BGR2GRAY)
+        #_, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY) 
+        
+        #NEUE FARBERKENNUNG
+        diff_bgr = cv2.absdiff(reference_bgr, current_normalized) 
+        # ---> DER COLOR-HACK: Wir nehmen einfach den maximalen Ausschlag aus B, G oder R <---
+        # Verhindert, dass massive Rot-Änderungen von der Graustufen-Formel verschluckt werden!
+        diff_gray = np.max(diff_bgr, axis=2) 
+        
+        # =========================================================================
+        # ---> NEU: Der smoothe Farb-Bonus (NORMALIZED RGB / CHROMINANCE) <---
+        # =========================================================================
+
+
+        
+        if self.farb_bonus_aktiv:
+            farb_bonus_limit = self.farb_bonus_limit
+            farb_bonus_kurve = self.farb_bonus_kurve
+            
+            bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
+            r_tgt = self.config.getint(bg_sec, 'rgb_r')
+            g_tgt = self.config.getint(bg_sec, 'rgb_g')
+            b_tgt = self.config.getint(bg_sec, 'rgb_b')
+            
+            # 1. Ziel-Farbe normalisieren
+            sum_tgt = float(r_tgt + g_tgt + b_tgt)
+            if sum_tgt == 0: sum_tgt = 1.0
+            target_norm = np.array([b_tgt/sum_tgt, g_tgt/sum_tgt, r_tgt/sum_tgt], dtype=np.float32)
+            
+            # 2. Live-Bild normalisieren
+            live_float = current_normalized.astype(np.float32)
+            live_sum = np.sum(live_float, axis=2, keepdims=True)
+            live_sum[live_sum == 0] = 1.0 
+            live_norm = live_float / live_sum
+            
+            # 3. Distanz berechnen (Faktor 1000 für schöne Werte)
+            dist_matrix = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
+            
+            # =========================================================================
+            # ---> NEU: ELA-konforme Multiplikator-Logik mit Rausch-Plateau <---
+            # =========================================================================
+            multiplier = 1.0 - (dist_matrix / farb_bonus_limit)
+            
+            # Boost um 15% (Rausch-Ausgleich), aber hart bei 1.0 abriegeln!
+            multiplier = np.clip(multiplier * 1.15, 0.0, 1.0)
+            
+            if farb_bonus_kurve != 1.0:
+                multiplier = multiplier ** farb_bonus_kurve
+            
+            # Diff-Werte bestrafen (abdunkeln)
+            diff_gray = np.clip(diff_gray.astype(np.float32) * multiplier, 0, 255).astype(np.uint8)
+
+        _, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY)
+        
+        # ---> NEU: Leere Leinwand für die siegreichen Abrisskanten dieses Frames <---
+        frame_abrisskanten = np.zeros_like(thresh_raw)
+
+        # 1. ERST die alten Treffer abziehen (Stanzt den Riss aus)
+        if state.cumulative_mask is not None:
+            # ---> NEU: Schutzschild für die Maske <---
+            if thresh_raw.shape != state.cumulative_mask.shape:
+                self.log(side, "⚠️ Maskengröße inkompatibel (Crop)! Setze Maske zurück.", True)
+                state.cumulative_mask = np.zeros_like(thresh_raw)
+                
+            # =========================================================================
+            # ---> DER FIX: Schutz gegen tanzende Löcher (Kamerawackler) & JPG-Artefakte
+            # =========================================================================
+            # 1. Alte Masken (oft JPGs aus der 480p-Zeit) absolut sauber auf Schwarz/Weiß zwingen
+            _, pure_mask = cv2.threshold(state.cumulative_mask, 127, 255, cv2.THRESH_BINARY)
+            
+            # 2. Den "Schutzrand": Maske aufblähen, um Kameraverschiebungen abzufangen
+            # VORERST AUSKOMMENTIERT: Idee für später, vor dem Derby kein Risiko!
+            # kernel_wobble = np.ones((5, 5), np.uint8)
+            # safe_mask = cv2.dilate(pure_mask, kernel_wobble, iterations=1)
+            safe_mask = pure_mask # <--- Wir nutzen einfach direkt die desinfizierte Maske!
+                
+            # Jetzt stanzen wir mit der massiven, abgedichteten Maske!
+            thresh_new = cv2.subtract(thresh_raw, safe_mask)
+            
+            # Zerstört alle restlichen grauen Schlieren
+            _, thresh_new = cv2.threshold(thresh_new, 127, 255, cv2.THRESH_BINARY)
+        else:
+            thresh_new = thresh_raw.copy()
+            state.cumulative_mask = np.zeros_like(thresh_raw)
+
+        # 2. DANN den Morph-Filter auf die rohen NEUEN Fragmente anwenden!
+        k_size = self.morph_kernel_size
+        if k_size > 0:
+            #print(f"k_size {k_size}")
+            kernel = np.ones((k_size, k_size), np.uint8)
+            thresh_new = cv2.morphologyEx(thresh_new, cv2.MORPH_CLOSE, kernel)
+
+        changed_pixels = cv2.countNonZero(thresh_new)
+        total_pixels = thresh_new.shape[0] * thresh_new.shape[1]
+        change_percent = (changed_pixels / total_pixels) * 100
+        
+        if change_percent > self.max_image_change_percent:
+            # ---> NEU: 3 Nachkommastellen <---
+            self.log(side, f"⚠️ SANITY CHECK FEHLGESCHLAGEN: Neuer Zuwachs zu {change_percent:.3f}%")
+            self.log(side, "-> Ignoriere Frame.")
+            return False
+            
+        ##DEBUG-Ausgabe
+        #import os
+        #export_dir = "labor_export"
+        #os.makedirs(export_dir, exist_ok=True)
+        #cv2.imwrite(os.path.join(export_dir, "DETECTION_00_thresh_new.png"), thresh_new)
+
+        contours, _ = cv2.findContours(thresh_new, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        new_shots_found_this_frame = []
+        update_mask_only = False 
+        
+        if self.ausloeser_durch_erschuetterung or len(contours) > 0:
+            # ---> NEU: 3 Nachkommastellen <---
+            self.log(side, f"Analysiere Konturen... (Neuer Zuwachs: {change_percent:.3f}% | Konturen: {len(contours)})")
+
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area > self.min_hole_area:
+                
+                # ---> NEU: Der Anti-Verschiebungs-Filter (Aspect Ratio) <---
+                rx, ry, rw, rh = cv2.boundingRect(cnt)
+                if rw == 0 or rh == 0: continue
+                aspect_ratio = rh/rw 
+                if aspect_ratio > self.max_aspect_ratio:
+                    self.log(side, f"🚫 Störung ignoriert (Zu schmal: Ratio {aspect_ratio:.1f} > {self.max_aspect_ratio:.1f}). Maskiert! (Info: zu flache Treffer sind okay)")
+                    update_mask_only = True
+                    continue 
+
+                # Globale Variablen für diesen Treffer initialisieren
+                final_shot_score = 0.0
+                cx, cy = 0, 0
+                current_outer_edge = None # <--- NEU: Platzhalter für diese Iteration
+                winning_method = "Unbekannt" # <--- NEU: Sicherheits-Fallback
+               
+                if self.erkennungs_methode == 'C':
+                    kandidaten = []
+                    
+                    # --- HILFSFUNKTION FÜR DAS BATTLE ROYALE ---
+                    def add_candidate(name, c_x, c_y, min_coverage=0.0, bonus=0.0, base_pos=None, end_pos=None):
+                        score, cov_new, _ = self.calculate_hole_score(c_x, c_y, current_caliber_radius, thresh_new, thresh_raw)
+                        final_score = score + bonus
+                        valid = cov_new >= min_coverage
+                        
+                        bp = (float(base_pos[0]), float(base_pos[1])) if base_pos else (float(c_x), float(c_y))
+                        ep = (float(end_pos[0]), float(end_pos[1])) if end_pos else (float(c_x), float(c_y))
+                        
+                        kandidaten.append({
+                            'name': name, 'cx': float(c_x), 'cy': float(c_y), 
+                            'score': final_score, 'cov_new': cov_new, 'valid': valid,
+                            'base_pos': bp, 'end_pos': ep
+                        })
+                        
+                        valid_str = "✅" if valid else f"❌ (Zu wenig Riss-Anteil: < {min_coverage}%)"
+                        bonus_str = f" (inkl. +{bonus:.1f} Bonus)" if bonus > 0 else ""
+                        
+                        # =====================================================================
+                        # ---> NEU: Dynamische und glasklare Log-Ausgabe für Vektoren <---
+                        # =====================================================================
+                        if "Abriss" in name:
+                            # Zeigt den genauen Weg: Start (Kante) -> Anker (CoG/MEC) -> Endpunkt (Zentrum)
+                            pos_str = f"Kante ({bp[0]:.2f}, {bp[1]:.2f}) ➔ Rumpf ({ep[0]:.2f}, {ep[1]:.2f}) ➔ Ziel ({c_x:.2f}, {c_y:.2f})"
+                        else:
+                            pos_str = f"Ziel X:{c_x:.2f} Y:{c_y:.2f}"
+                            
+                        prefix = f"Kandidat [{name}]: {pos_str} "
+                        padded_prefix = f"{prefix:-<85}>" # Etwas mehr Platz für den langen String
+                        
+                        self.log(side, f"   -> {padded_prefix} Score: {final_score:5.1f}{bonus_str} | Riss-Anteil: {cov_new:5.1f}% {valid_str}")
+                        return final_score
+
+                    self.log(side, "🔍 Sammle Kandidaten für das Battle Royale...")
+
+                    # 1. BASELINE KANDIDATEN (MEC & CoG)
+                    M = cv2.moments(cnt)
+                    if M["m00"] != 0:
+                        cog_x, cog_y = M["m10"] / M["m00"], M["m01"] / M["m00"]
+                        base_pos = (int(cog_x), int(cog_y))
+                        add_candidate("Schwerpunkt (CoG)", cog_x, cog_y)
+                        
+                        ##ALLE PIXEL AUSGEBEN!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                        ## ---> DEBUG-AUSGABE FÜR MICH <---
+                        #pixel_liste = cnt.reshape(-1, 2).tolist()
+                        #self.log(side, f"🔴 DEBUG KONTUR-PIXEL: {pixel_liste}")
+                        #self.log(side, f"🔴 DEBUG BERECHNET: CoG({cog_x:.2f}, {cog_y:.2f})")
+                        
+                    else:
+                        (circle_x, circle_y), _ = cv2.minEnclosingCircle(cnt)
+                        base_pos = (int(circle_x), int(circle_y))
+                        cog_x, cog_y = float(circle_x), float(circle_y) # Fallback für dynamische Abrisskante
+                        
+                    (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
+                    add_candidate("MinCircle (MEC)", circle_x, circle_y)
+
+                    # Besten Base-Score für Limit-Checks ermitteln
+                    best_base = max(kandidaten, key=lambda x: x['score'])
+                    base_score = best_base['score']
+                    
+                    limit_discard = current_caliber_radius * self.hybrid_discard_faktor
+
+                    self.log(side, f"📊 Base-Leader: {best_base['name']} (Score: {base_score:.1f}) | Radius: {radius:.1f}px (Discard-Limit: {limit_discard:.1f}px)")
+
+                    # 2. DISCARD CHECK (Mega-Störungen sofort abwürgen)
+                    if radius > limit_discard:
+                        self.log(side, f"🚫 Störung ignoriert (Radius {radius:.1f}px > Limit {limit_discard:.1f}px). Wird maskiert!")
+                        update_mask_only = True
+                        continue
+
+                    # 3. DEEP ANALYSIS (Hough & Abrisskante laufen jetzt IMMER mit!)
+                    # self.log(side, "🔬 >>> DEEP-ANALYSIS WIRD IMMER AUSGEFUEHRT <<< (Hough & Abrisskanten-Check)")
+                        
+                    mask_for_deep = np.zeros_like(thresh_new)
+                    cv2.drawContours(mask_for_deep, [cnt], -1, 255, -1)
+                    
+                    # --- HOUGH KANDIDAT ---
+                    mask_blurred = cv2.GaussianBlur(mask_for_deep, (9, 9), 0)
+                    min_r = max(2, int(current_caliber_radius * self.hough_min_faktor))
+                    max_r = int(current_caliber_radius * self.hough_max_faktor)
+                    
+                    circles = cv2.HoughCircles(mask_blurred, cv2.HOUGH_GRADIENT, dp=1, minDist=2,
+                                               param1=self.hough_param1, param2=self.hough_param2, 
+                                               minRadius=min_r, maxRadius=max_r)
+                                               
+                    if circles is not None:
+                        # ---> WIEDER BEFREIT: Keine Integer-Rundung mehr! <---
+                        found_circles = circles[0, :]
+                        self.log(side, f"🔎 Hough hat {len(found_circles)} Kandidaten gefunden. Evaluiere den Besten...")
+                        
+                        best_hough_score = -1.0
+                        best_h_cx, best_h_cy = 0.0, 0.0
+                        for (hx, hy, hr) in found_circles:
+                            h_score, _, _ = self.calculate_hole_score(hx, hy, current_caliber_radius, thresh_new, thresh_raw)
+                            if h_score > best_hough_score:
+                                best_hough_score, best_h_cx, best_h_cy = h_score, float(hx), float(hy)
+                                
+                        #grenzwert_hough = 7.0 
+                        add_candidate("Hough-Sieger", best_h_cx, best_h_cy, min_coverage=self.grenzwert_hough)
+
+                    # --- ABRISSKANTEN KANDIDATEN ---
+                    if state.cumulative_mask is not None and cv2.countNonZero(state.cumulative_mask) > 0:
+                        kernel_dilate = np.ones((5, 5), np.uint8)
+                        dilated_new = cv2.dilate(mask_for_deep, kernel_dilate, iterations=1)
+                        ring = cv2.subtract(dilated_new, mask_for_deep)
+                        
+                        intact_paper = cv2.bitwise_not(state.cumulative_mask)
+                        outer_edge = cv2.bitwise_and(ring, intact_paper)
+                        current_outer_edge = outer_edge # <--- NEU: Für den Sieger-Check merken
+                        
+                        ts_abriss = datetime.now().strftime('%H%M%S_%f')[:-3]
+                        self.save_debug_image(f"abrisskante_outer_{side}_{ts_abriss}", outer_edge)
+                        #self.save_debug_image(f"letzte_abrisskante_{side}", outer_edge) # <--- Unser Schmuggel-Bild für das Labor!
+                        
+                        inter_contours, _ = cv2.findContours(outer_edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        if inter_contours:
+                            # ---> NEU: Rauschen filtern (nur Kanten > 3 Pixel) <---
+                            valid_edges = [cnt for cnt in inter_contours if len(cnt) > 3]
+                            
+                            if not valid_edges:
+                                self.log(side, "⚠️ Abrisskante gescheitert: Kanten-Fragmente zu klein.")
+                            else:
+                                # Erwarteter Umfang und Fläche für einen perfekten Schuss
+                                expected_circ = 2 * np.pi * current_caliber_radius
+                                expected_area = np.pi * (current_caliber_radius ** 2)
+                                
+                                # Dein Tuning-Parameter für den Bonus!
+                                max_edge_percent = self.abriss_max_edge_percent
+                                limit_len = expected_circ * max_edge_percent
+                                
+                                
+                                # =========================================================================
+                                # ---> DYNAMISCHER ABRISS-BONUS (Die "Scharnier"-Logik) <---
+                                # =========================================================================
+                                # Physischer Hintergrund: Schlägt ein Diabolo nah an einem alten Loch ein, 
+                                # reißt oft ein massives Stück Papier weg, das nur noch an einem kleinen 
+                                # Steg (der eigentlichen Einschlagstelle) gehalten wurde.
+                                # 
+                                # Ein reiner Flächen-Algorithmus (CoG/MEC) würde fälschlicherweise die Mitte 
+                                # dieses riesigen Risses als Treffer werten. Wir wollen aber exakt den Steg!
+                                # 
+                                # Quadratischer Multiplikator: 
+                                # Je gigantischer die weggerissene Fläche im Verhältnis zur normalen Kaliber-
+                                # fläche (area_ratio) ist, desto extremer pushen wir den Score der Abrisskante.
+                                # So gewinnt die Kante das Battle Royale bei fetten Rissen garantiert gegen CoG, 
+                                # während saubere Einzellöcher (area_ratio ~ 1.0) kaum Bonus erhalten.
+                                area_ratio = area / expected_area if expected_area > 0 else 1.0
+                                faktor = max(0.0, area_ratio + 0.0) ** 2
+                                dynamic_bonus = self.abriss_base_bonus * faktor
+                                
+                                # Haben wir exakt EINE Kante?
+                                is_single_edge = len(valid_edges) == 1
+                                
+                                for e_idx, edge_cnt in enumerate(valid_edges):
+                                    # Durch 2 teilen wegen der Hin-und-Zurück-Kontur!
+                                    edge_len = cv2.arcLength(edge_cnt, True) / 2.0
+                                    
+                                    # Der Flächen-Check (Donut vs. Wurst)
+                                    edge_area = cv2.contourArea(edge_cnt)
+                                    is_closed_ring = edge_area > (current_caliber_radius * current_caliber_radius)
+                                    
+                                    # Ist die Kante kürzer als unser Limit UND kein geschlossener Ring?
+                                    is_true_tear = (edge_len < limit_len) and not is_closed_ring
+                                    
+                                    # Bonus gibt es NUR bei exakt einer Kante, die auch noch kurz genug ist!
+                                    gets_bonus = is_single_edge and is_true_tear
+                                    bonus = dynamic_bonus if gets_bonus else 0.0
+                                    
+                                    # =====================================================================
+                                    # ---> DIE EIERLEGENDE WOLLMILCHSAU (Classic vs. Dynamic) <---
+                                    # =====================================================================
+                                    # 1. Startpunkt Variante A: Der Flächenschwerpunkt des Risses (Classic)
+                                    M_int = cv2.moments(edge_cnt)
+                                    if M_int["m00"] != 0:
+                                        cx_float = M_int["m10"] / M_int["m00"]
+                                        cy_float = M_int["m01"] / M_int["m00"]
+                                    else:
+                                        cx_float, cy_float = np.mean(edge_cnt[:,0,0]), np.mean(edge_cnt[:,0,1])
+                                    best_pt_center = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - cx_float, pt[0][1] - cy_float))[0]
+                                    cx_edge_center, cy_edge_center = best_pt_center
+                                    
+                                    # 2. Startpunkt Variante B: Der kürzeste Weg zum Rumpf (Dynamic)
+                                    best_pt_cog = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - cog_x, pt[0][1] - cog_y))[0]
+                                    cx_edge_cog, cy_edge_cog = best_pt_cog
+                                    
+                                    best_pt_mec = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - circle_x, pt[0][1] - circle_y))[0]
+                                    cx_edge_mec, cy_edge_mec = best_pt_mec
+                                    
+                                    # Das Log zeigt dir exakt, warum ein Bonus vergeben oder verweigert wurde
+                                    pct_str = int(max_edge_percent * 100)
+                                    if gets_bonus:
+                                        bonus_log = f" (+{bonus:.1f} Bonus [Faktor {area_ratio:.2f}], L={edge_len:.1f}px < {pct_str}% Limit)"
+                                    elif is_closed_ring:
+                                        bonus_log = f" (Kein Bonus, Vollkreis! Area={edge_area:.0f}px)"
+                                    elif not is_single_edge:
+                                        bonus_log = f" (Kein Bonus, {len(valid_edges)} Kanten gefunden)"
+                                    else:
+                                        bonus_log = f" (Kein Bonus, L={edge_len:.1f}px >= {pct_str}% Limit)"
+                                        
+                                    prefix_abriss = f"Kante #{e_idx+1} (Classic vs. Dynamic) "
+                                    padded_abriss = f"{prefix_abriss:-<45}>"
+                                    
+                                    self.log(side, f"📍 {padded_abriss}{bonus_log}")
+                                    
+                                    # Das Sicherheitsnetz für das "Hebel-Problem"
+                                    min_hebel = self.abriss_min_hebel 
+                                    grenzwert_abriss = 4.70
+                                    
+                                    # ---> KANDIDAT 1: CoG (Classic - Riss-Mitte) <---
+                                    d_cog_center = np.hypot(cog_x - cx_edge_center, cog_y - cy_edge_center)
+                                    if d_cog_center > min_hebel:
+                                        tcx = cx_edge_center + ((cog_x - cx_edge_center)/d_cog_center) * current_caliber_radius
+                                        tcy = cy_edge_center + ((cog_y - cy_edge_center)/d_cog_center) * current_caliber_radius
+                                        add_candidate(f"Abriss-{e_idx+1}-CoG (Classic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_center, cy_edge_center), end_pos=(cog_x, cog_y))
+                                        
+                                    # ---> KANDIDAT 2: MEC (Classic - Riss-Mitte) <---
+                                    d_mec_center = np.hypot(circle_x - cx_edge_center, circle_y - cy_edge_center)
+                                    if d_mec_center > min_hebel:
+                                        tcx = cx_edge_center + ((circle_x - cx_edge_center)/d_mec_center) * current_caliber_radius
+                                        tcy = cy_edge_center + ((circle_y - cy_edge_center)/d_mec_center) * current_caliber_radius
+                                        add_candidate(f"Abriss-{e_idx+1}-MEC (Classic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_center, cy_edge_center), end_pos=(circle_x, circle_y))
+
+                                    # ---> KANDIDAT 3: CoG (Dynamic - Kürzester Weg) <---
+                                    d_cog_dyn = np.hypot(cog_x - cx_edge_cog, cog_y - cy_edge_cog)
+                                    if d_cog_dyn > min_hebel:
+                                        tcx = cx_edge_cog + ((cog_x - cx_edge_cog)/d_cog_dyn) * current_caliber_radius
+                                        tcy = cy_edge_cog + ((cog_y - cy_edge_cog)/d_cog_dyn) * current_caliber_radius
+                                        add_candidate(f"Abriss-{e_idx+1}-CoG (Dynamic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_cog, cy_edge_cog), end_pos=(cog_x, cog_y))
+
+                                    # ---> KANDIDAT 4: MEC (Dynamic - Kürzester Weg) <---
+                                    d_mec_dyn = np.hypot(circle_x - cx_edge_mec, circle_y - cy_edge_mec)
+                                    if d_mec_dyn > min_hebel:
+                                        tcx = cx_edge_mec + ((circle_x - cx_edge_mec)/d_mec_dyn) * current_caliber_radius
+                                        tcy = cy_edge_mec + ((circle_y - cy_edge_mec)/d_mec_dyn) * current_caliber_radius
+                                        add_candidate(f"Abriss-{e_idx+1}-MEC (Dynamic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_mec, cy_edge_mec), end_pos=(circle_x, circle_y))
+                                    else:
+                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-MEC (Dynamic) ignoriert: Hebel zu kurz ({d_mec_dyn:.2f}px < {min_hebel}px). Peilung unsicher!")
+                        else:
+                            self.log(side, "⚠️ Abrisskante gescheitert: Berührt kein intaktes Papier.")
+                            
+                    # ---> NEU: Erklärung für Schuss #1 <---
+                    else:
+                        self.log(side, "ℹ️ Abrisskanten-Check übersprungen: Erstes Loch auf der Scheibe (noch keine alten Risse vorhanden).")
+
+                    # 4. DAS GROSSE BATTLE ROYALE AUSWERTEN
+                    valid_candidates = [c for c in kandidaten if c['valid']]
+                    
+                    if not valid_candidates:
+                        # Fallback (Passiert nur, falls Base aus irgendeinem Grund rausfliegt)
+                        valid_candidates = kandidaten
+
+                    # =========================================================================
+                    # ---> NEU: Die ELA Tie-Breaker Logik (Hierarchie bei Gleichstand) <---
+                    # =========================================================================
+                    def tie_breaker_key(cand):
+                        rounded_score = round(cand['score'], 1)
+                        name = cand['name']
+                        if name == "Schwerpunkt (CoG)": prio = 4
+                        elif name == "MinCircle (MEC)": prio = 3
+                        elif "Hough" in name: prio = 2
+                        else: prio = 1 
+                        return (rounded_score, prio)
+
+                    # ---> NEU: Gleichstand direkt in der Engine loggen! <---
+                    highest_score = round(max(c['score'] for c in valid_candidates), 1)
+                    tied_candidates = [c for c in valid_candidates if round(c['score'], 1) == highest_score]
+                    
+                    if len(tied_candidates) > 1:
+                        names = [c['name'] for c in tied_candidates]
+                        self.log(side, f"⚖️ GLEICHSTAND: {len(tied_candidates)} Kandidaten mit Score {highest_score:.1f} -> Tie-Breaker entscheidet zwischen {', '.join(names)}!")
+
+                    winner = max(valid_candidates, key=tie_breaker_key)
+                    
+                    # ---> NEU: Formatierter Sieger <---
+                    win_prefix = f"BATTLE ROYALE SIEGER: {winner['name']} "
+                    padded_win = f"{win_prefix:-<45}>"
+                    self.log(side, f"🏆 {padded_win} Score: {winner['score']:5.1f}")
+                    
+                    cx, cy = winner['cx'], winner['cy']
+                    final_shot_score = winner['score']
+                    winning_method = winner['name'] # <--- NEU
+                    
+                    # =========================================================================
+                    # 🔬 QUICK & DIRTY: RÖNTGENBLICK NUR FÜR DEN SIEGER!
+                    # =========================================================================
+                    # Einmaliger, stummer Aufruf nur für die Visualisierung
+                    self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw, display_details=True)
+                    # =========================================================================
+                    
+                    # ---> NEU: Kante nur auf die Leinwand malen, wenn sie das Duell gewinnt! <---
+                    if "Abriss" in winner['name'] and current_outer_edge is not None:
+                        frame_abrisskanten = cv2.bitwise_or(frame_abrisskanten, current_outer_edge)
+                                
+                elif self.erkennungs_methode == 'B':
+                    M = cv2.moments(cnt)
+                    if M["m00"] != 0:
+                        cx = M["m10"] / M["m00"]
+                        cy = M["m01"] / M["m00"]
+                        final_shot_score, _, _ = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw)     
+                        winning_method = "Schwerpunkt (Mode B)" # <--- HIER EINFÜGEN
+                    else:
+                        continue 
+                else:
+                    (circle_x, circle_y), _ = cv2.minEnclosingCircle(cnt)
+                    cx, cy = float(circle_x), float(circle_y)
+                    # HIER FEHLTE DIE ZUWEISUNG:
+                    final_shot_score, _, _ = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw)
+                    winning_method = "MinCircle (Mode A)" # <--- UND HIER EINFÜGEN
+                
+                # --- FEHLALARM-FILTER: Score < 70 ---
+                if final_shot_score < self.min_score_valid: 
+                    self.log(side, f"🚫 Fehlalarm: Score {final_shot_score:.1f} < {self.min_score_valid} -> nicht als Treffer gewertet!")
+                    update_mask_only = True
+                    continue
+
+                
+                # Doppelzählungs-Schutz (Getrennt nach Historie und aktueller Frame-Schleife)
+                is_new = True
+                
+                # 1. Prüfung gegen Historie (alte Treffer aus vorherigen Frames) -> Sehr streng (0.15)
+                clipping_factor_history = self.clipping_factor_history
+                for shot in self.sm.shots:
+                    if shot['side'] == side:
+                        dist = np.hypot(shot['pos'][0] - cx, shot['pos'][1] - cy)
+                        if dist < current_caliber_radius * clipping_factor_history:
+                            is_new = False
+                            self.log(side, f"⚠️ Treffer ignoriert (Fläche {area:.1f}px): Zu nah ({dist:.1f}px) an bekanntem alten Schuss!")
+                            
+                            # ---> NEU: Maske trotzdem updaten, damit der Riss im nächsten Frame ignoriert wird! <---
+                            update_mask_only = True 
+                            break
+                            
+                # 2. Prüfung gegen Fragmente aus DIESEM Frame -> Großzügig (0.95), um Sichel-Risse abzuwürgen
+                if is_new:
+                    clipping_factor_current = self.clipping_factor_current
+                    for i, existing_shot in enumerate(new_shots_found_this_frame):
+                        dist = np.hypot(existing_shot['cx'] - cx, existing_shot['cy'] - cy)
+                        if dist < current_caliber_radius * clipping_factor_current:
+                            
+                            # ---> NEU: Das Sichel-Duell! Wer hat den höheren Weißanteil? <---
+                            if final_shot_score > existing_shot['score']:
+                                self.log(side, f"🔄 Sichel-Duell: Neues Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) schlägt altes Fragment ({existing_shot['score']:.1f}).")
+                                
+                                # ---> DER FIX: MEC-Radius für den neuen Duell-Sieger berechnen und anhängen! <---
+                                _, new_mec_radius = cv2.minEnclosingCircle(cnt)
+                                
+                                # Überschreibe den Verlierer mit dem neuen, besseren Kandidaten inkl. Radius!
+                                new_shots_found_this_frame[i] = {
+                                    'cx': cx, 'cy': cy, 'area': area, 'score': final_shot_score,
+                                    'winner_method': winning_method,
+                                    'mec_radius': new_mec_radius,
+                                    'base_pos': winner.get('base_pos', (cx, cy)),
+                                    'end_pos': winner.get('end_pos', (cx, cy))
+                                }
+                            else:
+                                self.log(side, f"⚠️ Treffer ignoriert: Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) verliert Sichel-Duell gegen besseres Fragment ({existing_shot['score']:.1f})!")
+                            
+                            is_new = False
+                            break
+
+                if is_new:
+                    _, mec_radius = cv2.minEnclosingCircle(cnt)
+                    new_shots_found_this_frame.append({
+                        'cx': winner['cx'], 'cy': winner['cy'], 'area': area, 'score': winner['score'],
+                        'winner_method': winner['name'],
+                        'mec_radius': mec_radius,
+                        'base_pos': winner['base_pos'],
+                        'end_pos': winner.get('end_pos', (winner['cx'], winner['cy'])) # <--- Zielpunkt sichern
+                    })
+                    self.log(side, f"---> NEUES LOCH BESTÄTIGT: Pos ({cx:.2f}, {cy:.2f}) | Fläche: {area:.1f}px | Score: {final_shot_score:.1f} | Riss-Anteil: {winner['cov_new']:.1f}%")
+                    self.log(side, "------------------------------------------------------------")
+                    
+        # =========================================================================
+        # ---> NEU: Filter für maximale Trefferanzahl je Frame (nach Fläche) <---
+        # =========================================================================
+        if self.max_treffer_je_frame > 0 and len(new_shots_found_this_frame) > self.max_treffer_je_frame:
+            # Sortiere die validen Treffer absteigend nach ihrer Pixel-Fläche (größte zuerst!)
+            new_shots_found_this_frame.sort(key=lambda x: x['area'], reverse=True)
+            
+            # Trenne die Gewinner von den Verlierern
+            verworfen = new_shots_found_this_frame[self.max_treffer_je_frame:]
+            new_shots_found_this_frame = new_shots_found_this_frame[:self.max_treffer_je_frame]
+            
+            # Logge die verworfenen Treffer sauber aus
+            for v in verworfen:
+                self.log(side, f"✂️ Überzähliger Treffer verworfen (Limit: {self.max_treffer_je_frame}): Pos X:{v['cx']}, Y:{v['cy']} mit Fläche {v['area']:.1f}px")
+
+
+        # ---> BLOCK FÜR TREFFER UND DISCARD-MASKEN <---
+        if new_shots_found_this_frame or update_mask_only:
+            
+            # Echte Treffer dem StateManager übergeben
+            if new_shots_found_this_frame:
+                for s in self.sm.shots:
+                    if s['side'] == side:
+                        s['is_new'] = False
+
+                for sd in new_shots_found_this_frame:
+                    # ---> HIER MUSS base_pos EXPLIZIT MIT ÜBERGEBEN WERDEN! <---
+                    shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'], cv_score=sd.get('score', 0.0), base_pos=sd.get('base_pos'), end_pos=sd.get('end_pos'))
+                    shot['winner_method'] = sd.get('winner_method', 'Unbekannt') 
+                    
+                    shot_num = sum(1 for s in self.sm.shots if s['side'] == side)
+                    
+                    seite_de = "links" if side == 'left' else "rechts"
+                    px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_de}')
+                    px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_de}')
+                    avg_px_pro_mm = (px_x + px_y) / 2.0
+                    
+                    mec_radius = sd.get('mec_radius', 0.0)
+                    durchmesser_mm = (mec_radius * 2) / avg_px_pro_mm if avg_px_pro_mm > 0 else 0
+                    
+                    self.log(side, f"█ 💥 SCHUSS #{shot_num} 💥 █ Pos X:{sd['cx']:.2f}, Y:{sd['cy']:.2f} | {shot['score']:.1f} Ringe (Roh: {shot.get('raw_score', 0.0):.3f}) | CV-Score: {sd.get('score', 0.0):.1f} | Fläche: {sd.get('area', 0.0):.1f}px | MEC-Ø: {durchmesser_mm:.2f}mm")
+                    
+                self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!", True)
+            
+            # =========================================================================
+            # ---> NEU: Aussagekräftige Log-Ausgabe für stille Masken-Updates <---
+            # =========================================================================
+            elif update_mask_only:
+                pixels_added = cv2.countNonZero(thresh_new)
+                self.log(side, f"🛡️ Masken-Update (Ohne Treffer): {len(contours)} Kontur(en) / {pixels_added} Pixel in die Basismaske integriert.")
+            
+            # Maske für BEIDE Fälle (Treffer & Discard-Risse) updaten
+            state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, thresh_new)
+            
+            # Der "Panzer-Sticker" (randaufschlag_cumulative als PIXEL)
+            if self.randaufschlag_cumulative > 0:
+                k_size = (self.randaufschlag_cumulative * 2) + 1
+                kernel_sticker = np.ones((k_size, k_size), np.uint8)
+                sticker_to_add = cv2.dilate(thresh_new, kernel_sticker, iterations=1)
+            else:
+                sticker_to_add = thresh_new
+                
+            # Maske für BEIDE Fälle (Treffer & Discard-Risse) updaten
+            state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, sticker_to_add)
+            
+            self.save_debug_image(f"diff_gesamt_{side}", state.cumulative_mask)
+            self.save_debug_image(f"diff_letzter_treffer_{side}", thresh_new)
+            self.save_debug_image(f"letzte_aufnahme_{side}", frame)
+            
+            # Die gesammelten Sieger-Kanten für das Labor bereitstellen
+            self.save_debug_image(f"letzte_abrisskante_{side}", frame_abrisskanten)
+            # ---> NEU: Das normalisierte Bild für Paint-Analysen speichern! <--- AUSKOMMENTIERT ABER BITTE NICHT LÖSCHEN!
+            #self.save_debug_image(f"letzte_aufnahme_normalized_{side}", current_normalized)
+            
+            # =========================================================================
+            # ---> NEU: Bilder intelligent abspeichern (Diät für Discards) <---
+            # =========================================================================
+            if self.debug_alle_bilder_speichern:
+                ts = datetime.now().strftime('%H%M%S_%f')[:-3]
+                
+                if new_shots_found_this_frame:
+                    # Bei echten Treffern speichern wir das volle Paket für das Labor
+                    shot_idx = sum(1 for s in self.sm.shots if s['side'] == side) 
+                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff", thresh_new)
+                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_orig", frame)
+                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff_gesamt", state.cumulative_mask)
+                    
+                elif update_mask_only:
+                    # ---> DER FIX: Geister-Frames als "_orig" speichern für das Labor! <---
+                    # Wir nutzen den gleichen Präfix "Schuss_XX", damit der Zeitstempel
+                    # für eine perfekte chronologische Sortierung im Labor-ZIP sorgt.
+                    shot_idx = sum(1 for s in self.sm.shots if s['side'] == side)
+                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_diff", thresh_new)
+                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_orig", frame)
+                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_diff_gesamt", state.cumulative_mask)
+
+            return True if new_shots_found_this_frame else False
+            
+        else:
+            if self.ausloeser_durch_erschuetterung:
+                self.log(side, "Keine validen neuen Treffer im Bild gefunden.")
+                
+            # =========================================================================
+            # ---> NEU: Geisterbilder nur speichern, wenn sich WIRKLICH etwas 
+            # Relevantes verändert hat (> 0.005 % entspricht ca. 25 Pixeln)
+            # =========================================================================
+            if self.debug_alle_bilder_speichern and change_percent > 0.005:
+                ts = datetime.now().strftime('%H%M%S_%f')[:-3]
+                shot_idx = sum(1 for s in self.sm.shots if s['side'] == side)
+#!              #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                # ZUKUNFTS-BAUSTELLE: Hier würden die verworfenen Risse in die Maske wandern
+                # state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, thresh_new)
+#!              #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!                
+                # Wir nennen sie "_Geist_", damit das Labor sie nahtlos in die Zeitachse einsortiert
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_diff", thresh_new)
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_orig", frame)
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_diff_gesamt", state.cumulative_mask)
+                
+            return False
+
+    def check_background_and_evaluate(self, frame, state):
+        current_ref = self.ref_left if state.side == 'left' else self.ref_right
+        bg_visible, bg_percent = state.is_background_visible(frame)
+        diff = bg_percent - state.min_area 
+        
+        if bg_visible:
+            if state.target_present:
+                self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> WAND (+{diff:.1f}% über Limit {state.min_area}%)")
+                self.log(state.side, "Scheibe außer Sicht -> Warte auf Zielscheibe...", True)
+                state.target_present = False
+        else:
+            if not state.target_present:
+                self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> SCHEIBE ({abs(diff):.1f}% unter Limit {state.min_area}%)")
+                state.target_present = True
+                #SOOOOOOOOOOOOOOOOOOOOONEEEEEEEEEEEEEEEEESCHEIIIIIIIIIIIIISSSSSSSSSSEEEEEEEEEEEEEEEEEEE
+                #if hasattr(self.dm, 'clear_debug_images'):
+                #    self.dm.clear_debug_images(state.side)
+                
+                if current_ref is None:
+                    self.set_reference_image(frame, state.side)
+                else:
+                    self.detect_new_shot(frame, state.side)
+            else:
+                self.detect_new_shot(frame, state.side)

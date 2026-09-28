@@ -106,32 +106,32 @@ class LaborRenderer:
                     composite[mask] = cv2.addWeighted(composite[mask], 0.5, green_overlay[mask], 0.5, 0)
                     
                 right_img = composite
-
-            if mode == 4:
-                side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
-                current_frame_num = self.app.current_index
-
-                if hasattr(self.app, 'current_engine_shots'):
-                    for shot in self.app.current_engine_shots:
-                        if shot.get('side') != side: continue
-                        if shot.get('labor_frame_num') != current_frame_num: continue
-                        winner_method = shot.get('winner_method', '')
-                        if "Abriss" not in winner_method: continue
-
-                        bx, by = shot.get('base_pos', (0, 0))
-                        ex, ey = shot.get('end_pos', (0, 0))
-
-                        start_pt = (int(round(bx)), int(round(by)))
-                        end_pt = (int(round(ex)), int(round(ey)))
-
-                        hellblau = (255, 200, 0) 
-                        gruen = (0, 255, 0) 
-                        
-                        if start_pt != end_pt:
-                            cv2.line(right_img, start_pt, end_pt, gruen, 1, cv2.LINE_8) 
-
-                        cv2.circle(right_img, start_pt, 2, hellblau, -1)
-                        cv2.circle(right_img, end_pt, 2, hellblau, -1)
+            #
+            #if mode == 4:
+            #    side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
+            #    current_frame_num = self.app.current_index
+            #
+            #    if hasattr(self.app, 'current_engine_shots'):
+            #        for shot in self.app.current_engine_shots:
+            #            if shot.get('side') != side: continue
+            #            if shot.get('labor_frame_num') != current_frame_num: continue
+            #            winner_method = shot.get('winner_method', '')
+            #            if "Abriss" not in winner_method: continue
+            #
+            #            bx, by = shot.get('base_pos', (0, 0))
+            #            ex, ey = shot.get('end_pos', (0, 0))
+            #
+            #            start_pt = (int(round(bx)), int(round(by)))
+            #            end_pt = (int(round(ex)), int(round(ey)))
+            #
+            #            hellblau = (255, 200, 0) 
+            #            gruen = (0, 255, 0) 
+            #            
+            #            if start_pt != end_pt:
+            #                cv2.line(right_img, start_pt, end_pt, gruen, 1, cv2.LINE_8) 
+            #
+            #            cv2.circle(right_img, start_pt, 2, hellblau, -1)
+            #            cv2.circle(right_img, end_pt, 2, hellblau, -1)
 
             # Zoom-Faktor einrechnen
             self.app.current_scale = (550 / h) * self.app.zoom_factor
@@ -142,6 +142,52 @@ class LaborRenderer:
             resized_right = cv2.resize(right_img, (self.app.current_img_w, new_h), interpolation=cv2.INTER_NEAREST)
             
             combined = np.hstack((resized_live, resized_right))
+            
+            # =========================================================================
+            # ---> NEU: High-Res Abrisskanten-Linien (Knackig scharf auf Monitor-Auflösung) <---
+            # =========================================================================
+            if mode == 4 and hasattr(self.app, 'current_engine_shots'):
+                side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
+                current_frame_num = self.app.current_index
+
+                for shot in self.app.current_engine_shots:
+                    if shot.get('side') != side: continue
+                    if shot.get('labor_frame_num') != current_frame_num: continue
+                    winner_method = shot.get('winner_method', '')
+                    if "Abriss" not in winner_method: continue
+
+                    bx, by = shot.get('base_pos', (0, 0))
+                    ex, ey = shot.get('end_pos', (0, 0))
+
+                    # 1. +0.5 schiebt den Punkt in die exakte optische Mitte des (gezoomten) Pixels
+                    # 2. Koordinaten mit dem Zoom-Faktor multiplizieren
+                    # 3. X-Koordinate um die Breite des linken Bildes verschieben
+                    scaled_bx = int(round((bx + 0.5) * self.app.current_scale)) + self.app.current_img_w
+                    scaled_by = int(round((by + 0.5) * self.app.current_scale))
+                    
+                    scaled_ex = int(round((ex) * self.app.current_scale)) + self.app.current_img_w
+                    scaled_ey = int(round((ey) * self.app.current_scale))
+
+                    start_pt = (scaled_bx, scaled_by)
+                    end_pt = (scaled_ex, scaled_ey)
+
+                    ## =========================================================================
+                    ## ---> NEU: Konsolen-Log für die Monitor-Koordinaten <---
+                    ## =========================================================================
+                    #print(f"\n📐 ABRISSKANTE RENDER-LOG (Zoom {self.app.zoom_factor:.1f}x | Scale {self.app.current_scale:.2f}):")
+                    #print(f"   -> START    [Kante] : Original ({bx:.2f}, {by:.2f}) ➔ Monitor-Pixel: {start_pt}")
+                    #print(f"   -> ENDPUNKT [Rumpf] : Original ({ex:.2f}, {ey:.2f}) ➔ Monitor-Pixel: {end_pt}")
+
+                    hellblau = (255, 200, 0) 
+                    gruen = (0, 255, 0) 
+                    
+                    if start_pt != end_pt:
+                        # Strichstärke 1, aber auf Monitorauflösung gezeichnet (LINE_8 = ohne Antialiasing!)
+                        cv2.line(combined, start_pt, end_pt, gruen, 1, cv2.LINE_8) 
+
+                    # Fester Radius von 3 Monitor-Pixeln für die Punkte (unabhängig vom Zoom!)
+                    cv2.circle(combined, start_pt, 3, hellblau, -1, cv2.LINE_8)
+                    cv2.circle(combined, end_pt, 3, hellblau, -1, cv2.LINE_8)
             
             if getattr(self.app, 'show_target_rings_var', None) and self.app.show_target_rings_var.get():
                 meta = getattr(self.app, 'original_match_data', {})
