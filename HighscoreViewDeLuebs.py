@@ -208,23 +208,28 @@ class MatchDetailWindow(tk.Toplevel):
         idx_l, idx_r = 1, 1
         hits_l, hits_r = [], []
 
+        # ---> NEU: Nachkommastellen für die Tabelle holen <---
+        decimals = self.match_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
+
         for i, hit in enumerate(self.timeline):
             score = hit.get('score', 0.0)
             tag = ("high_score",) if score >= 10.0 else ()
 
             if hit['s'] == 'l' and getattr(self, 'tree_l', None):
-                self.tree_l.insert("", "end", iid=str(i), values=(idx_l, f"{score:.1f}"), tags=tag)
+                # ---> DER FIX: Formatierung anpassen <---
+                self.tree_l.insert("", "end", iid=str(i), values=(idx_l, f"{score:.{decimals}f}"), tags=tag)
                 total_l += score
                 idx_l += 1
                 hits_l.append(score)
             elif hit['s'] == 'r' and getattr(self, 'tree_r', None):
-                self.tree_r.insert("", "end", iid=str(i), values=(idx_r, f"{score:.1f}"), tags=tag)
+                # ---> DER FIX: Formatierung anpassen <---
+                self.tree_r.insert("", "end", iid=str(i), values=(idx_r, f"{score:.{decimals}f}"), tags=tag)
                 total_r += score
                 idx_r += 1
                 hits_r.append(score)
 
-        if getattr(self, 'lbl_sum_l', None): self.lbl_sum_l.config(text=f"Gesamt: {total_l:.1f}")
-        if getattr(self, 'lbl_sum_r', None): self.lbl_sum_r.config(text=f"Gesamt: {total_r:.1f}")
+        if getattr(self, 'lbl_sum_l', None): self.lbl_sum_l.config(text=f"Gesamt: {total_l:.{decimals}f}")
+        if getattr(self, 'lbl_sum_r', None): self.lbl_sum_r.config(text=f"Gesamt: {total_r:.{decimals}f}")
 
         # =====================================================================
         # ---> Serien-Auswertung einbinden <---
@@ -242,29 +247,26 @@ class MatchDetailWindow(tk.Toplevel):
         """Erzeugt ein flaches, einzeiliges Textfeld für die Serien unter dem Bild."""
         # Padding für eine schöne Optik setzen
         series_container.config(padx=10, pady=5)
+        
+        # ---> NEU: Nachkommastellen auch für die Serien holen <---
+        decimals = self.match_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
 
         tk.Label(series_container, text="Serien:", font=('Arial', 12, 'bold'), bg="#1a252f", fg="white").pack(side=tk.LEFT, padx=(0, 10))
 
         txt_frame = tk.Frame(series_container, bg="#1a252f")
         txt_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        #scrollbar = ttk.Scrollbar(txt_frame, orient="horizontal")
-        #scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        # ---> NEU: Einzeiliges Textfeld (height=1), wrap="none" für horizontale Scrollbar <---
         text_series = tk.Text(txt_frame, height=1, wrap="none", bg="#1e1e1e", fg="#00ff00", 
                               font=("Consolas", 12, "bold"), bd=0, highlightthickness=0, pady=4, padx=5)
-#                              xscrollcommand=scrollbar.set, 
         text_series.pack(side=tk.TOP, fill=tk.X, expand=True)
-        #scrollbar.config(command=text_series.xview)
 
         lines = []
         for i in range(0, len(hits), serien_grp):
             serie_hits = hits[i:i+serien_grp]
             serie_sum = sum(serie_hits)
-            lines.append(f"{i+1:02d}-{i+len(serie_hits):02d}: {serie_sum:.1f}")
+            # ---> DER FIX: Dynamische Nachkommastellen anwenden <---
+            lines.append(f"{i+1:02d}-{i+len(serie_hits):02d}: {serie_sum:.{decimals}f}")
 
-        # Horizontal mit Pipe-Symbolen aneinanderreihen
         text_series.insert(tk.END, "  |  ".join(lines))
         text_series.config(state=tk.DISABLED)
 
@@ -781,6 +783,9 @@ class HighscoreViewer:
                         cx, cy = center_r[0], center_r[1]
                         px_x, px_y = px_x_r, px_y_r
 
+                    # ---> NEU: Dezimalstellen laden <---
+                    decimals = config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
+
                     # Tabellenkopf (mit Info zur Umrechnung)
                     info_lines.append(f"TREFFER-TIMELINE: {side_name} (Zentrum X:{cx}/Y:{cy} | px/mm X:{px_x}/Y:{px_y})")
                     header = f"{'Nr':>4} | {'Zeit':>8} | {'Ringe':>6} | {'X-Pos':>7} | {'Y-Pos':>7} | {'X (mm)':>8} | {'Y (mm)':>8} | {'Fläche':>8}"
@@ -795,16 +800,16 @@ class HighscoreViewer:
                         area = hit.get('a', hit.get('area', 0.0))
                         summe += ringe
                         
-                        # ---> NEU: Umrechnung in Millimeter <---
-                        # X-Achse: Normal (Treffer - Zentrum)
                         x_mm = (x - cx) / px_x if px_x != 0 else 0.0
-                        # Y-Achse: Invertiert (Zentrum - Treffer), damit Oben = positiv
                         y_mm = (cy - y) / px_y if px_y != 0 else 0.0
                         
-                        info_lines.append(f"{i+1:4d} | {t_rel:7.1f}s | {ringe:6.1f} | {x:7.1f} | {y:7.1f} | {x_mm:8.2f} | {y_mm:8.2f} | {area:8.1f}")
+                        # ---> DER FIX: Format-String für die Tabelle <---
+                        ring_str = f"{ringe:.{decimals}f}"
+                        info_lines.append(f"{i+1:4d} | {t_rel:7.1f}s | {ring_str:>6} | {x:7.1f} | {y:7.1f} | {x_mm:8.2f} | {y_mm:8.2f} | {area:8.1f}")
                     
                     info_lines.append("-" * len(header))
-                    info_lines.append(f"GESAMTSUMME {side_name}: {summe:.1f} Ringe")
+                    # ---> DER FIX: Format-String für die Summe <---
+                    info_lines.append(f"GESAMTSUMME {side_name}: {summe:.{decimals}f} Ringe")
                     info_lines.append("\n" + "-" * 85 + "\n")
 
                 build_side_table(hits_l, "LINKS")

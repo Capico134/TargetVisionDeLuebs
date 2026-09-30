@@ -298,6 +298,7 @@ class LaborRenderer:
         # =====================================================================
         # ---> SCHICHT 2: LIVE-OVERLAYS (Wird auf die Kopie des Caches gemalt) <---
         # =====================================================================
+        # HIER ORANGENER BLINKENDER KREIS!!! #
         combined = self.app.cached_static_layer.copy()
 
         if getattr(self.app, 'blink_state', True) and hasattr(self.app, 'current_engine_shots'):

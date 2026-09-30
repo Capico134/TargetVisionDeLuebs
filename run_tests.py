@@ -200,7 +200,7 @@ def run_all_tests():
                 
                 tolerance_px = 2.0 
                 # ---> NEU: Erlaubte Abweichung bei der Ringwertung <---
-                tolerance_score = 0.1 
+                tolerance_score = 0.05 
                 
                 for side, side_char in [('left', 'l'), ('right', 'r')]:
                     orig_shots = [s for s in original_match_data.get("timeline", []) if s.get('s') == side_char]
@@ -225,7 +225,7 @@ def run_all_tests():
                         
                         if dist > tolerance_px:
                             match_passed = False
-                            error_messages.append(f"[{side.upper()}] Bild #{f_num:<3} | Pos weicht ab um {dist:.1f}px (Erlaubt: {tolerance_px}px)")
+                            error_messages.append(f"[{side.upper()}] Bild #{f_num:<3} | Score weicht ab: Orig {orig_score:.1f} vs Neu {curr_score:.1f}")
                             
                         # ---> NEU: Falls der Score um mehr als 0.1 abweicht <---
                         if orig_score != -1.0 and curr_score != -1.0 and score_diff > tolerance_score:

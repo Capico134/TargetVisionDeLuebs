@@ -202,6 +202,10 @@ class LaborApp:
         self.farb_bonus_aktiv_var = tk.BooleanVar(value=False)
         self.farb_bonus_limit_var = tk.DoubleVar(value=150.0)
         self.farb_bonus_kurve_var = tk.DoubleVar(value=2.00)
+        
+        # ---> NEU: Die Ringwertung Nachkommastellen <---
+        self.ringwertung_nachkommastellen_var = tk.IntVar(value=1)
+        
         # ---> NEU: Die Eintrittskarten für das Battle Royale <---
         self.grenzwert_hough_var = tk.DoubleVar(value=7.0)
         self.abriss_min_hebel_var = tk.DoubleVar(value=0.0)
@@ -1595,17 +1599,19 @@ class LaborApp:
                 d_sm.shots[j]['labor_frame_num'] = i + 1
 
         # 4. VISUALISIERUNG DER ENGINE-ERGEBNISSE
-        # ... (Ab hier geht der bisherige Code von "Hole das Diff-Bild direkt aus dem Dummy..." exakt wie gewohnt weiter!)
-
-        # 4. VISUALISIERUNG DER ENGINE-ERGEBNISSE
         # Hole das Diff-Bild direkt aus dem Dummy-DateiManager der Engine!
         # ---> NEU: Ringwertung aus dem StateManager in die GUI schreiben (MIT SCHUSS-NUMMER) <---
         side_shots = [s for s in d_sm.shots if s['side'] == side]
         lines = []
+        
+        # ---> DER FIX: Auslesen der Nachkommastellen direkt aus der Config! <---
+        # Wir holen den Wert einmal pro Frame-Wechsel frisch aus dem RAM-ConfigParser.
+        decimals = d_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
+        
         for i, s in enumerate(side_shots):
             if s.get('is_new', False):
-                # i ist der Index (0, 1, 2...), also ist i+1 die echte Schuss-Nummer!
-                lines.append(f"🎯 Schuss #{i+1}: {s['score']:.1f} Ringe")
+                # Dynamische Formatierung auf die eingestellte Nachkommastellen-Zahl (ohne das Wort "Ringe")
+                lines.append(f"🎯 #{i+1}: {s['score']:.{decimals}f}")
                 
         if lines:
             self.lbl_current_scores.config(text="\n".join(lines), fg="#27ae60")

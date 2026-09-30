@@ -40,6 +40,7 @@ class TargetDetector:
         self.max_image_change_percent = self.config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
         self.debug_alle_bilder_speichern = self.config.getboolean('Erkennung', 'debug_alle_bilder_speichern', fallback=False)
         self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+        self.ringwertung_nachkommastellen = self.config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1) # <--- HIER ERGÄNZEN
         self.hough_param1 = self.config.getint('Erkennung', 'hough_param1', fallback=25)
         self.hough_param2 = self.config.getint('Erkennung', 'hough_param2', fallback=4)
         self.morph_kernel_size = self.config.getint('Erkennung', 'morph_kernel_size', fallback=5)
@@ -796,7 +797,10 @@ class TargetDetector:
                     mec_radius = sd.get('mec_radius', 0.0)
                     durchmesser_mm = (mec_radius * 2) / avg_px_pro_mm if avg_px_pro_mm > 0 else 0
                     
-                    self.log(side, f"█ 💥 SCHUSS #{shot_num} 💥 █ Pos X:{sd['cx']:.2f}, Y:{sd['cy']:.2f} | {shot['score']:.1f} Ringe (Roh: {shot.get('raw_score', 0.0):.3f}) | CV-Score: {sd.get('score', 0.0):.1f} | Fläche: {sd.get('area', 0.0):.1f}px | MEC-Ø: {durchmesser_mm:.2f}mm")
+                    # ---> DER FIX: Dynamische Nachkommastellen für die Logausgabe (aus dem RAM) <---
+                    decimals = self.ringwertung_nachkommastellen
+                    
+                    self.log(side, f"█ 💥 SCHUSS #{shot_num} 💥 █ Pos X:{sd['cx']:.2f}, Y:{sd['cy']:.2f} | {shot['score']:.{decimals}f} Ringe (Roh: {shot.get('raw_score', 0.0):.3f}) | CV-Score: {sd.get('score', 0.0):.1f} | Fläche: {sd.get('area', 0.0):.1f}px | MEC-Ø: {durchmesser_mm:.2f}mm")
                     
                 self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!", True)
             

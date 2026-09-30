@@ -2,6 +2,7 @@ import platform
 import cv2
 import numpy as np
 import time
+import math  # <--- NEU: Zwingend nötig für die Ellipsen-Berechnung!
 import subprocess
 import os
 import sys #für log-Ausgabe
@@ -167,6 +168,8 @@ class TargetTracker:
         # ---> NEU: Zoom-Parameter für die Kamerafahrt <---
         self.treffer_zoom = self.config.getfloat('Anzeige', 'treffer_zoom', fallback=3.0)
         self.treffer_anzeigedauer = self.config.getfloat('Anzeige', 'treffer_anzeigedauer', fallback=4.0)
+        # ---> NEU: Nachkommastellen für die GUI-Formatierung laden <---
+        self.nachkommastellen = self.config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
 
     def show_config_alert(self):
         """Zeigt eine einmalige Warnung, falls beim Start Parameter mit Fallbacks gerettet wurden."""
@@ -729,8 +732,21 @@ class TargetTracker:
             px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
             avg_px = (px_x + px_y) / 2.0
             
+            # Die Basis-Korrekturwerte für die aktuelle Seite holen
+            korrektur = self.fischaugenkorrektur_links if side == 'left' else self.fischaugenkorrektur_rechts
+            feedback = self.calib_feedback_left if side == 'left' else self.calib_feedback_right
+            
+            # =========================================================================
+            # ---> NEU: Die Magic-Number und ihre Radius-Kompensation <---
+            # =========================================================================
+            hit_thickness = 2
+            thickness_kompensation = hit_thickness / 2.0
+            
             cal_r_offiziell = (offizielles_kaliber_mm / 2.0) * avg_px
-            final_radius = max(2, int(cal_r_offiziell * zoom_params[side][0] * self.scale_x))
+            final_radius_raw = cal_r_offiziell * zoom_params[side][0] * self.scale_x
+            
+            # Kompensation vom Fallback-Kreis abziehen
+            final_radius = max(2, int(round(final_radius_raw - thickness_kompensation)))
             
             side_shots = self.sm.get_shots_for_side(side)
             for idx, shot in enumerate(side_shots):
@@ -746,15 +762,44 @@ class TargetTracker:
                 final_x = int(round(x_local * self.scale_x)) + self.pad_x
                 final_y = int(round(y_local * self.scale_y)) + self.pad_y
                 
-                # ---> NEU: Koordinaten relativ zum zugeschnittenen Kamerabild! <---
+                # Koordinaten relativ zum zugeschnittenen Kamerabild
                 draw_x = final_x - roi_off_x
                 draw_y = final_y - self.pad_y
                 
                 color = (0, 0, 255) if (shot.get('is_new', False) and blink_state) else (255, 100, 0)
                 
-                # Malen direkt auf das zugeschnittene ROI-Array!
-                cv2.circle(roi, (draw_x, draw_y), final_radius, color, 1)
+                # =========================================================================
+                # ---> DER FIX: Fischaugenkorrigierte Ellipse für ALLE Treffer! <---
+                # =========================================================================
+                if feedback and 'cx' in feedback and 'cy' in feedback:
+                    cx, cy = feedback['cx'], feedback['cy']
+                    
+                    dx_mm = (x - cx) / px_x
+                    dy_mm = (y - cy) / px_y
+                    r_mm = math.hypot(dx_mm, dy_mm)
+                    
+                    if r_mm > 0.05:
+                        angle_deg = math.degrees(math.atan2(dy_mm, dx_mm))
+                        scale_radial = 1.0 + (2.0 * r_mm * korrektur)
+                        scale_tangential = 1.0 + (r_mm * korrektur)
+                        
+                        r_shot_mm = offizielles_kaliber_mm / 2.0
+                        
+                        # Die rohen Fließkomma-Radien auf dem Monitor berechnen
+                        rx_raw = (r_shot_mm * scale_radial * px_x) * z * self.scale_x
+                        ry_raw = (r_shot_mm * scale_tangential * px_y) * z * self.scale_y
+                        
+                        # Kompensation abziehen und erst dann runden!
+                        rx = int(round(rx_raw - thickness_kompensation))
+                        ry = int(round(ry_raw - thickness_kompensation))
+                        
+                        cv2.ellipse(roi, (draw_x, draw_y), (max(2, rx), max(2, ry)), angle_deg, 0, 360, color, hit_thickness, cv2.LINE_AA)
+                    else:
+                        cv2.circle(roi, (draw_x, draw_y), final_radius, color, hit_thickness, cv2.LINE_AA)
+                else:
+                    cv2.circle(roi, (draw_x, draw_y), final_radius, color, hit_thickness, cv2.LINE_AA)
                 
+                # ---> TEXT (Treffer-Nummer) ZEICHNEN <---
                 if self.ringwertung_aktiv:
                     id_str = str(idx + 1)
                     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -977,7 +1022,9 @@ class TargetTracker:
             start_y_hud = 80  
             line_h = 25   
             max_items = max(5, (win_h - start_y_hud - 80) // line_h)
-            box_w = 110  
+            
+            # ---> DER FIX: Dynamische HUD-Breite (15 Pixel extra pro Nachkommastelle) <---
+            box_w = 95 + (self.nachkommastellen * 15)  
 
             for side in ['left', 'right']:
                 side_shots = self.sm.get_shots_for_side(side)
@@ -1012,11 +1059,14 @@ class TargetTracker:
                 cv2.line(combined_view, (box_x - 5, start_y_hud - 2), (box_x + box_w - 5, start_y_hud - 2), (100, 100, 100), 1)
                 
                 for i, shot in enumerate(display_shots_rev):
-                    shot_num = total_shots - i  # Zählt jetzt rückwärts (z.B. 17, 16, 15...)
+                    shot_num = total_shots - i  
                     score_val = shot.get('score', 0.0)
                     text_color = (0, 255, 255) if score_val < 10.0 else (0, 255, 0)
                     text = f" {shot_num}:"
-                    score_str = f"{score_val:.1f}"
+                    
+                    # ---> DER FIX: Dynamische Nachkommastellen im HUD! <---
+                    score_str = f"{score_val:.{self.nachkommastellen}f}"
+                    
                     y_pos = start_y_hud + 20 + (i * line_h)
                     
                     if i == 0:
@@ -1041,7 +1091,8 @@ class TargetTracker:
                 
                 gesamt = sum(s.get('score', 0.0) for s in side_shots)
                 gesamt_text = "Ges.:"
-                gesamt_val = f"{gesamt:.1f}"
+                # ---> DER FIX: Dynamische Nachkommastellen für Gesamtsumme! <---
+                gesamt_val = f"{gesamt:.{self.nachkommastellen}f}"
                 y_total = y_sum + 20
                 
                 cv2.putText(combined_view, gesamt_text, (box_x - 5, y_total), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
@@ -1077,13 +1128,15 @@ class TargetTracker:
                 max_serien = 5 
                 anzeige_serien = serien[-max_serien:]
                 
-                block_w = 110
+                # ---> DER FIX: Dynamische Block-Breite für den Hintergrund <---
+                block_w = 95 + (self.nachkommastellen * 15)
                 total_blocks_w = len(anzeige_serien) * block_w
                 cursor_x = start_x + (available_w - total_blocks_w) // 2
                 
                 padding = 15
                 box_x1 = cursor_x - padding
-                box_x2 = cursor_x + total_blocks_w - block_w + 90 + padding
+                # Den rechten Puffer (vorher starr 90) dynamisch an den Block anpassen
+                box_x2 = cursor_x + total_blocks_w - 20 + padding
                 box_y1 = footer_y - 25
                 box_y2 = footer_y + 10
                 
@@ -1112,7 +1165,8 @@ class TargetTracker:
                 max_serien = 6 
                 anzeige_serien = serien[-max_serien:]
                 
-                block_w = 110
+                # ---> DER FIX: Dynamische Block-Breite auch für den Text-Abstand <---
+                block_w = 95 + (self.nachkommastellen * 15)
                 total_blocks_w = len(anzeige_serien) * block_w
                 cursor_x = start_x + (available_w - total_blocks_w) // 2
                 
@@ -1126,7 +1180,8 @@ class TargetTracker:
                     color_val = (50, 220, 255) if is_active else (220, 220, 220)
                     
                     text_l = f"S{serien_index}:"
-                    text_r = f"{summe:.1f}"
+                    # ---> DER FIX: Dynamische Nachkommastellen im Footer! <---
+                    text_r = f"{summe:.{self.nachkommastellen}f}"
                     
                     cv2.putText(combined_view, text_l, (cursor_x, footer_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_label, 1, cv2.LINE_AA)
                     cv2.putText(combined_view, text_r, (cursor_x + 35, footer_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_val, 2, cv2.LINE_AA)

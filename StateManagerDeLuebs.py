@@ -122,6 +122,7 @@ class StateManager:
         self.nullpunkts = {'left': None, 'right': None}
         # --- NEU ---
         self.ringwertung_aktiv = config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+        self.nachkommastellen = config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1) # <--- NEU HINZUFÜGEN
         
         #self.dm.write_log(f"SYSTEM: 🔄 Neues Match initialisiert (ID: {self.get_formatted_match_id()})")
         self.dm.write_log("\n" + "="*80)
@@ -223,12 +224,20 @@ class StateManager:
                 else:
                     raw_score = 10.0 + ((radius_10_score - dist_mm) / ring_abstand_radius_mm)
                 
-                score = math.floor(raw_score * 10) / 10.0
+                # =========================================================================
+                # ---> DER FIX: Dynamische Nachkommastellen (Die echte Mathematik!) <---
+                # =========================================================================
+                decimals = self.nachkommastellen
+                faktor = 10 ** decimals
+                score = math.floor(raw_score * faktor) / faktor
                 
-                if score > 10.9: score = 10.9
+                # Die maximale Ringzahl dynamisch begrenzen (z.B. 1 -> 10.9 | 0 -> 10.0 | 3 -> 10.999)
+                max_score = 11.0 - (1.0 / faktor)
+                
+                if score > max_score: score = max_score
                 if score < 1.0: score = 0.0
                 
-        return score, raw_score # <--- NEU: Beide Werte zurückgeben!
+        return score, raw_score
 
     def add_shot(self, side, cx, cy, area, cv_score=0.0, base_pos=None, end_pos=None):
         """Speichert einen neuen Schuss und berechnet die Ring-Zehntelwertung!"""
@@ -304,6 +313,9 @@ class StateManager:
         cam_l = self.config.getboolean('Kameras', 'nutze_kamera_links')
         cam_r = self.config.getboolean('Kameras', 'nutze_kamera_rechts')
         
+        # ---> NEU: Dynamische Formatierung holen <---
+        decimals = self.config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
+        
         if cam_l and cam_r: cam_str = "Links & Rechts"
         elif cam_l: cam_str = "Nur Links"
         elif cam_r: cam_str = "Nur Rechts"
@@ -311,20 +323,23 @@ class StateManager:
 
         shots_l = self.get_shots_for_side('left')
         shots_r = self.get_shots_for_side('right')
-        gesamt_l = round(sum(s.get('score', 0.0) for s in shots_l), 1)
-        gesamt_r = round(sum(s.get('score', 0.0) for s in shots_r), 1)
+        
+        # ---> DER FIX: Auf dynamische Nachkommastellen runden! <---
+        gesamt_l = round(sum(s.get('score', 0.0) for s in shots_l), decimals)
+        gesamt_r = round(sum(s.get('score', 0.0) for s in shots_r), decimals)
 
         if cam_l and cam_r and player_name_l != player_name_r:
             spieler_str = f"{player_name_l} / {player_name_r}"
-            ringe_str = f"{gesamt_l} / {gesamt_r}"
+            # ---> DER FIX: Formatierter String <---
+            ringe_str = f"{gesamt_l:.{decimals}f} / {gesamt_r:.{decimals}f}"
         else:
             spieler_str = player_name_l if cam_l else player_name_r
             if cam_l and cam_r:
-                ringe_str = f"{gesamt_l} / {gesamt_r}"
+                ringe_str = f"{gesamt_l:.{decimals}f} / {gesamt_r:.{decimals}f}"
             elif cam_l:
-                ringe_str = str(gesamt_l)
+                ringe_str = f"{gesamt_l:.{decimals}f}"
             else:
-                ringe_str = str(gesamt_r)
+                ringe_str = f"{gesamt_r:.{decimals}f}"
 
         if cam_l and cam_r:
             schuesse_str = f"{len(shots_l)} / {len(shots_r)}"
@@ -341,15 +356,13 @@ class StateManager:
         start_zeit_str = datetime.fromtimestamp(start_zeit_timestamp).strftime("%d.%m.%y %H:%M:%S")
 
         # ==========================================================
-        # ---> NEU: Freien Festplattenspeicher ermitteln <---
+        # ---> Freien Festplattenspeicher ermitteln <---
         # ==========================================================
         try:
-            # os.getcwd() fragt genau das Laufwerk ab, auf dem das Programm gerade liegt
             usage = shutil.disk_usage(os.getcwd())
-            # Umrechnung von Bytes in Gigabyte (GB) auf 2 Nachkommastellen
             free_space_gb = round(usage.free / (1024 ** 3), 2)
         except Exception:
-            free_space_gb = -1.0 # Fallback, falls das OS die Auskunft verweigert
+            free_space_gb = -1.0 
 
         metadata = {
             "spieler": spieler_str,  
@@ -367,11 +380,8 @@ class StateManager:
             "festplattenspeicher_gb": free_space_gb,
             "start_zeit": start_zeit_str,
             "timestamp": datetime.now().strftime("%d.%m.%y %H:%M:%S"),
-            
-            # ---> NEU: Zentrum-Koordinaten mit 4 Nachkommastellen (verhindert Ring-Drift beim Neuladen) <---
             "center_l": [round(float(center_l_raw[0]), 4), round(float(center_l_raw[1]), 4)] if (cam_l and center_l_raw) else None,
             "center_r": [round(float(center_r_raw[0]), 4), round(float(center_r_raw[1]), 4)] if (cam_r and center_r_raw) else None,
-            
             "fortsetzung_links": bool(self.state_left.is_fortsetzung) if (cam_l and self.state_left) else False,
             "fortsetzung_rechts": bool(self.state_right.is_fortsetzung) if (cam_r and self.state_right) else False
         }
@@ -381,20 +391,13 @@ class StateManager:
             timeline.append({
                 "t": round(float(s['t_mono']), 3),
                 "s": "l" if s['side'] == 'left' else "r",
-                
-                # ---> NEU: Treffer-Koordinaten mit 4 Nachkommastellen für perfekte Labor-Deckung <---
                 "x": round(float(s['pos'][0]), 4),
                 "y": round(float(s['pos'][1]), 4),
-                
                 "a": round(float(s['area']), 1),
-                "score": float(s.get('score', 0.0)),
+                # ---> DER FIX: Speichern in JSON mit dynamischen Dezimalstellen <---
+                "score": round(float(s.get('score', 0.0)), decimals),
                 "cv_score": round(float(s.get('cv_score', 0.0)), 1),
                 "winner_method": str(s.get('winner_method', 'Unbekannt')),
-                
-                # ---> NEU: Auch die Visualisierungs-Punkte für Abrisskanten erhalten 4 Nachkommastellen <---
-                #"base_pos": [round(float(s.get('base_pos', s['pos'])[0]), 4), round(float(s.get('base_pos', s['pos'])[1]), 4)],
-                #"end_pos": [round(float(s.get('end_pos', s['pos'])[0]), 4), round(float(s.get('end_pos', s['pos'])[1]), 4)],
-                
                 "edited": bool(s.get('is_edited', False))
             })
 
@@ -437,12 +440,12 @@ class StateManager:
         if shot_ref in self.shots:
             old_x, old_y = shot_ref['pos']
             old_score = shot_ref.get('score', 0.0)
+            decimals = self.nachkommastellen  # <--- NEU
             
-            # Wir runden beide Seiten auf 1 Nachkommastelle. 
-            # So ignorieren wir mikroskopische Float-Abweichungen durch die GUI!
+            # Wir prüfen nun beim Score auf die konfigurierten Nachkommastellen!
             if (round(float(old_x), 1) != round(new_x, 1) or 
                 round(float(old_y), 1) != round(new_y, 1) or 
-                round(float(old_score), 1) != round(new_score, 1)):
+                round(float(old_score), decimals) != round(new_score, decimals)): # <--- HIER ANGEPASST
                 
                 shot_ref['pos'] = (new_x, new_y)
                 shot_ref['score'] = new_score

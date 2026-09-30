@@ -231,6 +231,7 @@ class DateiManager:
 aktive_scheibe = Luftgewehr_10m             
 # Schaltet die 10.9 Zehntel-Ringwertung und die Nullpunkt-Zentrierung ein (yes) oder aus (no)
 ringwertung_aktiv = no
+ringwertung_nachkommastellen = 1
                 
 [Kameras]
 # Aktiviert oder deaktiviert die jeweilige Kameraansicht
@@ -289,7 +290,7 @@ abriss_max_edge_percent = 0.75
 abriss_base_bonus = 15.0
 # early_exit_min_score = 145.0
 # early_exit_perfect_score = 196.0
-min_score_valid = 70.0
+min_score_valid = 30.0
 clipping_factor_history = 0.15
 clipping_factor_current = 0.95
 # 0 = alle Treffer; alle anderen Zahlenwerte = nur die ersten x Treffer mit der größten Fläche werden gewertet
@@ -540,6 +541,10 @@ treffer_anzeigedauer = 5
             self.update_ini_value('Anzeige', 'treffer_anzeigedauer', '5')
             needs_reload = True  
 
+        if not config.has_option('Zielscheibe', 'ringwertung_nachkommastellen'):
+            print("🔧 Führe Auto-Patch aus: Füge 'ringwertung_nachkommastellen = 3' hinzu...")
+            self.update_ini_value('Zielscheibe', 'ringwertung_nachkommastellen', '3')
+            needs_reload = True  
 
         
         if needs_reload:
