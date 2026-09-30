@@ -1844,7 +1844,7 @@ class LaborApp:
         comp_win.title(f"📊 Integrations-Check: Live-Parameter vs. Original-Match")
         
         sf = self.root.winfo_fpixels('1i') / 96.0
-        w, h = int(1500 * sf), int(750 * sf)
+        w, h = int(1600 * sf), int(750 * sf) # Etwas breiter gemacht für die Ringwerte
         comp_win.geometry(f"{w}x{h}")
         
         comp_win.transient(self.root)
@@ -1852,13 +1852,12 @@ class LaborApp:
         comp_win.focus_force()
 
         # =====================================================================
-        # ---> NEU: Feste Werkzeugleiste für Buttons oben <---
+        # ---> Feste Werkzeugleiste für Buttons oben <---
         # =====================================================================
         btn_frame = tk.Frame(comp_win)
         btn_frame.pack(fill=tk.X, padx=10, pady=5)
         
         def copy_to_clipboard():
-            # Holt den gesamten Text von Zeile 1.0 bis zum Ende
             full_log = txt.get("1.0", tk.END)
             self.root.clipboard_clear()
             self.root.clipboard_append(full_log)
@@ -1867,7 +1866,7 @@ class LaborApp:
         tk.Button(btn_frame, text="📋 In Zwischenablage kopieren", command=copy_to_clipboard, bg="#3498db", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT)
 
         # =====================================================================
-        # ---> NEU: Text-Frame mit Scrollbar <---
+        # ---> Text-Frame mit Scrollbar <---
         # =====================================================================
         txt_frame = tk.Frame(comp_win)
         txt_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
@@ -1883,22 +1882,17 @@ class LaborApp:
         comp_win.update()
 
         # 2. Voller Simulations-Durchlauf (Stumm im Hintergrund)
-        # ---> ELA FIX <---
         d_config = self.package_data['config']
         d_dm = DummyDateiManager(self)
         d_sm = StateManager(d_config, d_dm)
-        # Stumme Log-Funktion, damit die Konsole nicht überflutet wird
         detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
 
-        ### START WEG with zipfile.ZipFile(self.current_zip_path, 'r') as zf:
-        # Setze Referenzen und Startmasken für BEIDE Seiten
         for s in ['left', 'right']:
             ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
             if ref_name:
                 ref_img = self.get_img(ref_name)
                 detector.set_reference_image(ref_img, s)
                 
-                # ---> ELA FIX <---
                 if getattr(self, 'original_match_data', None):
                     meta = self.original_match_data.get('metadata', {})
                     center_key = 'center_l' if s == 'left' else 'center_r'
@@ -1907,12 +1901,11 @@ class LaborApp:
             
             startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
             if startmask_name:
-                startmask_bgr = self.get_img( startmask_name)
+                startmask_bgr = self.get_img(startmask_name)
                 startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
                 state = d_sm.state_left if s == 'left' else d_sm.state_right
                 state.cumulative_mask = startmask_gray
 
-        # Alle orig-Bilder durchjagen und Frame-Nummern pro Kamera mitzählen
         frame_counts = {'left': 0, 'right': 0}
         for orig_name in self.orig_files:
             img = self.get_img(orig_name)
@@ -1924,23 +1917,21 @@ class LaborApp:
             detector.detect_new_shot(img, s)
             shots_after = len(d_sm.shots)
             
-            # Die neu erkannten Schüsse mit ihrer Frame-Nummer taggen!
             for idx in range(shots_before, shots_after):
                 d_sm.shots[idx]['frame_num'] = curr_frame_num
 
-
-        # 3. Ausgabe aufbereiten
+        # 3. Ausgabe aufbereiten[cite: 11]
         txt.delete(1.0, tk.END)
         txt.insert(tk.END, f"VERGLEICH: KOMPLETTES MATCH (Aktuelle Slider-Werte vs. Original-JSON)\n")
         txt.insert(tk.END, "="*85 + "\n")
 
-        #cal_r = self.caliber_radius_var.get()
-        
-        # Hilfsfunktion zum Zeichnen der Tabellen
+        # ---> NEU: Dynamische Nachkommastellen aus der Config auslesen <---
+        decimals = d_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
+
         def build_side_comparison(side_name, side_char):
             cal_r = detector.get_caliber_radius(side_name) 
             orig_shots = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
-            curr_shots = [s for s in d_sm.shots if s.get('side') == side_name]
+            curr_shots = [s for s in d_sm.shots if s['side'] == side_name]
             
             if not orig_shots and not curr_shots: return 
             
@@ -1948,10 +1939,10 @@ class LaborApp:
             txt.insert(tk.END, f"Original Treffer: {len(orig_shots)} | Neu berechnet: {len(curr_shots)}\n")
             txt.insert(tk.END, "Legende: 'E' = Manuell editiert | '*' = Methode hat sich zum Original geändert\n")
             
-            # ---> NEU: Alles konsequent nach Original (Links) und Neu (Rechts) sortiert <---
-            header = f"{'Nr':>3} | {'Bild':>4} | {'Orig-Methode':<25} | {'Neu-Methode':<25} | {'Orig (X,Y)':<18} | {'Neu (X,Y)':<18} | {'Dist':>6} | {'O-CV':>6} | {'N-CV':>6} | {'% Kal':<10}\n"
+            # Neuer, erweiterter Header mit Platz für die Ringwertung
+            header = f"{'Nr':>3} | {'Bild':>4} | {'Orig-Methode':<25} | {'Neu-Methode':<25} | {'Orig (X,Y, Ring)':<26} | {'Neu (X,Y, Ring)':<26} | {'Dist':>6} | {'O-CV':>6} | {'N-CV':>6} | {'% Kal':<10}\n"
             txt.insert(tk.END, header)
-            txt.insert(tk.END, "-"*145 + "\n")
+            txt.insert(tk.END, "-"*165 + "\n")
             
             threshold = cal_r * 2.5  
             aligned = self.align_shots(orig_shots, curr_shots, threshold)
@@ -1963,9 +1954,14 @@ class LaborApp:
                 if orig_idx is not None and curr_idx is not None:
                     orig = orig_shots[orig_idx]
                     curr = curr_shots[curr_idx]
-                    # Sauberer Float-Cast für die Tabelle
+                    
                     ox, oy = float(orig['x']), float(orig['y'])
                     cx, cy = float(curr['pos'][0]), float(curr['pos'][1])
+                    
+                    # Ringwerte auslesen
+                    orig_score = float(orig.get('score', 0.0))
+                    curr_score = float(curr.get('score', 0.0))
+                    
                     dx, dy = cx - ox, cy - oy
                     dist = np.hypot(dx, dy)
                     
@@ -1978,8 +1974,9 @@ class LaborApp:
                     warn = "⚠️" if pct > 25.0 else ""
                     edit_marker = "E" if orig.get('edited', False) else " "
                     
-                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>6.2f},{oy:>6.2f}"
-                    curr_str = f"N:{curr_idx+1:02d}  {cx:>6.2f},{cy:>6.2f}"
+                    # String-Zusammenbau inkl. formatierter Ringwertung
+                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>5.1f},{oy:>5.1f} ({orig_score:.{decimals}f})"
+                    curr_str = f"N:{curr_idx+1:02d}  {cx:>5.1f},{cy:>5.1f} ({curr_score:.{decimals}f})"
                     
                     f_num = curr.get('frame_num', 0)
                     curr_method = curr.get('winner_method', 'Std')
@@ -1990,39 +1987,38 @@ class LaborApp:
                     orig_cv, curr_cv = orig.get('cv_score', 0.0), curr.get('cv_score', 0.0)
                     pct_str = f"{pct:.1f}% {warn}"
                     
-                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {orig_method:<25} | {display_curr_method:<25} | {orig_str:<18} | {curr_str:<18} | {dist:6.1f}p | {orig_cv:6.1f} | {curr_cv:6.1f} | {pct_str:<10}\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {orig_method:<25} | {display_curr_method:<25} | {orig_str:<26} | {curr_str:<26} | {dist:6.1f}p | {orig_cv:6.1f} | {curr_cv:6.1f} | {pct_str:<10}\n")
                     
                 elif orig_idx is not None:
                     orig = orig_shots[orig_idx]
                     edit_marker = "E" if orig.get('edited', False) else " "
-                    # Sicherer Float-Cast, um ValueError-Crashes zu verhindern
                     ox, oy = float(orig['x']), float(orig['y'])
-                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>6.2f},{oy:>6.2f}"
+                    orig_score = float(orig.get('score', 0.0))
+                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>5.1f},{oy:>5.1f} ({orig_score:.{decimals}f})"
                     orig_cv = orig.get('cv_score', 0.0)
                     orig_method = orig.get('winner_method', 'Unbekannt')
                     
-                    txt.insert(tk.END, f"{idx+1:3d} | {'--':>4} | {orig_method:<25} | {'--- FEHLT ---':<25} | {orig_str:<18} | {'--- FEHLT ---':<18} | {'--':>6} | {orig_cv:6.1f} | {'--':>6} | {'-- ❌':<10}\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | {'--':>4} | {orig_method:<25} | {'--- FEHLT ---':<25} | {orig_str:<26} | {'--- FEHLT ---':<26} | {'--':>6} | {orig_cv:6.1f} | {'--':>6} | {'-- ❌':<10}\n")
                     
                 elif curr_idx is not None:
                     curr = curr_shots[curr_idx]
                     cx, cy = float(curr['pos'][0]), float(curr['pos'][1])
-                    curr_str = f"N:{curr_idx+1:02d}  {cx:>6.2f},{cy:>6.2f}"
+                    curr_score = float(curr.get('score', 0.0))
+                    curr_str = f"N:{curr_idx+1:02d}  {cx:>5.1f},{cy:>5.1f} ({curr_score:.{decimals}f})"
                     curr_cv = curr.get('cv_score', 0.0)
                     f_num = curr.get('frame_num', 0)
                     curr_method = curr.get('winner_method', 'Std')
                     
-                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {'--- FEHLT ---':<25} | {curr_method:<25} | {'--- FEHLT ---':<18} | {curr_str:<18} | {'--':>6} | {'--':>6} | {curr_cv:6.1f} | {'-- 🆕':<10}\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {'--- FEHLT ---':<25} | {curr_method:<25} | {'--- FEHLT ---':<26} | {curr_str:<26} | {'--':>6} | {'--':>6} | {curr_cv:6.1f} | {'-- 🆕':<10}\n")
 
             if match_count > 0:
                 avg_dist = total_dist / match_count
-                txt.insert(tk.END, "-"*145 + "\n")
+                txt.insert(tk.END, "-"*165 + "\n")
                 txt.insert(tk.END, f"Ø Abweichung {side_name.upper()} (nur gematchte Treffer): {avg_dist:.2f} Pixel\n")
                 
-        # Tabellen ausgeben
         build_side_comparison('left', 'l')
         build_side_comparison('right', 'r')
         
-        # ---> Wieder knallhart sperren, das Kopieren übernimmt ja jetzt der Button! <---
         txt.config(state=tk.DISABLED)
 
 
