@@ -111,6 +111,9 @@ class TargetTracker:
         self.w_left_displayed = 0
         self.last_frame_l = None
         self.last_frame_r = None
+        # ---> NEU: Variablen für den FPS-Counter <---
+        self.fps = 0.0
+        self.prev_frame_time = time.time()
         
         # ---> NEU: Das Kurzzeitgedächtnis gehört in die GUI! <---
         self.calib_feedback_left = None
@@ -142,6 +145,9 @@ class TargetTracker:
         self.show_all_rings = False
         self.btn_rings_coords = None
         
+        # ---> NEU: Kurzzeitgedächtnis für laufende Kamerafahrten <---
+        self.zoom_animation = {'left': None, 'right': None}
+        
         # ---> NEU: Die elegante Messagebox-Prüfung ganz am Ende des Startvorgangs <---
         if hasattr(self.config, 'healed_parameters') and self.config.healed_parameters:
             self.show_config_alert()
@@ -158,6 +164,9 @@ class TargetTracker:
         self.serien_gruppierung = self.config.getint('Anzeige', 'serien_gruppierung', fallback=0)
         self.fischaugenkorrektur_links = self.config.getfloat('Kameras', 'fischaugenkorrektur_links', fallback=0.0)
         self.fischaugenkorrektur_rechts = self.config.getfloat('Kameras', 'fischaugenkorrektur_rechts', fallback=0.0)
+        # ---> NEU: Zoom-Parameter für die Kamerafahrt <---
+        self.treffer_zoom = self.config.getfloat('Anzeige', 'treffer_zoom', fallback=3.0)
+        self.treffer_anzeigedauer = self.config.getfloat('Anzeige', 'treffer_anzeigedauer', fallback=4.0)
 
     def show_config_alert(self):
         """Zeigt eine einmalige Warnung, falls beim Start Parameter mit Fallbacks gerettet wurden."""
@@ -226,8 +235,40 @@ class TargetTracker:
         if y1 >= y2 or x1 >= x2: return frame 
         return frame[y1:y2, x1:x2]
 
+    def trigger_zoom(self, side, frame):
+        """Startet die Ease-In-Out Animation auf den letzten Treffer dieser Kamera."""
+        self.log("SYSTEM", f"🎬 ZOOM TRIGGER empfangen für {side.upper()}! (Config: {self.treffer_zoom}x für {self.treffer_anzeigedauer}s)")
+        
+        # Wenn der Zoom-Faktor auf 1 steht, ignorieren wir die Animation komplett!
+        if self.treffer_zoom <= 1.0:
+            self.log("SYSTEM", "🎬 Zoom abgebrochen, da Faktor in der Config <= 1.0 ist.")
+            return
+            
+        side_shots = self.sm.get_shots_for_side(side)
+        if side_shots:
+            latest = side_shots[-1] # Den allerletzten Treffer holen
+            
+            self.zoom_animation[side] = {
+                'start_time': time.time(),
+                'target_x': latest['pos'][0],
+                'target_y': latest['pos'][1],
+                'duration': self.treffer_anzeigedauer,
+                'max_zoom': self.treffer_zoom,
+                # ---> NEU: Wir kopieren das perfekte Bild direkt, pfeilschnell aus dem RAM! <---
+                'frozen_frame': frame.copy() 
+            }
+
     def process_camera(self, frame, state):
         if frame is None: return
+
+        # =========================================================================
+        # ---> NEU: Zoom-Blocker! (Legt die Erkennung schlafen, bis Kamerafahrt endet)
+        # =========================================================================
+        anim = self.zoom_animation[state.side]
+        if anim:
+            if time.time() - anim['start_time'] < anim['duration']:
+                return  # Wir verwerfen das Live-Bild und brechen die Analyse hier ab!
+            self.zoom_animation[state.side] = None
 
         if not state.is_initialized:
             bg_visible, bg_percent = state.is_background_visible(frame)
@@ -240,7 +281,6 @@ class TargetTracker:
                 self.log(state.side, "Status: Scheibe direkt im Bild erkannt! Speichere Initial-Referenz.", True)
                 state.target_present = True
                 
-                # ---> NEU: Rückgabewert fangen und speichern <---
                 feedback = self.detector.set_reference_image(frame, state.side)
                 if state.side == 'left': self.calib_feedback_left = feedback
                 else: self.calib_feedback_right = feedback
@@ -262,13 +302,23 @@ class TargetTracker:
                     if state.still_counter >= state.stillness_frames:
                         state.is_moving = False
                         self.log(state.side, "Bewegung beendet (Bild stabil).")
-                        self.detector.check_background_and_evaluate(frame, state) 
-                        self.log(state.side, "-" * 60) # <--- NEU: Block der Frame-Auswertung abschließen
+                        
+                        shot_found = self.detector.check_background_and_evaluate(frame, state) 
+                        if shot_found: 
+                            self.trigger_zoom(state.side, frame)
+                            # ---> NEU: Puffer leeren, damit die andere Kamera sofort wieder "live" ist!
+                            self.flush_camera_buffers(12) 
+                        self.log(state.side, "-" * 60)
         else:
             current_time = time.time()
             if current_time - state.last_scan_time > 1.5:
                 state.last_scan_time = current_time
-                self.detector.check_background_and_evaluate(frame, state) # <--- Delegiert an den Detector!
+                
+                shot_found = self.detector.check_background_and_evaluate(frame, state)
+                if shot_found: 
+                    self.trigger_zoom(state.side, frame)
+                    # ---> NEU: Puffer leeren
+                    self.flush_camera_buffers(12)
 
     def enhance_color_for_display(self, frame):
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
@@ -285,6 +335,12 @@ class TargetTracker:
             ret_r, raw_r = self.cap_right.read()
             frame_r = self.apply_crop(raw_r, 'right') if ret_r else None
         return frame_l, frame_r
+
+    def flush_camera_buffers(self, frames_to_drop=5):
+        """Leert den OpenCV-Puffer, um das System nach Blockaden auf 100% Live-Zeit zu synchronisieren."""
+        for _ in range(frames_to_drop):
+            if self.nutze_kamera_links and self.cap_left: self.cap_left.read()
+            if self.nutze_kamera_rechts and self.cap_right: self.cap_right.read()
     
     def apply_handover(self, zip_path):
         """Liest das Handover-Paket des Labors und injiziert die perfektionierte Historie ins Live-System."""
@@ -437,14 +493,30 @@ class TargetTracker:
             self.btn_center_right_coords = (cx1, cy1, cx2, cy2) # <--- NEU
 
     def update_gui(self, frame_l, frame_r, blink_state):
+        
+        # Hilfsfunktion, damit wir die Farben (falls gewünscht) für beide Bild-Typen aufhübschen
+        def prepare_disp(f, use_cam):
+            if not use_cam or f is None: return f
+            if getattr(self, 'darstellung_ohne_weissabgleich', True):
+                return self.enhance_color_for_display(f)
+            return f
+
+        # 1. Die echten Live-Bilder vorbereiten (laufen im Hintergrund weiter)
+        disp_l_live = prepare_disp(frame_l, self.nutze_kamera_links)
+        disp_r_live = prepare_disp(frame_r, self.nutze_kamera_rechts)
+        
+        # 2. Die eingefrorenen Standbilder laden (falls eine Kamerafahrt läuft)
+        anim_l = getattr(self, 'zoom_animation', {}).get('left')
+        disp_l_frozen = prepare_disp(anim_l['frozen_frame'], self.nutze_kamera_links) if (anim_l and anim_l.get('frozen_frame') is not None) else disp_l_live
+            
+        anim_r = getattr(self, 'zoom_animation', {}).get('right')
+        disp_r_frozen = prepare_disp(anim_r['frozen_frame'], self.nutze_kamera_rechts) if (anim_r and anim_r.get('frozen_frame') is not None) else disp_r_live
+            
         frames_to_stack = []
         
-        disp_l = self.enhance_color_for_display(frame_l) if (self.nutze_kamera_links and frame_l is not None and self.darstellung_ohne_weissabgleich) else frame_l
-        disp_r = self.enhance_color_for_display(frame_r) if (self.nutze_kamera_rechts and frame_r is not None and self.darstellung_ohne_weissabgleich) else frame_r
-        
         ref_h, ref_w = 480, 640
-        if disp_l is not None: ref_h, ref_w = disp_l.shape[:2]
-        elif disp_r is not None: ref_h, ref_w = disp_r.shape[:2]
+        if disp_l_live is not None: ref_h, ref_w = disp_l_live.shape[:2]
+        elif disp_r_live is not None: ref_h, ref_w = disp_r_live.shape[:2]
 
         def create_dummy_frame(side_name):
             dummy = np.zeros((ref_h, ref_w, 3), dtype=np.uint8)
@@ -452,10 +524,95 @@ class TargetTracker:
             cv2.putText(dummy, text, (30, ref_h // 2), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2, cv2.LINE_AA)
             return dummy
 
+        zoom_params = {'left': (1.0, 0.0, 0.0), 'right': (1.0, 0.0, 0.0)}
+        
+        # =========================================================================
+        # ---> NEU: Feste Kino-Zeiten, Pre-Pause und Crossfade-Magie! <---
+        # =========================================================================
+        def apply_cinematic_zoom(side_str, disp_frozen, disp_live):
+            anim = getattr(self, 'zoom_animation', {}).get(side_str)
+            if not anim or disp_frozen is None: return disp_live, 1.0, 0.0, 0.0
+            
+            elapsed = time.time() - anim['start_time']
+            dur = anim['duration']
+            
+            if elapsed >= dur:
+                self.zoom_animation[side_str] = None
+                return disp_live, 1.0, 0.0, 0.0
+                
+            # Deine angepassten Timings inkl. neuer Vorlaufzeit (Pre-Pause)
+            t_pre_pause = 1.0 if dur >= 2.0 else dur * 0.05
+            t_in = 1.5 if dur >= 2.0 else dur * 0.15
+            t_out = 1.2 if dur >= 2.0 else dur * 0.15
+            t_pause = 0.75 if dur >= 2.0 else dur * 0.1
+            t_fade = 0.75 if dur >= 2.0 else dur * 0.1
+            
+            # Die Phasen-Grenzen (auf der Zeitachse vorwärts gerechnet)
+            t_in_end = t_pre_pause + t_in
+            t_hold_end = dur - t_out - t_pause - t_fade
+            t_out_end = dur - t_pause - t_fade
+            t_pause_end = dur - t_fade
+            
+            z = 1.0
+            ease = 0.0
+            alpha_frozen = 1.0 # 1.0 = 100% Standbild, 0.0 = 100% Live-Bild
+            
+            if elapsed <= t_pre_pause:
+                # Phase 0: Durchatmen! CPU stabilisiert sich, Puffer werden geleert
+                ease = 0.0
+            elif elapsed <= t_in_end:
+                # Phase 1: Butterweich Reinzoomen
+                progress = (elapsed - t_pre_pause) / t_in
+                ease = progress * progress * (3 - 2 * progress)
+            elif elapsed <= t_hold_end:
+                # Phase 2: Ruhig Halten (Der Blick auf den Treffer)
+                ease = 1.0
+            elif elapsed <= t_out_end:
+                # Phase 3: Butterweich Rauszoomen
+                progress = 1.0 - ((elapsed - t_hold_end) / t_out)
+                ease = progress * progress * (3 - 2 * progress)
+            elif elapsed <= t_pause_end:
+                # Phase 4: Kurz bei 1x verweilen
+                ease = 0.0
+            else:
+                # Phase 5: Der sanfte Crossfade ins Live-Bild
+                ease = 0.0
+                fade_progress = (elapsed - t_pause_end) / t_fade
+                alpha_frozen = max(0.0, 1.0 - fade_progress)
+                
+            z = 1.0 + (anim['max_zoom'] - 1.0) * ease
+            
+            # ---> Die Überblend-Logik (Crossfade) <---
+            if z <= 1.001 and alpha_frozen == 1.0:
+                # Während der Pre-Pause und Post-Pause sparen wir uns die Matrix-Rechnung!
+                return disp_frozen, 1.0, 0.0, 0.0
+            elif alpha_frozen < 1.0:
+                if disp_live is not None and disp_frozen.shape == disp_live.shape:
+                    blended = cv2.addWeighted(disp_frozen, alpha_frozen, disp_live, 1.0 - alpha_frozen, 0)
+                    return blended, 1.0, 0.0, 0.0
+                return disp_live, 1.0, 0.0, 0.0
+                
+            # Wenn wir hier sind, zoomen wir gerade! (Matrix-Verzerrung)
+            h, w = disp_frozen.shape[:2]
+            scx, scy = w / 2.0, h / 2.0
+            ccx = scx + (anim['target_x'] - scx) * ease
+            ccy = scy + (anim['target_y'] - scy) * ease
+            ox = w / 2.0 - z * ccx
+            oy = h / 2.0 - z * ccy
+            
+            M = np.float32([[z, 0, ox], [0, z, oy]])
+            disp_img = cv2.warpAffine(disp_frozen, M, (w, h), flags=cv2.INTER_LINEAR)
+                
+            return disp_img, z, ox, oy
+
         if self.nutze_kamera_links:
+            disp_l, zl, oxl, oyl = apply_cinematic_zoom('left', disp_l_frozen, disp_l_live)
+            zoom_params['left'] = (zl, oxl, oyl)
             frames_to_stack.append(disp_l if disp_l is not None else create_dummy_frame("LINKS"))
         
         if self.nutze_kamera_rechts:
+            disp_r, zr, oxr, oyr = apply_cinematic_zoom('right', disp_r_frozen, disp_r_live)
+            zoom_params['right'] = (zr, oxr, oyr)
             frames_to_stack.append(disp_r if disp_r is not None else create_dummy_frame("RECHTS"))
 
         if not frames_to_stack: return
@@ -471,7 +628,6 @@ class TargetTracker:
             else:
                 padded_frames.append(f)
                 
-        # ... (vorheriger Code bleibt gleich, wo combined_view gebaut wird)
         combined_view = np.hstack(padded_frames)
         orig_h, orig_w = combined_view.shape[:2]
         
@@ -527,10 +683,35 @@ class TargetTracker:
             
         # Den Offset müssen wir im Kopf behalten, da die Skalierung (avg_scale) jetzt proportional ist
         avg_scale = self.scale_x # self.scale_x und _y sind identisch
-        #final_radius = max(2, int(self.caliber_radius * avg_scale))
         
-        # ---> TREFFER ZEICHNEN (Nach Seite getrennt, Nummer mittig im Kreis) <---
+        # =========================================================================
+        # ---> NEU: ROI-CLIPPING (Unsichtbare Scheren gegen überlappende Elemente)
+        # =========================================================================
+        scaled_w_left = int(self.w_left_displayed * self.scale_x)
+        new_h = int(orig_h * self.scale_y)
+        
+        camera_rois = {}
+        roi_offsets = {}
+        
+        if self.nutze_kamera_links:
+            rx = self.pad_x
+            rw = scaled_w_left
+            camera_rois['left'] = combined_view[self.pad_y : self.pad_y + new_h, rx : rx + rw]
+            roi_offsets['left'] = rx
+            
+        if self.nutze_kamera_rechts:
+            rx = self.pad_x + scaled_w_left if self.nutze_kamera_links else self.pad_x
+            rw = int((orig_w - self.w_left_displayed) * self.scale_x)
+            camera_rois['right'] = combined_view[self.pad_y : self.pad_y + new_h, rx : rx + rw]
+            roi_offsets['right'] = rx
+
+        # ---> TREFFER ZEICHNEN (Nach Seite getrennt, in ihre ROIs gesperrt) <---
         for side in ['left', 'right']:
+            if side not in camera_rois: continue # Nur aktive Kameras bearbeiten
+            
+            roi = camera_rois[side]
+            roi_off_x = roi_offsets[side]
+            
             # =========================================================================
             # ---> NEU: ELA-Optimierung! Wir nutzen den OFFIZIELLEN Radius aus der JSON,
             # aber fallen auf den Slider-Wert zurück, wenn die Ringwertung aus ist!
@@ -549,72 +730,82 @@ class TargetTracker:
             avg_px = (px_x + px_y) / 2.0
             
             cal_r_offiziell = (offizielles_kaliber_mm / 2.0) * avg_px
-            final_radius = max(2, int(cal_r_offiziell * self.scale_x))
-            # =========================================================================
+            final_radius = max(2, int(cal_r_offiziell * zoom_params[side][0] * self.scale_x))
             
             side_shots = self.sm.get_shots_for_side(side)
             for idx, shot in enumerate(side_shots):
                 x, y = shot['pos']
                 
+                z, ox, oy = zoom_params[side]
+                x_local = x * z + ox
+                y_local = y * z + oy
+                
                 if shot['side'] == 'right' and self.nutze_kamera_links:
-                    x += self.w_left_displayed
+                    x_local += self.w_left_displayed
                     
-                # ---> OFFSET ADDIEREN! <---
-                # VORHER: final_x = int(x * self.scale_x) + self.pad_x
-                final_x = int(round(x * self.scale_x)) + self.pad_x
-                final_y = int(round(y * self.scale_y)) + self.pad_y
+                final_x = int(round(x_local * self.scale_x)) + self.pad_x
+                final_y = int(round(y_local * self.scale_y)) + self.pad_y
+                
+                # ---> NEU: Koordinaten relativ zum zugeschnittenen Kamerabild! <---
+                draw_x = final_x - roi_off_x
+                draw_y = final_y - self.pad_y
                 
                 color = (0, 0, 255) if (shot.get('is_new', False) and blink_state) else (255, 100, 0)
                 
-                # Zuerst den Kreis und den Mittelpunkt malen
-                cv2.circle(combined_view, (final_x, final_y), final_radius, color, 1)
-                #cv2.circle(combined_view, (final_x, final_y), max(1, int(2*avg_scale)), color, -1)
+                # Malen direkt auf das zugeschnittene ROI-Array!
+                cv2.circle(roi, (draw_x, draw_y), final_radius, color, 1)
                 
-                # Dann die Treffer-Nummer absolut mittig darüberlegen
                 if self.ringwertung_aktiv:
                     id_str = str(idx + 1)
-                    
                     font = cv2.FONT_HERSHEY_SIMPLEX
                     font_scale = 0.5
                     thickness = 1
                     
-                    # Berechnet die Pixelbreite/-höhe des Textes, um ihn mathematisch zu zentrieren
                     (text_w, text_h), _ = cv2.getTextSize(id_str, font, font_scale, thickness)
-                    text_x = final_x - (text_w // 2)
-                    text_y = final_y + (text_h // 2)
+                    text_x = draw_x - (text_w // 2)
+                    text_y = draw_y + (text_h // 2)
                     
-                    # Schwarzer Schatten-Rand für perfekte Lesbarkeit
-                    cv2.putText(combined_view, id_str, (text_x, text_y), font, font_scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
-                    # Weiße oder leicht blaue Schrift
+                    cv2.putText(roi, id_str, (text_x, text_y), font, font_scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
                     text_color = (255, 255, 255) if not shot.get('is_new', False) else (200, 200, 255)
-                    cv2.putText(combined_view, id_str, (text_x, text_y), font, font_scale, text_color, thickness, cv2.LINE_AA)
+                    cv2.putText(roi, id_str, (text_x, text_y), font, font_scale, text_color, thickness, cv2.LINE_AA)
 
-        # ---> OFFSET ADDIEIREN! <---
-        scaled_w_left = int(self.w_left_displayed * self.scale_x)
-        
+        # ---> CAMERA OVERLAY ZEICHNEN (Buttons unten an der Kamera) <---
         if self.nutze_kamera_links:
-            # Wir rücken es um pad_x ein und nutzen new_h statt win_h, damit die Balken nicht übermalt werden
-            new_h = int(orig_h * self.scale_y)
             self.draw_camera_overlay(combined_view, 'left', self.pad_x, scaled_w_left, self.pad_y + new_h)
         if self.nutze_kamera_rechts:
             self.draw_camera_overlay(combined_view, 'right', self.pad_x + scaled_w_left, int((orig_w - self.w_left_displayed) * self.scale_x), self.pad_y + new_h)
-        
-        # --- VISUELLES FEEDBACK ---
+
+        # --- VISUELLES FEEDBACK (15s Kalibrierung) ---
         current_time = time.time()
         for s, feedback in [('left', self.calib_feedback_left), 
                             ('right', self.calib_feedback_right)]:
             if feedback and (current_time - feedback['time'] < 15.0):
-                use_cam = self.nutze_kamera_links if s == 'left' else self.nutze_kamera_rechts
-                if use_cam:
+                if s in camera_rois:
+                    roi = camera_rois[s]
+                    roi_off_x = roi_offsets[s]
+                    
+                    z, ox, oy = zoom_params[s]
                     offset_x = 0 if s == 'left' else scaled_w_left
                     
-                    fb_cx = int(round(feedback['cx'] * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
-                    fb_cy = int(round(feedback['cy'] * self.scale_y)) + getattr(self, 'pad_y', 0)
+                    fb_cx_local = feedback['cx'] * z + ox
+                    fb_cy_local = feedback['cy'] * z + oy
+                    fb_red_cx_local = feedback['red_cx'] * z + ox
+                    fb_red_cy_local = feedback['red_cy'] * z + oy
                     
-                    fb_red_cx = int(round(feedback['red_cx'] * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
-                    fb_red_cy = int(round(feedback['red_cy'] * self.scale_y)) + getattr(self, 'pad_y', 0)
-                    fb_red_rx = int(round(feedback['red_rx'] * self.scale_x))
-                    fb_red_ry = int(round(feedback['red_ry'] * self.scale_y))
+                    fb_cx = int(round(fb_cx_local * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
+                    fb_cy = int(round(fb_cy_local * self.scale_y)) + getattr(self, 'pad_y', 0)
+                    
+                    fb_red_cx = int(round(fb_red_cx_local * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
+                    fb_red_cy = int(round(fb_red_cy_local * self.scale_y)) + getattr(self, 'pad_y', 0)
+                    
+                    # ---> Mapping auf ROI <---
+                    draw_cx = fb_cx - roi_off_x
+                    draw_cy = fb_cy - self.pad_y
+                    draw_red_cx = fb_red_cx - roi_off_x
+                    draw_red_cy = fb_red_cy - self.pad_y
+                    
+                    fb_red_rx = int(round(feedback['red_rx'] * z * self.scale_x))
+                    fb_red_ry = int(round(feedback['red_ry'] * z * self.scale_y))
 
                     def draw_dashed_ellipse(img, center, rx, ry, color):
                         if rx <= 0 or ry <= 0: return
@@ -622,11 +813,8 @@ class TargetTracker:
                             cv2.ellipse(img, center, (int(rx), int(ry)), 0, angle, angle + 2, color, 1, cv2.LINE_AA)
 
                     if feedback.get('show_red', False) or feedback.get('show_red') == True:
-                        draw_dashed_ellipse(combined_view, (fb_red_cx, fb_red_cy), fb_red_rx, fb_red_ry, (0, 0, 255))
+                        draw_dashed_ellipse(roi, (draw_red_cx, draw_red_cy), fb_red_rx, fb_red_ry, (0, 0, 255))
                     
-                    # =========================================================================
-                    # ---> FIX: Fischaugenkorrektur AUCH für den Spiegel im 15s-Feedback! <---
-                    # =========================================================================
                     seite_str = "links" if s == 'left' else "rechts"
                     px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
                     px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
@@ -639,28 +827,20 @@ class TargetTracker:
                         target_data = targets[aktive_scheibe]
                         spiegel_mm = float(target_data.get('spiegel_durchmesser_mm', 30.5))
                         
-                        # Exakt die gleiche Formel wie bei den anderen Ringen!
                         r_mm_base = spiegel_mm / 2.0
                         r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur))
-                        fb_ideal_rx = round((r_mm_draw * px_x) * self.scale_x)
-                        fb_ideal_ry = round((r_mm_draw * px_y) * self.scale_y)
+                        fb_ideal_rx = round((r_mm_draw * px_x) * z * self.scale_x)
+                        fb_ideal_ry = round((r_mm_draw * px_y) * z * self.scale_y)
                     else:
                         fb_ideal_rx = int(round(feedback['ideal_rx'] * self.scale_x))
                         fb_ideal_ry = int(round(feedback['ideal_ry'] * self.scale_y))
 
-                    # Debug-Ausgabe (jetzt SICHER, weil korrektur definiert ist!)
-                    #print(f"\n🔍 [DEBUG 15s-FEEDBACK] Kamera: {s.upper()} | Zentrum: X:{fb_cx}, Y:{fb_cy}")
-                    #print(f"   Spiegel (korrigiert): rx={fb_ideal_rx} px | Korrektur-Faktor: {korrektur}")
-
-                    # 1. Den korrigierten Spiegel zeichnen
-                    draw_dashed_ellipse(combined_view, (fb_cx, fb_cy), fb_ideal_rx, fb_ideal_ry, (0, 255, 0))
+                    draw_dashed_ellipse(roi, (draw_cx, draw_cy), fb_ideal_rx, fb_ideal_ry, (0, 255, 0))
                     
-                    # Zentrumskreuz
                     cross_size = 6
-                    cv2.line(combined_view, (fb_cx - cross_size, fb_cy), (fb_cx + cross_size, fb_cy), (0, 255, 0), 1, cv2.LINE_AA)
-                    cv2.line(combined_view, (fb_cx, fb_cy - cross_size), (fb_cx, fb_cy + cross_size), (0, 255, 0), 1, cv2.LINE_AA)
+                    cv2.line(roi, (draw_cx - cross_size, draw_cy), (draw_cx + cross_size, draw_cy), (0, 255, 0), 1, cv2.LINE_AA)
+                    cv2.line(roi, (draw_cx, draw_cy - cross_size), (draw_cx, draw_cy + cross_size), (0, 255, 0), 1, cv2.LINE_AA)
                     
-                    # 2. Die 2 äußersten Ringe zur Kontrolle
                     if aktive_scheibe in targets:
                         ringe = target_data.get('ringe_durchmesser_mm', {})
                         if ringe:
@@ -672,26 +852,32 @@ class TargetTracker:
                                 r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur))
                                 rx = round((r_mm_draw * px_x) * self.scale_x)
                                 ry = round((r_mm_draw * px_y) * self.scale_y)
-                                #print(f"   -> [15s] Äußerster Ring d={d_mm}mm -> Pixel (rx:{rx}, ry:{ry})")
+                                draw_dashed_ellipse(roi, (draw_cx, draw_cy), rx, ry, (0, 255, 0))
                                 
-                                draw_dashed_ellipse(combined_view, (fb_cx, fb_cy), rx, ry, (0, 255, 0))
-                    # ---> NEU: Ein feines Kreuz im exakten Zentrum <---
-                    cross_size = 6
-                    cv2.line(combined_view, (fb_cx - cross_size, fb_cy), (fb_cx + cross_size, fb_cy), (0, 255, 0), 1, cv2.LINE_AA)
-                    cv2.line(combined_view, (fb_cx, fb_cy - cross_size), (fb_cx, fb_cy + cross_size), (0, 255, 0), 1, cv2.LINE_AA)
+                    cv2.line(roi, (draw_cx - cross_size, draw_cy), (draw_cx + cross_size, draw_cy), (0, 255, 0), 1, cv2.LINE_AA)
+                    cv2.line(roi, (draw_cx, draw_cy - cross_size), (draw_cx, draw_cy + cross_size), (0, 255, 0), 1, cv2.LINE_AA)
         
         # =========================================================================
-        # ---> NEU: Dauerhafte Zielscheiben-Ringe (Ein/Aus-Schalter) <---
+        # ---> DAUERHAFTE ZIELSCHEIBEN-RINGE (In ROIs gesperrt und mit Zoom!) <---
         # =========================================================================
         if self.show_all_rings:
             for s, fb in [('left', self.calib_feedback_left), ('right', self.calib_feedback_right)]:
-                use_cam = self.nutze_kamera_links if s == 'left' else self.nutze_kamera_rechts
-                if use_cam and fb:
-                    offset_x = 0 if s == 'left' else scaled_w_left
-                    cx = int(round(fb['cx'] * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
-                    cy = int(round(fb['cy'] * self.scale_y)) + getattr(self, 'pad_y', 0)
+                if s in camera_rois and fb:
+                    roi = camera_rois[s]
+                    roi_off_x = roi_offsets[s]
                     
-                    #print(f"   Kamera: {s.upper()} | Zentrum (cx, cy): {cx}, {cy}")
+                    # ---> Zoom für die dauerhaften Ringe einberechnen! <---
+                    z, ox, oy = zoom_params[s]
+                    offset_x = 0 if s == 'left' else scaled_w_left
+                    
+                    fb_cx_local = fb['cx'] * z + ox
+                    fb_cy_local = fb['cy'] * z + oy
+                    
+                    cx = int(round(fb_cx_local * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
+                    cy = int(round(fb_cy_local * self.scale_y)) + getattr(self, 'pad_y', 0)
+                    
+                    draw_cx = cx - roi_off_x
+                    draw_cy = cy - self.pad_y
                     
                     aktive_scheibe = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
                     targets = self.dm.load_targets()
@@ -712,19 +898,16 @@ class TargetTracker:
                         for ring_name, d_mm in ringe.items():
                             r_mm_base = float(d_mm) / 2.0
                             r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) 
-                            rx = round((r_mm_draw * px_x) * self.scale_x)
-                            ry = round((r_mm_draw * px_y) * self.scale_y)
-                            #print(f"   -> [An] Ring '{ring_name}' (d={d_mm}mm) -> Pixel (rx:{rx}, ry:{ry})")
-                            draw_dashed_ellipse_perm(combined_view, (cx, cy), rx, ry, (0, 255, 0))
+                            rx = round((r_mm_draw * px_x) * z * self.scale_x)
+                            ry = round((r_mm_draw * px_y) * z * self.scale_y)
+                            draw_dashed_ellipse_perm(roi, (draw_cx, draw_cy), rx, ry, (0, 255, 0))
                             
                         if innenzehner > 0:
                             r_mm_base = float(innenzehner) / 2.0
                             r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur))
-                            rx = round((r_mm_draw * px_x) * self.scale_x)
-                            ry = round((r_mm_draw * px_y) * self.scale_y)
-                            #print(f"   -> [An] Innenzehner (d={innenzehner}mm) -> Pixel (rx:{rx}, ry:{ry})")
-                            draw_dashed_ellipse_perm(combined_view, (cx, cy), rx, ry, (0, 255, 0))
-        
+                            rx = round((r_mm_draw * px_x) * z * self.scale_x)
+                            ry = round((r_mm_draw * px_y) * z * self.scale_y)
+                            draw_dashed_ellipse_perm(roi, (draw_cx, draw_cy), rx, ry, (0, 255, 0))
         # --- BUTTON-LEISTE OBEN RECHTS ---
         gap = 10     # Abstand zwischen den Buttons
         start_y = 10
@@ -810,7 +993,11 @@ class TargetTracker:
                 display_shots_rev = list(reversed(display_shots)) 
                 
                 if side == 'left':
-                    box_x = max(10, scaled_w_left - box_w - 10)
+                    # ---> DER FIX: Wenn die rechte Kamera aus ist, binde das HUD IMMER an den rechten Fensterrand! <---
+                    if not self.nutze_kamera_rechts:
+                        box_x = win_w - box_w - 10
+                    else:
+                        box_x = max(10, scaled_w_left - box_w - 10)
                 else:
                     box_x = win_w - box_w - 10
                     
@@ -977,22 +1164,42 @@ class TargetTracker:
                 combined_view[start_y:end_y, start_x:end_x] = blended.astype(np.uint8)
         # =====================================================================
 
+        # =====================================================================
+        # ---> NEU: FPS-Counter (Geglättet für ruhigere Lesbarkeit) <---
+        # =====================================================================
+        current_time_fps = time.time()
+        delta_t = current_time_fps - getattr(self, 'prev_frame_time', current_time_fps)
+        self.prev_frame_time = current_time_fps
+        
+        if delta_t > 0:
+            current_fps = 1.0 / delta_t
+            # Wir mischen 90% des alten Wertes mit 10% des neuen Wertes. 
+            # Dadurch flackert die Zahl nicht wild hin und her.
+            self.fps = (self.fps * 0.9) + (current_fps * 0.1) 
+            
+        cv2.putText(combined_view, f"FPS: {int(self.fps)}", (15, 30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
 
         cv2.imshow(self.window_name, combined_view)
 
-    def check_keys(self):
-        # ---> ELA FIX: waitKeyEx liest auch Pfeiltasten (Sondertasten) aus! <---
-        raw_key = cv2.waitKeyEx(self.poll_ms)
+        cv2.imshow(self.window_name, combined_view)
+
+    def check_keys(self, frame_start_time):
+        # ---> NEU: Dynamische Frame-Begrenzung <---
+        # Berechne, wie viele Millisekunden die CPU für dieses Bild gebraucht hat
+        elapsed_ms = (time.perf_counter() - frame_start_time) * 1000.0
+        
+        # Berechne die Restzeit bis zu unserem Ziel-Takt (z.B. 33ms)
+        wait_ms = int(self.poll_ms - elapsed_ms)
+        
+        # OpenCV braucht zwingend mindestens 1ms für GUI-Updates (0 = Endlos-Freeze)
+        wait_ms = max(1, wait_ms)
+        
+        raw_key = cv2.waitKeyEx(wait_ms)
         key = raw_key & 0xFF
         
         if self.trigger_exit:
             return True
-            
-        try:
-            if cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
-                return True 
-        except cv2.error:
-            return True 
 
         if key == ord('q'): return True
         elif key == ord('r'):
@@ -1665,13 +1872,14 @@ class TargetTracker:
         self.log("SYSTEM", "=== PROGRAMM GESTARTET ===", True)
 
         while True:
+            # ---> NEU: Startzeitpunkt des aktuellen Frames erfassen! <---
+            frame_start_time = time.perf_counter() 
+            
             frame_l, frame_r = self.read_frames()
-            self.last_frame_l = frame_l  # <--- NEU: Merken fürs Labor!
-            self.last_frame_r = frame_r  # <--- NEU: Merken fürs Labor!
+            self.last_frame_l = frame_l 
+            self.last_frame_r = frame_r 
             
             self.process_resets(frame_l, frame_r)
-            
-            # ---> NEU: Aufruf für die Editier-Menüs <---
             self.process_edits()
             
             if self.nutze_kamera_links: self.process_camera(frame_l, self.sm.state_left)
@@ -1683,7 +1891,8 @@ class TargetTracker:
 
             self.update_gui(frame_l, frame_r, blink_state)
 
-            if self.check_keys():
+            # ---> NEU: Startzeitpunkt an die Tastenprüfung übergeben! <---
+            if self.check_keys(frame_start_time):
                 break
 
         self.cleanup()

@@ -344,6 +344,10 @@ darstellung_ohne_weissabgleich = yes
 # Fasst die Ringwertung im Live-Bild in Serien zusammen (z.B. 3 für 3er-Serien). 
 # Bei 0 ist das Feature deaktiviert.
 serien_gruppierung = 3
+# Zoomfaktor bei Treffererkennung (3 = 3x-facher Zoom)
+treffer_zoom = 3
+# Anzeigedauer wie viele Sekunden reingezoomt wird
+treffer_anzeigedauer = 5
 """)
             self.write_log("SYSTEM: 🆕 Standard config.ini erstellt.")
 
@@ -524,6 +528,16 @@ serien_gruppierung = 3
         if not config.has_option('Anzeige', 'serien_gruppierung'):
             print("🔧 Führe Auto-Patch aus: Füge 'serien_gruppierung = 3' hinzu...")
             self.update_ini_value('Anzeige', 'serien_gruppierung', '3')
+            needs_reload = True  
+            
+        if not config.has_option('Anzeige', 'treffer_zoom'):
+            print("🔧 Führe Auto-Patch aus: Füge 'treffer_zoom = 3' hinzu...")
+            self.update_ini_value('Anzeige', 'treffer_zoom', '3')
+            needs_reload = True   
+
+        if not config.has_option('Anzeige', 'treffer_anzeigedauer'):
+            print("🔧 Führe Auto-Patch aus: Füge 'treffer_anzeigedauer = 5' hinzu...")
+            self.update_ini_value('Anzeige', 'treffer_anzeigedauer', '5')
             needs_reload = True  
 
 

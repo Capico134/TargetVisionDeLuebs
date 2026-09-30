@@ -886,17 +886,16 @@ class TargetDetector:
                 self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> WAND (+{diff:.1f}% über Limit {state.min_area}%)")
                 self.log(state.side, "Scheibe außer Sicht -> Warte auf Zielscheibe...", True)
                 state.target_present = False
+            return False  # <--- WICHTIG: Signal weitergeben
         else:
             if not state.target_present:
                 self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> SCHEIBE ({abs(diff):.1f}% unter Limit {state.min_area}%)")
                 state.target_present = True
-                #SOOOOOOOOOOOOOOOOOOOOONEEEEEEEEEEEEEEEEESCHEIIIIIIIIIIIIISSSSSSSSSSEEEEEEEEEEEEEEEEEEE
-                #if hasattr(self.dm, 'clear_debug_images'):
-                #    self.dm.clear_debug_images(state.side)
                 
                 if current_ref is None:
                     self.set_reference_image(frame, state.side)
+                    return False  # <--- WICHTIG: Signal weitergeben
                 else:
-                    self.detect_new_shot(frame, state.side)
+                    return self.detect_new_shot(frame, state.side) # <--- WICHTIG: Erkennungs-Ergebnis durchreichen!
             else:
-                self.detect_new_shot(frame, state.side)
+                return self.detect_new_shot(frame, state.side) # <--- WICHTIG: Erkennungs-Ergebnis durchreichen!
