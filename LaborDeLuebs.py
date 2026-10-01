@@ -338,21 +338,30 @@ class LaborApp:
             self.original_values = {}
             
             # 1. SONDERFALL: Nur noch Legacy-Migration für Uralt-Configs (Pixel zu mm)
-            # Das müssen wir VOR dem automatischen Slider-Mapping tun, damit der AuditedConfigParser 
-            # nicht voreilig den 4.5mm Fallback setzt und diese Rechnung blockiert!
             if not parser.has_option('Erkennung', 'caliber_durchmesser') and parser.has_option('Erkennung', 'caliber_radius'):
                 alt_r = parser.getfloat('Erkennung', 'caliber_radius', fallback=15.0)
                 px_x = parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0) if parser.has_section('Kameras') else 5.0
                 px_y = parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0) if parser.has_section('Kameras') else 5.0
                 avg_px = (px_x + px_y) / 2.0
                 calc_durchmesser = (alt_r / avg_px) * 2.0 if avg_px > 0 else 4.5
-                
-                # Wir schreiben den errechneten Wert AKTIV in den Parser, damit er ab jetzt existiert!
                 parser.set('Erkennung', 'caliber_durchmesser', str(round(calc_durchmesser, 2)))
 
             # 2. DIE MAGIE: Automatische Zuweisung ALLER registrierten Slider
             self.migrated_keys = [] # <--- NEU: Merkliste für den Migrator
             
+            # =========================================================================
+            # ---> DER FIX: Den Slider-losen Parameter einfach mit auf die Liste packen! <---
+            # =========================================================================
+            if not parser.has_section('Zielscheibe'):
+                parser.add_section('Zielscheibe')
+            if not parser.has_option('Zielscheibe', 'ringwertung_nachkommastellen'):
+                parser.set('Zielscheibe', 'ringwertung_nachkommastellen', '1')
+                self.migrated_keys.append('ringwertung_nachkommastellen')
+            # =========================================================================
+            
+            # d_config = self.package_data['config']
+            # dummy = d_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1) # Einfach nur aufrufen, damit der 
+
             for key, tk_var in self.registered_sliders.items():
                 fallback_val = tk_var.get() # Den GUI-Standardwert als Rettungsanker nehmen
                 
@@ -1462,9 +1471,13 @@ class LaborApp:
         # =========================================================================
         # ---> ELA FIX: Der Dummy ist tot! Wir nutzen direkt den echten Parser <---
         d_config = self.package_data['config']
+        
+
         ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
         targets = self.dm.load_targets()
+        
+        decimals = d_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
         
         # 1. Fallback-Weiche: Wettkampf-Modus vs. Freies Schießen
         if ringwertung_aktiv and aktive_scheibe in targets:
@@ -1883,6 +1896,15 @@ class LaborApp:
 
         # 2. Voller Simulations-Durchlauf (Stumm im Hintergrund)
         d_config = self.package_data['config']
+        
+        ## Auch hier sicherstellen, dass der Parameter im RAM-Parser existiert
+        #if not d_config.has_section('Zielscheibe'):
+        #    d_config.add_section('Zielscheibe')
+        #    
+        #if not d_config.has_option('Zielscheibe', 'ringwertung_nachkommastellen'):
+        #    d_config.set('Zielscheibe', 'ringwertung_nachkommastellen', '1')
+        #    print("🔧 [LAZY-INJECTION] Parameter 'ringwertung_nachkommastellen=1' für Integrations-Check ergänzt.")
+
         d_dm = DummyDateiManager(self)
         d_sm = StateManager(d_config, d_dm)
         detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
