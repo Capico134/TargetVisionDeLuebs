@@ -13,6 +13,7 @@ import LoggerDeLuebs
 from DetectionDeLuebs import TargetDetector
 from DateiManagerDeLuebs import DateiManager
 from DateiManagerDeLuebs import DateiManager
+from AuditedConfig import AuditedConfigParser
 
 class MatchDetailWindow(tk.Toplevel):
     def __init__(self, parent, match_id, zip_path):
@@ -64,7 +65,8 @@ class MatchDetailWindow(tk.Toplevel):
                 self.timeline = match_data.get("timeline", [])
                 self.match_metadata = match_data.get("metadata", {}) # <--- NEU: Metadaten sichern!
                 
-                config = configparser.ConfigParser()
+                # ---> DER FIX: Spion statt Standard-Parser (stumm) <---
+                config = AuditedConfigParser(log_callback=lambda msg: None) 
                 config.optionxform = str
                 try:
                     config_str = zipf.read("config.ini").decode('utf-8')
@@ -709,12 +711,13 @@ class HighscoreViewer:
                 center_r = meta.get('center_r', [0, 0])
                 
                 # 2. Config laden
-                config = configparser.ConfigParser()
+                # ---> DER FIX: Den Spion aktivieren (hier stumm, da wir im Report-Log keine UI-Prints brauchen) <---
+                config = AuditedConfigParser(log_callback=lambda msg: info_lines.append(f"  {msg}"))
                 try:
                     config_str = zipf.read("config.ini").decode('utf-8')
                     config.read_string(config_str)
                 except KeyError:
-                    pass 
+                    pass
                 
                 # ---> NEU: Umrechnungsfaktoren (px -> mm) auslesen <---
                 px_x_l, px_y_l = 5.0, 5.8

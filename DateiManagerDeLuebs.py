@@ -615,8 +615,8 @@ treffer_anzeigedauer = 5
                     elif filename == "config.ini":
                         # Den String sofort in einen fertigen Parser umwandeln
                         config_str = zf.read(filename).decode('utf-8')
-                        parser = configparser.ConfigParser()
-                        parser.optionxform = str # WICHTIG: Verhindert, dass alles kleingeschrieben wird!
+                        parser = AuditedConfigParser(log_callback=self.write_log) # <--- Der smarte Spion!
+                        parser.optionxform = str
                         parser.read_file(io.StringIO(config_str))
                         result['config'] = parser
                     elif filename.lower().endswith(('.png', '.jpg', '.jpeg')):

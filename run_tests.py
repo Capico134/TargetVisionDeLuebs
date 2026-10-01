@@ -11,6 +11,7 @@ import time
 
 # Deine echte Engine importieren
 from DetectionDeLuebs import TargetDetector
+from AuditedConfig import AuditedConfigParser
 
 # ==========================================
 # MINIMALISTISCHE DUMMYS FÜR DEN TESTLAUF
@@ -133,7 +134,8 @@ def run_all_tests():
                     log(f"{C_YELLOW}⏭️ SKIPPED: {zip_file} (Keine config.ini gefunden){C_END}")
                     continue
                     
-                config = configparser.ConfigParser()
+                # ---> DER FIX: Wir nutzen den Spion, leiten sein Log aber an den SmartLogger um! <---
+                config = AuditedConfigParser(log_callback=log) 
                 config.read_string(zf.read(config_name).decode('utf-8'))
                 
                 # =======================================================
