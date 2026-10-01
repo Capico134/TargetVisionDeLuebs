@@ -487,7 +487,12 @@ class LaborUIBuilder:
                 pass
                 
         self.app.root.bind_all('<Button-1>', release_focus, add="+")
-        self.app.root.bind_all('<Escape>', lambda e: self.app.root.focus_set(), add="+")
+        # ---> DER FIX: Kombiniertes ESC-Binding (Fokus-Reset + Zoom-Abbruch) <---
+        def handle_escape(event):
+            self.app.root.focus_set()
+            self.app.abort_zoom_box(event)
+            
+        self.app.root.bind_all('<Escape>', handle_escape, add="+")
 
     def open_all_settings_dialog(self):
         """Öffnet ein dynamisches Fenster mit allen ERWEITERTEN Werten aus der aktuellen config.ini."""
@@ -580,6 +585,22 @@ class LaborUIBuilder:
                     cb.pack(side=tk.RIGHT)
                     cb.var_ref = var 
                     var.trace_add("write", make_trace_cmd(section, key, var))
+                    
+                    # =========================================================================
+                    # ---> DER FIX: Scrollrad-Hijacking der Combobox verhindern! <---
+                    # =========================================================================
+                    def block_cb_scroll(event):
+                        # 1. Wir leiten den Scroll-Befehl manuell an das Haupt-Canvas weiter
+                        if event.num == 4 or getattr(event, 'delta', 0) > 0:
+                            canvas.yview_scroll(-1, "units")
+                        elif event.num == 5 or getattr(event, 'delta', 0) < 0:
+                            canvas.yview_scroll(1, "units")
+                        # 2. "break" blockiert die interne Werte-Änderung der Combobox
+                        return "break" 
+                        
+                    cb.bind("<MouseWheel>", block_cb_scroll)
+                    cb.bind("<Button-4>", block_cb_scroll) # Für Linux
+                    cb.bind("<Button-5>", block_cb_scroll) # Für Linux
 
                 elif val_str.lower() in ['yes', 'no', 'true', 'false', 'on', 'off']:
                     is_true = val_str.lower() in ['yes', 'true', 'on']

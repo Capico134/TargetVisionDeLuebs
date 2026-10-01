@@ -285,11 +285,7 @@ class LaborRenderer:
                     scaled_r = round(base_r * self.app.current_scale)
                     
                     for s in orig_shots:
-                        hx, hy = s['x'], s['y']
-                        scaled_x = round(hx * self.app.current_scale) + self.app.current_img_w
-                        scaled_y = round(hy * self.app.current_scale)
-                        cv2.circle(combined, (scaled_x, scaled_y), scaled_r, (0, 255, 255), 1, cv2.LINE_8) 
-                        cv2.circle(combined, (scaled_x, scaled_y), 1, (0, 255, 255), -1, cv2.LINE_8) 
+                        self._draw_distorted_shot_ellipse(combined, s['x'], s['y'], (0, 255, 255), thickness=1)
             
             # ---> DEN FERTIGEN BACKGROUND-CACHE SICHERN <---
             self.app.cached_static_layer = combined.copy()
@@ -305,60 +301,11 @@ class LaborRenderer:
             side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
             current_frame_num = self.app.current_index
             
-            d_config = self.app.package_data['config']
-            seite_str = "links" if side == 'left' else "rechts"
-            px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-            px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-            korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
-            
-            aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-            ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
-            targets = self.app.dm.load_targets()
-            
-            if aktive_scheibe in targets and ringwertung_aktiv:
-                offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
-            else:
-                offizielles_kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
-            r_shot_mm = offizielles_kaliber_mm / 2.0
-            
-            meta = getattr(self.app, 'original_match_data', {})
-            if meta and "metadata" in meta: meta_dict = meta.get("metadata", {})
-            else: meta_dict = meta if isinstance(meta, dict) else {}
-            
-            center_key = 'center_l' if side == 'left' else 'center_r'
-            center_pts = meta_dict.get(center_key)
-            
-            avg_px = (px_x + px_y) / 2.0
-            fallback_r = int(r_shot_mm * avg_px * self.app.current_scale)
-            
             for shot in self.app.current_engine_shots:
                 if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
                     hx, hy = shot['pos']
-                    scaled_x1 = round(hx * self.app.current_scale)
-                    scaled_y = round(hy * self.app.current_scale)
-                    scaled_x2 = scaled_x1 + self.app.current_img_w 
-                    
-                    if center_pts:
-                        cx, cy = center_pts
-                        dx_mm = (hx - cx) / px_x
-                        dy_mm = (hy - cy) / px_y
-                        r_mm = math.hypot(dx_mm, dy_mm)
-                        
-                        if r_mm > 0.05:
-                            angle_deg = math.degrees(math.atan2(dy_mm, dx_mm))
-                            scale_radial = 1.0 + (2.0 * r_mm * korrektur)
-                            scale_tangential = 1.0 + (r_mm * korrektur)
-                            
-                            rx = round((r_shot_mm * scale_radial * px_x) * self.app.current_scale)
-                            ry = round((r_shot_mm * scale_tangential * px_y) * self.app.current_scale)
-                            
-                            cv2.ellipse(combined, (scaled_x2, scaled_y), (int(rx), int(ry)), angle_deg, 0, 360, (0, 165, 255), 1, cv2.LINE_8) 
-                        else:
-                            cv2.circle(combined, (scaled_x2, scaled_y), fallback_r, (0, 165, 255), 1, cv2.LINE_8) 
-                    else:
-                        cv2.circle(combined, (scaled_x2, scaled_y), fallback_r, (0, 165, 255), 1, cv2.LINE_8) 
-                        
-                    cv2.circle(combined, (scaled_x2, scaled_y), 1, (0, 0, 0), -1)
+                    # Die gesamte Fischaugen-Mathematik in einer einzigen Zeile gekapselt!
+                    self._draw_distorted_shot_ellipse(combined, hx, hy, (0, 165, 255), thickness=1)
 
         hl = getattr(self.app, 'highlighted_shot', None)
         if hl is not None:
@@ -380,10 +327,18 @@ class LaborRenderer:
                 cv2.circle(combined, (scaled_x1, scaled_y), 2, color, -1)        
                 cv2.putText(combined, f"#{f_num}", (scaled_x1 - 25, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2, cv2.LINE_8) 
                 
+                # 2. Rechte Seite (Varianten-Ansicht): Perfekt linsenkorrigiert über den Helfer!
+                #ALT:
                 cv2.circle(combined, (scaled_x2, scaled_y), scaled_r, color, 1)
                 cv2.circle(combined, (scaled_x2, scaled_y), 4, (0, 0, 0), -1)    
                 cv2.circle(combined, (scaled_x2, scaled_y), 2, color, -1)        
-                cv2.putText(combined, f"#{f_num}", (scaled_x2 - 30, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_8) 
+                #NEU:
+                #self._draw_distorted_shot_ellipse(combined, hx, hy, color, thickness=1)
+                
+                #cv2.putText(combined, f"#{f_num}", (scaled_x2 - 30, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_8) #ALT!!!
+                # Text-Label für die rechte Seite positionieren
+                scaled_x2 = round(hx * self.app.current_scale) + self.app.current_img_w 
+                cv2.putText(combined, f"#{f_num}", (scaled_x2 - 30, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_8)
         
         if getattr(self.app, 'calib_mode_active', False) and hasattr(self.app, 'calib_points'):
             for pt in self.app.calib_points:
@@ -460,3 +415,172 @@ class LaborRenderer:
         t_end = time.perf_counter()
         dauer_ms = (t_end - t_start) * 1000
         #print("draw_zoom_box time: ", dauer_ms)
+        
+    def _draw_distorted_shot_ellipse(self, img, hx, hy, color, thickness=1):
+        """Zentraler Helfer: Zeichnet einen Schuss perfekt linsenkorrigiert als Ellipse oder Kreis."""
+        side = self.app.active_camera_var.get()
+        d_config = self.app.package_data['config']
+        seite_str = "links" if side == 'left' else "rechts"
+        
+        px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+        px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+        korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
+        
+        aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+        ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+        targets = self.app.dm.load_targets()
+        
+        if aktive_scheibe in targets and ringwertung_aktiv:
+            offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
+        else:
+            offizielles_kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
+        r_shot_mm = offizielles_kaliber_mm / 2.0
+        
+        meta = getattr(self.app, 'original_match_data', {})
+        if meta and "metadata" in meta: meta_dict = meta.get("metadata", {})
+        else: meta_dict = meta if isinstance(meta, dict) else {}
+        
+        center_key = 'center_l' if side == 'left' else 'center_r'
+        center_pts = meta_dict.get(center_key)
+        
+        avg_px = (px_x + px_y) / 2.0
+        fallback_r = int(r_shot_mm * avg_px * self.app.current_scale)
+        
+        scaled_x1 = round(hx * self.app.current_scale)
+        scaled_y = round(hy * self.app.current_scale)
+        scaled_x2 = scaled_x1 + self.app.current_img_w 
+        
+        if center_pts:
+            cx, cy = center_pts
+            dx_mm = (hx - cx) / px_x
+            dy_mm = (hy - cy) / px_y
+            r_mm = math.hypot(dx_mm, dy_mm)
+            
+            if r_mm > 0.05:
+                angle_deg = math.degrees(math.atan2(dy_mm, dx_mm))
+                scale_radial = 1.0 + (2.0 * r_mm * korrektur)
+                scale_tangential = 1.0 + (r_mm * korrektur)
+                
+                rx = round((r_shot_mm * scale_radial * px_x) * self.app.current_scale)
+                ry = round((r_shot_mm * scale_tangential * px_y) * self.app.current_scale)
+                
+                cv2.ellipse(img, (scaled_x2, scaled_y), (int(rx), int(ry)), angle_deg, 0, 360, color, thickness, cv2.LINE_8) 
+            else:
+                cv2.circle(img, (scaled_x2, scaled_y), fallback_r, color, thickness, cv2.LINE_8) 
+        else:
+            cv2.circle(img, (scaled_x2, scaled_y), fallback_r, color, thickness, cv2.LINE_8) 
+            
+        cv2.circle(img, (scaled_x2, scaled_y), 1, (0, 0, 0) if color != (0,0,0) else (255,255,255), -1, cv2.LINE_8)
+    
+    
+    
+    #!!!!!!!!!!!!! EI-KORREKTUR !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    """
+        # =========================================================================
+        # 🔬 EXPERIMENTELL: 100% physikalisch korrekte Polygon-Verzerrung (Ei-Form)
+        # =========================================================================
+        # Dieser Code berechnet den optischen Weg für 360 Einzelpunkte.
+        # Er ist mathematisch perfekt, aber bei >50 Schüssen zu langsam für flüssiges Panning.
+        # Nur bei extremen Verzerrungen oder riesigen Kalibern aktivieren!
+        #
+        # cx, cy = center_pts
+        # dx_mm_obs = (hx - cx) / px_x
+        # ... [Hier deinen Raytracing-Code als Backup reinkopieren] ...
+        """
+    #def _draw_distorted_shot_ellipse(self, img, hx, hy, color, thickness=1):
+    #    """Zeichnet einen Schuss 100% physikalisch perfekt linsenkorrigiert als Polygon (Ei-Form)."""
+    #    side = self.app.active_camera_var.get()
+    #    d_config = self.app.package_data['config']
+    #    seite_str = "links" if side == 'left' else "rechts"
+    #    
+    #    px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+    #    px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+    #    korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
+    #    
+    #    aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+    #    ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+    #    targets = self.app.dm.load_targets()
+    #    
+    #    if aktive_scheibe in targets and ringwertung_aktiv:
+    #        offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
+    #    else:
+    #        offizielles_kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
+    #    r_shot_mm = offizielles_kaliber_mm / 2.0
+    #    
+    #    meta = getattr(self.app, 'original_match_data', {})
+    #    if meta and "metadata" in meta: meta_dict = meta.get("metadata", {})
+    #    else: meta_dict = meta if isinstance(meta, dict) else {}
+    #    
+    #    center_key = 'center_l' if side == 'left' else 'center_r'
+    #    center_pts = meta_dict.get(center_key)
+    #    
+    #    # --- Fallback, falls kein Nullpunkt kalibriert wurde ---
+    #    if not center_pts:
+    #        avg_px = (px_x + px_y) / 2.0
+    #        fallback_r = int(r_shot_mm * avg_px * self.app.current_scale)
+    #        scaled_x = round(hx * self.app.current_scale) + self.app.current_img_w 
+    #        scaled_y = round(hy * self.app.current_scale)
+    #        cv2.circle(img, (scaled_x, scaled_y), fallback_r, color, thickness, cv2.LINE_8)
+    #        cv2.circle(img, (scaled_x, scaled_y), 1, (0, 0, 0) if color != (0,0,0) else (255,255,255), -1, cv2.LINE_8)
+    #        return
+    #
+    #    cx, cy = center_pts
+    #    
+    #    # 1. Pixel-Distanz des optischen Zentrums zum Nullpunkt in mm umrechnen
+    #    dx_mm_obs = (hx - cx) / px_x
+    #    dy_mm_obs = (hy - cy) / px_y
+    #    dist_mm_obs = math.hypot(dx_mm_obs, dy_mm_obs)
+    #    
+    #    # 2. Den WAHREN (physikalischen) Mittelpunkt des Diabolos auf der Pappe ermitteln (P-Q Formel)
+    #    if korrektur != 0.0 and dist_mm_obs > 0:
+    #        a = korrektur
+    #        b = 1.0
+    #        c = -dist_mm_obs
+    #        diskriminante = b**2 - 4*a*c
+    #        if diskriminante >= 0:
+    #            dist_mm_true = (-b + math.sqrt(diskriminante)) / (2*a)
+    #        else:
+    #            dist_mm_true = dist_mm_obs
+    #        
+    #        # Wahren Vektor skalieren
+    #        scale_back = dist_mm_true / dist_mm_obs
+    #        real_cx_mm = dx_mm_obs * scale_back
+    #        real_cy_mm = dy_mm_obs * scale_back
+    #    else:
+    #        real_cx_mm = dx_mm_obs
+    #        real_cy_mm = dy_mm_obs
+    #
+    #    # 3. Den physikalisch perfekten Kreis (360 Punkte) erzeugen und JEDEN Punkt verzerren
+    #    polygon_points = []
+    #    for angle in range(360):
+    #        rad = math.radians(angle)
+    #        
+    #        # Wahrer Rand-Punkt in Millimetern (auf der physikalischen Pappe)
+    #        pt_x_mm = real_cx_mm + math.cos(rad) * r_shot_mm
+    #        pt_y_mm = real_cy_mm + math.sin(rad) * r_shot_mm
+    #        
+    #        # Einfallswinkel des Lichts durch die Linse verzerren
+    #        r_pt_mm = math.hypot(pt_x_mm, pt_y_mm)
+    #        distorted_r = r_pt_mm * (1.0 + r_pt_mm * korrektur)
+    #        
+    #        scale_fwd = distorted_r / r_pt_mm if r_pt_mm > 0 else 1.0
+    #        distorted_x_mm = pt_x_mm * scale_fwd
+    #        distorted_y_mm = pt_y_mm * scale_fwd
+    #        
+    #        # Zurück in Pixel auf dem Sensor
+    #        pt_px_x = (distorted_x_mm * px_x) + cx
+    #        pt_px_y = (distorted_y_mm * px_y) + cy
+    #        
+    #        # Für die GUI skalieren und rechts anheften
+    #        scaled_x = round(pt_px_x * self.app.current_scale) + self.app.current_img_w
+    #        scaled_y = round(pt_px_y * self.app.current_scale)
+    #        polygon_points.append([scaled_x, scaled_y])
+    #
+    #    # 4. Polygon auf den Bildschirm malen
+    #    pts_array = np.array(polygon_points, np.int32).reshape((-1, 1, 2))
+    #    cv2.polylines(img, [pts_array], isClosed=True, color=color, thickness=thickness, lineType=cv2.LINE_8)
+    #    
+    #    # Zentrumspunkt (auf dem Kamerasensor)
+    #    scaled_hx = round(hx * self.app.current_scale) + self.app.current_img_w
+    #    scaled_hy = round(hy * self.app.current_scale)
+    #    cv2.circle(img, (scaled_hx, scaled_hy), 1, (0, 0, 0) if color != (0,0,0) else (255,255,255), -1, cv2.LINE_8)

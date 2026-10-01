@@ -691,6 +691,15 @@ class LaborApp:
             self.apply_zoom_box(self.zoom_box_start_x, self.zoom_box_start_y, event.x, event.y)
         return "break"
 
+    def abort_zoom_box(self, event=None):
+        """Bricht das Aufziehen des Zoom-Rahmens ab, wenn ESC gedrückt wird."""
+        if getattr(self, 'is_zoom_box_active', False):
+            self.is_zoom_box_active = False
+            self.zoom_box_start_x = None
+            self.zoom_box_start_y = None
+            self.print_log("SYSTEM", "Zoom-Rahmen abgebrochen.")
+            self.renderer.update_image_display(full_rebuild=False) # Löscht die gelbe Box
+
     def on_drag_start(self, event):
         """Normaler Linksklick (Verschieben, Kalibrieren, Pipette)"""
         if getattr(self, 'calib_mode_active', False):
@@ -710,6 +719,10 @@ class LaborApp:
 
     def on_drag_motion(self, event):
         """Verschiebt das Bild normal mit FPS-Drossel"""
+        # ---> DER FIX: Wenn wir im Zoom-Modus sind, leiten wir das Event um! <---
+        if getattr(self, 'is_zoom_box_active', False):
+            return self.on_zoom_box_motion(event)
+
         if getattr(self, 'tk_image', None) is None: return
         
         # ---> DER TÜRSTEHER GEGEN DEN SONDERFALL <---
@@ -735,6 +748,10 @@ class LaborApp:
 
     def on_drag_stop(self, event):
         """Normales Loslassen (Verschieben beenden oder Röntgen-Klick)"""
+        # ---> DER FIX: Wenn wir im Zoom-Modus sind, triggern wir den Zoom! <---
+        if getattr(self, 'is_zoom_box_active', False):
+            return self.on_zoom_box_stop(event)
+
         if getattr(self, 'color_picker_active', False): return
         if getattr(self, 'tk_image', None) is None: return
         
@@ -1190,7 +1207,14 @@ class LaborApp:
 
         if best_shot:
             f_num = best_shot.get('labor_frame_num', '?')
-            self.print_log("SYSTEM", f"🎯 RÖNTGEN-SCAN: Dieser Treffer entstand in BILD #{f_num} (Score: {best_shot.get('score', 0.0):.1f})")
+            
+            # ---> NEU: Dynamische Nachkommastellen auslesen <---
+            decimals = 1
+            if getattr(self, 'package_data', None) and self.package_data.get('config'):
+                decimals = self.package_data['config'].getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
+                
+            # Verschachtelter f-String: .{decimals}f setzt die Länge flexibel
+            self.print_log("SYSTEM", f"🎯 RÖNTGEN-SCAN: Dieser Treffer entstand in BILD #{f_num} (Score: {best_shot.get('score', 0.0):.{decimals}f})")
             
             self.highlighted_shot = {
                 'pos': best_shot['pos'], 
