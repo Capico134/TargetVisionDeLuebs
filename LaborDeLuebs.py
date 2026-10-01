@@ -23,81 +23,9 @@ from DateiManagerDeLuebs import DateiManager
 from StateManagerDeLuebs import StateManager
 
 import LoggerDeLuebs
-from HandbuchDeLuebs import PARAMETER_LEXIKON
+#from HandbuchDeLuebs import PARAMETER_LEXIKON
 
-# ==========================================
-# TOOLTIP-KLASSE FÜR DIE GUI
-# ==========================================
-class ToolTip:
-    def __init__(self, widget, text):
-        self.widget = widget
-        self.text = text
-        self.tip_window = None
-        self.show_id = None
-        self.hide_id = None
-        
-        self.widget.bind("<Enter>", self.enter_widget)
-        self.widget.bind("<Leave>", self.leave_widget)
-        
-    def enter_widget(self, event=None):
-        self.cancel_hide()
-        if not self.tip_window:
-            self.show_id = self.widget.after(500, self.show)
-            
-    def leave_widget(self, event=None):
-        if self.show_id:
-            self.widget.after_cancel(self.show_id)
-            self.show_id = None
-        self.schedule_hide()
-        
-    def enter_tooltip(self, event=None):
-        self.cancel_hide()
-        
-    def leave_tooltip(self, event=None):
-        self.schedule_hide()
-        
-    def schedule_hide(self):
-        self.cancel_hide()
-        # 200ms Gnadenfrist, um mit der Maus vom Label auf den Tooltip zu wechseln
-        self.hide_id = self.widget.after(200, self.hide)
-        
-    def cancel_hide(self):
-        if self.hide_id:
-            self.widget.after_cancel(self.hide_id)
-            self.hide_id = None
-            
-    def show(self):
-        if self.tip_window or not self.text: return
-        x, y, cx, cy = self.widget.bbox("insert")
-        
-        # Etwas weiter weg geschoben, damit große Mauszeiger den Text nicht verdecken
-        x += self.widget.winfo_rootx() + 45
-        y += self.widget.winfo_rooty() + 30
-        
-        self.tip_window = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True) # Entfernt den Windows-Rahmen
-        
-        # ---> NEU: Mache den Tooltip zum König aller Fenster! <---
-        tw.attributes('-topmost', True) 
-        
-        tw.wm_geometry(f"+{x}+{y}")
-        
-        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
-                         background="#ffffe0", relief=tk.SOLID, borderwidth=1,
-                         font=("Arial", 10), wraplength=350, padx=5, pady=5)
-        label.pack()
-        
-        # ---> NEU: Der Tooltip registriert jetzt auch selbst, ob die Maus auf ihm ruht! <---
-        tw.bind("<Enter>", self.enter_tooltip)
-        tw.bind("<Leave>", self.leave_tooltip)
-        label.bind("<Enter>", self.enter_tooltip)
-        label.bind("<Leave>", self.leave_tooltip)
-        
-    def hide(self):
-        if self.tip_window:
-            self.tip_window.destroy()
-            self.tip_window = None
-            
+           
 class DummyDateiManager:
     def __init__(self, app):
         self.app = app

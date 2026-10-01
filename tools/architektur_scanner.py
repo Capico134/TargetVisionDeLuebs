@@ -12,7 +12,7 @@ DIRECT_OPEN_PATTERN = re.compile(r'open\s*\(\s*[\'"][^\'"]*config\.ini[\'"]')
 def scan_project():
     print("🔍 Starte Architektur- & Bypass-Scan...\n")
     
-    py_files = glob.glob("*.py")
+    py_files = glob.glob("..\*.py")
     
     report_lines = [
         "# 🏗️ TargetVision Architektur & Bypass-Scan",
