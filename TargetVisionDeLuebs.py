@@ -2,10 +2,9 @@ import platform
 import cv2
 import numpy as np
 import time
-import math  # <--- NEU: Zwingend nötig für die Ellipsen-Berechnung!
 import subprocess
 import os
-import sys #für log-Ausgabe
+import sys
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -13,7 +12,8 @@ from tkinter import ttk, messagebox
 # --- NEU: Unsere sauberen Manager-Importe ---
 from DateiManagerDeLuebs import DateiManager
 from StateManagerDeLuebs import StateManager
-from DetectionDeLuebs import TargetDetector  # <--- HIER ZIEHT DER NEUE DETECTOR EIN!
+from DetectionDeLuebs import TargetDetector
+from TargetVisionRenderer import TargetVisionRenderer # <--- NEU!
 
 import LoggerDeLuebs
 
@@ -27,11 +27,10 @@ class TargetTracker:
         print(f"🎯 TargetVision DeLübs     [v{self.version}]")
         self.window_name = f"TargetVision DeLuebs - v{self.version}"
         
-        # Erkennt automatisch das Betriebssystem ('Windows', 'Linux', 'Darwin' für Mac)
         is_windows = platform.system() == 'Windows'
         self.nutze_kamera_links = config.getboolean('Kameras', 'nutze_kamera_links')
         self.nutze_kamera_rechts = config.getboolean('Kameras', 'nutze_kamera_rechts')
-        # ---> NEU: Kameraindizes aus der Config laden <---
+        
         cam_left_idx = config.getint('Kameras', 'cam_left_index')
         cam_right_idx = config.getint('Kameras', 'cam_right_index')
 
@@ -40,17 +39,13 @@ class TargetTracker:
         width_r = config.getint('Kameras', 'cam_width_rechts', fallback=1280)
         height_r = config.getint('Kameras', 'cam_height_rechts', fallback=720)        
         
-        # Erkennt automatisch das Betriebssystem ('Windows', 'Linux', 'Darwin' für Mac)
         if is_windows:
-            # Unter Windows DirectShow für schnellen Start nutzen
             self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_DSHOW) if self.nutze_kamera_links else None
             self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_DSHOW) if self.nutze_kamera_rechts else None
         else:
-            # Unter Linux/Mac den nativen Standard-Treiber (V4L2) verwenden
             self.cap_left = cv2.VideoCapture(cam_left_idx) if self.nutze_kamera_links else None
             self.cap_right = cv2.VideoCapture(cam_right_idx) if self.nutze_kamera_rechts else None
         
-        # ---> NEU: OpenCV mit den Werten aus der Config zwingen <---
         if self.nutze_kamera_links and self.cap_left:
             self.cap_left.set(cv2.CAP_PROP_FRAME_WIDTH, width_l)
             self.cap_left.set(cv2.CAP_PROP_FRAME_HEIGHT, height_l)
@@ -59,97 +54,29 @@ class TargetTracker:
             self.cap_right.set(cv2.CAP_PROP_FRAME_WIDTH, width_r)
             self.cap_right.set(cv2.CAP_PROP_FRAME_HEIGHT, height_r)
         
-        
-        # ---> Ersetze den langen Block in der __init__ durch: <---
         # --- GUI-Variablen einmalig initialisieren ---
         self.refresh_gui_settings_from_config()
         
-        # ---> NEU: Wir instanziieren den Detector und übergeben unsere log-Funktion als Callback! <---
         self.detector = TargetDetector(config, datei_manager, state_manager, self.log)
-
-        # =====================================================================
-        # ---> NEU: Logo laden und Mathematik vorbereiten (PERFORMANCE-TRICK) <---
-        # =====================================================================
-        self.logo_rgb_pre = None
-        logo_pfad = "logo.png"
         
-        # ---> NEU: Hier stellst du die gewünschte Größe ein (1.0 = 100%, 0.5 = 50%) <---
-        logo_skalierung = 0.65 
-        
-        if os.path.exists(logo_pfad):
-            # IMREAD_UNCHANGED ist zwingend nötig, um den Alpha-Kanal (Transparenz) mitzuladen!
-            logo_img = cv2.imread(logo_pfad, cv2.IMREAD_UNCHANGED)
-            if logo_img is not None and logo_img.shape[2] == 4: # Hat es 4 Kanäle (B, G, R, Alpha)?
-                
-                # ---> NEU: Einmaliges, hochwertiges Skalieren beim Start <---
-                if logo_skalierung != 1.0:
-                    new_w = int(logo_img.shape[1] * logo_skalierung)
-                    new_h = int(logo_img.shape[0] * logo_skalierung)
-                    # INTER_AREA ist der beste Algorithmus, um Bilder scharf und ohne Treppeneffekte zu verkleinern
-                    logo_img = cv2.resize(logo_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        # ---> NEU: Wir lagern das Zeichnen in den Renderer aus! <---
+        self.renderer = TargetVisionRenderer(self)
 
-                self.logo_h, self.logo_w = logo_img.shape[:2]
-                
-                # Wir trennen die Transparenz (Kanal 3) von der Farbe (Kanal 0,1,2)
-                alpha_kanal = (logo_img[:, :, 3] / 255.0).astype(np.float32)
-                
-                # Wir machen aus der flachen Alpha-Matrix eine 3D-Matrix (für B, G und R)
-                self.logo_alpha = np.dstack([alpha_kanal]*3)
-                self.logo_inv_alpha = 1.0 - self.logo_alpha
-                
-                # Wir berechnen die Logo-Farbe schon VORAB multipliziert mit ihrer Transparenz!
-                self.logo_rgb_pre = (logo_img[:, :, :3].astype(np.float32) * self.logo_alpha)
-                self.log("SYSTEM", f"Logo ({self.logo_w}x{self.logo_h}) erfolgreich als Overlay geladen.")
-        # =====================================================================
-
-        #self.state_left = self.sm.state_left
-        #self.state_right = self.sm.state_right
-        
         self.current_crops = {'left': (0,0,0,0), 'right': (0,0,0,0)}
         self.raw_dims = {'left': (1,1), 'right': (1,1)}
-        self.scale_x = 1.0
-        self.scale_y = 1.0
-        self.w_left_displayed = 0
         self.last_frame_l = None
         self.last_frame_r = None
-        # ---> NEU: Variablen für den FPS-Counter <---
-        self.fps = 0.0
-        self.prev_frame_time = time.time()
         
-        # ---> NEU: Das Kurzzeitgedächtnis gehört in die GUI! <---
         self.calib_feedback_left = None
         self.calib_feedback_right = None
         
-        self.msg_left = "System gestartet. Warte..."
-        self.msg_right = "System gestartet. Warte..."
-        
-        self.btn_left_coords = None
-        self.btn_right_coords = None
-        self.btn_edit_left_coords = None  # <--- NEU
-        self.btn_edit_right_coords = None # <--- NEU
-        # ---> NEU: Platzhalter für den Zentrum-Button <---
-        self.btn_center_left_coords = None
-        self.btn_center_right_coords = None        
-
-        self.btn_exit_coords = None
-        self.btn_zip_coords = None
-        self.btn_highscore_coords = None
-        self.btn_save_coords = None
-        
         self.trigger_reset_left = False
         self.trigger_reset_right = False
-        self.trigger_edit_left = False    # <--- NEU
-        self.trigger_edit_right = False   # <--- NEU
+        self.trigger_edit_left = False
+        self.trigger_edit_right = False
         self.trigger_exit = False
-        self.active_picker = None  # <--- NEU: Speichert, welche Zeile gerade auf einen Klick wartet
+        self.active_picker = None 
         
-        self.show_all_rings = False
-        self.btn_rings_coords = None
-        
-        # ---> NEU: Kurzzeitgedächtnis für laufende Kamerafahrten <---
-        self.zoom_animation = {'left': None, 'right': None}
-        
-        # ---> NEU: Die elegante Messagebox-Prüfung ganz am Ende des Startvorgangs <---
         if hasattr(self.config, 'healed_parameters') and self.config.healed_parameters:
             self.show_config_alert()
 
@@ -160,23 +87,15 @@ class TargetTracker:
         self.ausloeser_durch_erschuetterung = self.config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.poll_ms = self.config.getint('Timing', 'poll_ms', fallback=33)
         self.vollbild = self.config.getboolean('Anzeige', 'vollbild', fallback=False)
-        self.darstellung_ohne_weissabgleich = self.config.getboolean('Anzeige', 'darstellung_ohne_weissabgleich', fallback=True)
-        self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
-        self.serien_gruppierung = self.config.getint('Anzeige', 'serien_gruppierung', fallback=0)
-        self.fischaugenkorrektur_links = self.config.getfloat('Kameras', 'fischaugenkorrektur_links', fallback=0.0)
-        self.fischaugenkorrektur_rechts = self.config.getfloat('Kameras', 'fischaugenkorrektur_rechts', fallback=0.0)
-        # ---> NEU: Zoom-Parameter für die Kamerafahrt <---
-        self.treffer_zoom = self.config.getfloat('Anzeige', 'treffer_zoom', fallback=3.0)
-        self.treffer_anzeigedauer = self.config.getfloat('Anzeige', 'treffer_anzeigedauer', fallback=4.0)
-        # ---> NEU: Nachkommastellen für die GUI-Formatierung laden <---
-        self.nachkommastellen = self.config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
+        
+        # Dem Renderer Bescheid geben, falls er schon existiert
+        if hasattr(self, 'renderer'):
+            self.renderer.refresh_settings()
 
     def show_config_alert(self):
-        """Zeigt eine einmalige Warnung, falls beim Start Parameter mit Fallbacks gerettet wurden."""
         healed_list = self.config.healed_parameters
         count = len(healed_list)
         
-        # Liste für die Ausgabe formatieren (max. 10 anzeigen, damit die Box lesbar bleibt)
         display_list = "\n".join([f"• {p}" for p in healed_list[:10]])
         if count > 10:
             display_list += f"\n• ... und {count - 10} weitere."
@@ -196,30 +115,18 @@ class TargetTracker:
         temp_root.attributes('-topmost', True)
         messagebox.showinfo(titel, text, master=temp_root)
         temp_root.destroy()
-        
-        # Leeren, damit die Box bei Handover-Updates im laufenden Betrieb nicht nochmal poppt
         self.config.healed_parameters.clear()
             
-    # ---> NEU: Der Parameter show_gui=False <---
     def log(self, side, text, show_gui=False):
         timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
         log_msg = f"[{timestamp}] [{side.upper()}] {text}"
         
-        #print(log_msg)
         self.dm.write_log(log_msg)
             
         if show_gui:
-            # ---> NEU: Filtert alle Emojis (Zeichen mit sehr hohem Unicode-Wert) heraus, 
-            # lässt aber normale Buchstaben und deutsche Umlaute (ä, ö, ü) in Ruhe! <---
             gui_text = "".join(c for c in text if ord(c) < 1000).strip()
-            
-            # Text kürzen, falls zu lang
             gui_text = gui_text if len(gui_text) <= 45 else gui_text[:42] + "..."
-            
-            if side == 'left' or side == 'SYSTEM':
-                self.msg_left = gui_text
-            if side == 'right' or side == 'SYSTEM':
-                self.msg_right = gui_text
+            self.renderer.set_message(side, gui_text)
 
     def apply_crop(self, frame, side):
         if frame is None: return None
@@ -238,40 +145,15 @@ class TargetTracker:
         if y1 >= y2 or x1 >= x2: return frame 
         return frame[y1:y2, x1:x2]
 
-    def trigger_zoom(self, side, frame):
-        """Startet die Ease-In-Out Animation auf den letzten Treffer dieser Kamera."""
-        self.log("SYSTEM", f"🎬 ZOOM TRIGGER empfangen für {side.upper()}! (Config: {self.treffer_zoom}x für {self.treffer_anzeigedauer}s)")
-        
-        # Wenn der Zoom-Faktor auf 1 steht, ignorieren wir die Animation komplett!
-        if self.treffer_zoom <= 1.0:
-            self.log("SYSTEM", "🎬 Zoom abgebrochen, da Faktor in der Config <= 1.0 ist.")
-            return
-            
-        side_shots = self.sm.get_shots_for_side(side)
-        if side_shots:
-            latest = side_shots[-1] # Den allerletzten Treffer holen
-            
-            self.zoom_animation[side] = {
-                'start_time': time.time(),
-                'target_x': latest['pos'][0],
-                'target_y': latest['pos'][1],
-                'duration': self.treffer_anzeigedauer,
-                'max_zoom': self.treffer_zoom,
-                # ---> NEU: Wir kopieren das perfekte Bild direkt, pfeilschnell aus dem RAM! <---
-                'frozen_frame': frame.copy() 
-            }
-
     def process_camera(self, frame, state):
         if frame is None: return
 
-        # =========================================================================
-        # ---> NEU: Zoom-Blocker! (Legt die Erkennung schlafen, bis Kamerafahrt endet)
-        # =========================================================================
-        anim = self.zoom_animation[state.side]
+        # Zoom-Blocker prüft im Renderer
+        anim = self.renderer.zoom_animation.get(state.side)
         if anim:
             if time.time() - anim['start_time'] < anim['duration']:
-                return  # Wir verwerfen das Live-Bild und brechen die Analyse hier ab!
-            self.zoom_animation[state.side] = None
+                return  
+            self.renderer.zoom_animation[state.side] = None
 
         if not state.is_initialized:
             bg_visible, bg_percent = state.is_background_visible(frame)
@@ -308,8 +190,7 @@ class TargetTracker:
                         
                         shot_found = self.detector.check_background_and_evaluate(frame, state) 
                         if shot_found: 
-                            self.trigger_zoom(state.side, frame)
-                            # ---> NEU: Puffer leeren, damit die andere Kamera sofort wieder "live" ist!
+                            self.renderer.trigger_zoom(state.side, frame)
                             self.flush_camera_buffers(12) 
                         self.log(state.side, "-" * 60)
         else:
@@ -319,15 +200,8 @@ class TargetTracker:
                 
                 shot_found = self.detector.check_background_and_evaluate(frame, state)
                 if shot_found: 
-                    self.trigger_zoom(state.side, frame)
-                    # ---> NEU: Puffer leeren
+                    self.renderer.trigger_zoom(state.side, frame)
                     self.flush_camera_buffers(12)
-
-    def enhance_color_for_display(self, frame):
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
-        hsv[:, :, 1] = np.clip(hsv[:, :, 1] * 1.5, 0, 255) 
-        hsv[:, :, 2] = np.clip(hsv[:, :, 2] * 1.1, 0, 255) 
-        return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
 
     def read_frames(self):
         frame_l, frame_r = None, None
@@ -340,17 +214,14 @@ class TargetTracker:
         return frame_l, frame_r
 
     def flush_camera_buffers(self, frames_to_drop=5):
-        """Leert den OpenCV-Puffer, um das System nach Blockaden auf 100% Live-Zeit zu synchronisieren."""
         for _ in range(frames_to_drop):
             if self.nutze_kamera_links and self.cap_left: self.cap_left.read()
             if self.nutze_kamera_rechts and self.cap_right: self.cap_right.read()
     
     def apply_handover(self, zip_path):
-        """Liest das Handover-Paket des Labors und injiziert die perfektionierte Historie ins Live-System."""
         package = self.dm.import_match_package(zip_path)
         if not package: return
         
-        # 1. Config.ini NEU in den RAM laden und GUI-Variablen updaten
         self.config.read(self.dm.CONFIG_FILE, encoding='utf-8')
         
         neu_links = self.config.getboolean('Kameras', 'nutze_kamera_links', fallback=True)
@@ -363,23 +234,14 @@ class TargetTracker:
             self.trigger_exit = True
             return
             
-        # =========================================================================
-        # 2. DIE MAGIE: Single Source of Truth aktualisieren
-        # =========================================================================
-        # GUI updaten
         self.refresh_gui_settings_from_config()
-        # Engine updaten (ohne ihre Referenzbilder zu löschen!)
         self.detector.refresh_settings_from_config()
 
-        # 3. Referenz-Feedback für die GUI neu berechnen (falls Parameter geändert wurden)
         if self.detector.ref_left is not None:
             self.calib_feedback_left = self.detector.ninja_kalibrierungs_check(self.detector.ref_left, 'left')
         if self.detector.ref_right is not None:
             self.calib_feedback_right = self.detector.ninja_kalibrierungs_check(self.detector.ref_right, 'right')
 
-        # =========================================================================
-        # 4. BILDER & MASKEN: Die Labor-Wahrheit einpflanzen
-        # =========================================================================
         for img_name, img_data in package['images'].items():
             base_name = os.path.basename(img_name)
             if base_name.startswith("ZZZ_Live_Snapshot"):
@@ -394,12 +256,10 @@ class TargetTracker:
             state = self.sm.state_left if s == 'left' else self.sm.state_right
             if not state: continue
             
-            # Kurzzeitgedächtnis flushen
             state.prev_gray = None
             state.is_moving = False
             state.still_counter = 0
             
-            # Diff-Gesamt (Die "Pflicht"-Maske) des Labors hart übernehmen
             mask_name = next((f for f in package['images'] if f"diff_gesamt_{s}" in f or f"cumulative_startmask_{s}" in f), None)
             if mask_name:
                 mask_bgr = package['images'][mask_name]
@@ -414,8 +274,6 @@ class TargetTracker:
             self.dm.clear_debug_images(side)
         
         state = self.sm.state_left if side == 'left' else self.sm.state_right
-        
-        # ---> NEU: Wir merken uns, dass dieses Match auf einer sauberen Scheibe beginnt
         state.is_fortsetzung = False 
         
         if frame is not None:
@@ -425,7 +283,7 @@ class TargetTracker:
             state.target_present = True
             
         self.log(side, "MANUELLER RESET: Referenz gelockt (Pausenerkennung bleibt AKTIV).", True)
-        self.log(side, "-" * 60) # <--- NEU: Trenner für Reset-Referenz
+        self.log(side, "-" * 60) 
 
     def process_resets(self, frame_l, frame_r):
         if self.trigger_reset_left:
@@ -436,819 +294,26 @@ class TargetTracker:
             self.trigger_reset_right = False
 
     def show_pause_screen(self, message):
-        """Zeigt einen sauberen Wartebildschirm an und erzwingt eine normale Fenstergröße."""
-        # 1. Erstelle ein dunkles 1280x720 Bild
         pause_frame = np.full((720, 1280, 3), (35, 35, 35), dtype=np.uint8)
-        
         font = cv2.FONT_HERSHEY_SIMPLEX
         
-        # Text 1: Hauptnachricht (Zentriert)
         (w1, h1), _ = cv2.getTextSize(message, font, 1.2, 2)
         cv2.putText(pause_frame, message, ((1280 - w1) // 2, 320), font, 1.2, (50, 200, 255), 2, cv2.LINE_AA)
         
-        # Text 2: Sub-Nachricht (Zentriert)
         text2 = "Bitte schließe das andere Fenster, um hier fortzufahren."
         (w2, h2), _ = cv2.getTextSize(text2, font, 0.8, 1)
         cv2.putText(pause_frame, text2, ((1280 - w2) // 2, 400), font, 0.8, (180, 180, 180), 1, cv2.LINE_AA)
         
-        # 2. Fenster auf Normalmodus zwingen (falls Vollbild aktiv)
         if self.vollbild:
             cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
-            # 3. Zwinge das Fenster auf 1280x720 (beseitigt die wilden Deformationen!)
             cv2.resizeWindow(self.window_name, 1280, 720)
         
-        # 4. Bild anzeigen und rendern lassen, BEVOR die Schleife alles einfriert
         cv2.imshow(self.window_name, pause_frame)
         cv2.waitKey(100)
 
-    def draw_camera_overlay(self, view, side, start_x, frame_w, total_h):
-        cv2.rectangle(view, (start_x, total_h - 40), (start_x + frame_w, total_h), (30, 30, 30), -1)
-        msg = self.msg_left if side == 'left' else self.msg_right
-        cv2.putText(view, msg, (start_x + 10, total_h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1, cv2.LINE_AA)
-        
-        bx1, by1 = start_x + frame_w - 110, total_h - 35
-        bx2, by2 = start_x + frame_w - 10, total_h - 5
-        cv2.rectangle(view, (bx1, by1), (bx2, by2), (70, 70, 180), -1)
-        cv2.rectangle(view, (bx1, by1), (bx2, by2), (255, 255, 255), 1)
-        cv2.putText(view, "Reset", (bx1 + 25, by1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-        
-        # ---> NEU: Edit-Button links daneben <---
-        ex1, ey1 = start_x + frame_w - 220, total_h - 35
-        ex2, ey2 = start_x + frame_w - 120, total_h - 5
-        cv2.rectangle(view, (ex1, ey1), (ex2, ey2), (70, 150, 70), -1)
-        cv2.rectangle(view, (ex1, ey1), (ex2, ey2), (255, 255, 255), 1)
-        cv2.putText(view, "Edit", (ex1 + 35, ey1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-        
-        # ---> NEU: Zentrum-Button links neben Edit <---
-        cx1, cy1 = start_x + frame_w - 330, total_h - 35
-        cx2, cy2 = start_x + frame_w - 230, total_h - 5
-        cv2.rectangle(view, (cx1, cy1), (cx2, cy2), (180, 130, 70), -1) # Dezentes Blau (BGR)
-        cv2.rectangle(view, (cx1, cy1), (cx2, cy2), (255, 255, 255), 1)
-        cv2.putText(view, "Zentrum", (cx1 + 15, cy1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-        
-        if side == 'left':
-            self.btn_left_coords = (bx1, by1, bx2, by2)
-            self.btn_edit_left_coords = (ex1, ey1, ex2, ey2)
-            self.btn_center_left_coords = (cx1, cy1, cx2, cy2) # <--- NEU
-        else:
-            self.btn_right_coords = (bx1, by1, bx2, by2)
-            self.btn_edit_right_coords = (ex1, ey1, ex2, ey2) 
-            self.btn_center_right_coords = (cx1, cy1, cx2, cy2) # <--- NEU
-
-    def update_gui(self, frame_l, frame_r, blink_state):
-        
-        # Hilfsfunktion, damit wir die Farben (falls gewünscht) für beide Bild-Typen aufhübschen
-        def prepare_disp(f, use_cam):
-            if not use_cam or f is None: return f
-            if getattr(self, 'darstellung_ohne_weissabgleich', True):
-                return self.enhance_color_for_display(f)
-            return f
-
-        # 1. Die echten Live-Bilder vorbereiten (laufen im Hintergrund weiter)
-        disp_l_live = prepare_disp(frame_l, self.nutze_kamera_links)
-        disp_r_live = prepare_disp(frame_r, self.nutze_kamera_rechts)
-        
-        # 2. Die eingefrorenen Standbilder laden (falls eine Kamerafahrt läuft)
-        anim_l = getattr(self, 'zoom_animation', {}).get('left')
-        disp_l_frozen = prepare_disp(anim_l['frozen_frame'], self.nutze_kamera_links) if (anim_l and anim_l.get('frozen_frame') is not None) else disp_l_live
-            
-        anim_r = getattr(self, 'zoom_animation', {}).get('right')
-        disp_r_frozen = prepare_disp(anim_r['frozen_frame'], self.nutze_kamera_rechts) if (anim_r and anim_r.get('frozen_frame') is not None) else disp_r_live
-            
-        frames_to_stack = []
-        
-        ref_h, ref_w = 480, 640
-        if disp_l_live is not None: ref_h, ref_w = disp_l_live.shape[:2]
-        elif disp_r_live is not None: ref_h, ref_w = disp_r_live.shape[:2]
-
-        def create_dummy_frame(side_name):
-            dummy = np.zeros((ref_h, ref_w, 3), dtype=np.uint8)
-            text = f"KAMERA GETRENNT ({side_name})"
-            cv2.putText(dummy, text, (30, ref_h // 2), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2, cv2.LINE_AA)
-            return dummy
-
-        zoom_params = {'left': (1.0, 0.0, 0.0), 'right': (1.0, 0.0, 0.0)}
-        
-        # =========================================================================
-        # ---> NEU: Feste Kino-Zeiten, Pre-Pause und Crossfade-Magie! <---
-        # =========================================================================
-        def apply_cinematic_zoom(side_str, disp_frozen, disp_live):
-            anim = getattr(self, 'zoom_animation', {}).get(side_str)
-            if not anim or disp_frozen is None: return disp_live, 1.0, 0.0, 0.0
-            
-            elapsed = time.time() - anim['start_time']
-            dur = anim['duration']
-            
-            if elapsed >= dur:
-                self.zoom_animation[side_str] = None
-                return disp_live, 1.0, 0.0, 0.0
-                
-            # Deine angepassten Timings inkl. neuer Vorlaufzeit (Pre-Pause)
-            t_pre_pause = 1.0 if dur >= 2.0 else dur * 0.05
-            t_in = 1.5 if dur >= 2.0 else dur * 0.15
-            t_out = 1.2 if dur >= 2.0 else dur * 0.15
-            t_pause = 0.75 if dur >= 2.0 else dur * 0.1
-            t_fade = 0.75 if dur >= 2.0 else dur * 0.1
-            
-            # Die Phasen-Grenzen (auf der Zeitachse vorwärts gerechnet)
-            t_in_end = t_pre_pause + t_in
-            t_hold_end = dur - t_out - t_pause - t_fade
-            t_out_end = dur - t_pause - t_fade
-            t_pause_end = dur - t_fade
-            
-            z = 1.0
-            ease = 0.0
-            alpha_frozen = 1.0 # 1.0 = 100% Standbild, 0.0 = 100% Live-Bild
-            
-            if elapsed <= t_pre_pause:
-                # Phase 0: Durchatmen! CPU stabilisiert sich, Puffer werden geleert
-                ease = 0.0
-            elif elapsed <= t_in_end:
-                # Phase 1: Butterweich Reinzoomen
-                progress = (elapsed - t_pre_pause) / t_in
-                ease = progress * progress * (3 - 2 * progress)
-            elif elapsed <= t_hold_end:
-                # Phase 2: Ruhig Halten (Der Blick auf den Treffer)
-                ease = 1.0
-            elif elapsed <= t_out_end:
-                # Phase 3: Butterweich Rauszoomen
-                progress = 1.0 - ((elapsed - t_hold_end) / t_out)
-                ease = progress * progress * (3 - 2 * progress)
-            elif elapsed <= t_pause_end:
-                # Phase 4: Kurz bei 1x verweilen
-                ease = 0.0
-            else:
-                # Phase 5: Der sanfte Crossfade ins Live-Bild
-                ease = 0.0
-                fade_progress = (elapsed - t_pause_end) / t_fade
-                alpha_frozen = max(0.0, 1.0 - fade_progress)
-                
-            z = 1.0 + (anim['max_zoom'] - 1.0) * ease
-            
-            # ---> Die Überblend-Logik (Crossfade) <---
-            if z <= 1.001 and alpha_frozen == 1.0:
-                # Während der Pre-Pause und Post-Pause sparen wir uns die Matrix-Rechnung!
-                return disp_frozen, 1.0, 0.0, 0.0
-            elif alpha_frozen < 1.0:
-                if disp_live is not None and disp_frozen.shape == disp_live.shape:
-                    blended = cv2.addWeighted(disp_frozen, alpha_frozen, disp_live, 1.0 - alpha_frozen, 0)
-                    return blended, 1.0, 0.0, 0.0
-                return disp_live, 1.0, 0.0, 0.0
-                
-            # Wenn wir hier sind, zoomen wir gerade! (Matrix-Verzerrung)
-            h, w = disp_frozen.shape[:2]
-            scx, scy = w / 2.0, h / 2.0
-            ccx = scx + (anim['target_x'] - scx) * ease
-            ccy = scy + (anim['target_y'] - scy) * ease
-            ox = w / 2.0 - z * ccx
-            oy = h / 2.0 - z * ccy
-            
-            M = np.float32([[z, 0, ox], [0, z, oy]])
-            disp_img = cv2.warpAffine(disp_frozen, M, (w, h), flags=cv2.INTER_LINEAR)
-                
-            return disp_img, z, ox, oy
-
-        if self.nutze_kamera_links:
-            disp_l, zl, oxl, oyl = apply_cinematic_zoom('left', disp_l_frozen, disp_l_live)
-            zoom_params['left'] = (zl, oxl, oyl)
-            frames_to_stack.append(disp_l if disp_l is not None else create_dummy_frame("LINKS"))
-        
-        if self.nutze_kamera_rechts:
-            disp_r, zr, oxr, oyr = apply_cinematic_zoom('right', disp_r_frozen, disp_r_live)
-            zoom_params['right'] = (zr, oxr, oyr)
-            frames_to_stack.append(disp_r if disp_r is not None else create_dummy_frame("RECHTS"))
-
-        if not frames_to_stack: return
-
-        max_h = max([f.shape[0] for f in frames_to_stack])
-        padded_frames = []
-        for f in frames_to_stack:
-            h, w = f.shape[:2]
-            if h < max_h:
-                pad = np.zeros((max_h, w, 3), dtype=np.uint8)
-                pad[0:h, 0:w] = f
-                padded_frames.append(pad)
-            else:
-                padded_frames.append(f)
-                
-        combined_view = np.hstack(padded_frames)
-        orig_h, orig_w = combined_view.shape[:2]
-        
-        self.w_left_displayed = frames_to_stack[0].shape[1] if self.nutze_kamera_links else 0
-        
-        self.scale_x, self.scale_y = 1.0, 1.0
-        try:
-            rect = cv2.getWindowImageRect(self.window_name)
-            if rect[2] > 0 and rect[3] > 0:
-                win_w, win_h = rect[2], rect[3]
-                
-                # =========================================================
-                # ---> NEU: Proportionale Skalierung (Letterboxing) <---
-                # =========================================================
-                # Berechne den maximalen Skalierungsfaktor (damit es ins Fenster passt, aber nicht verzerrt)
-                scale = min(win_w / orig_w, win_h / orig_h)
-                
-                # Neue, proportionale Größe berechnen
-                new_w = int(orig_w * scale)
-                new_h = int(orig_h * scale)
-                
-                # Das Bild proportional vergrößern
-                resized_view = cv2.resize(combined_view, (new_w, new_h))
-                
-                # Einen schwarzen Hintergrund (Leinwand) in der tatsächlichen Fenstergröße erstellen
-                #canvas = np.zeros((win_h, win_w, 3), dtype=np.uint8)
-                # Einen dunklen Grauhintergrund (z. B. BGR 40, 40, 40) statt reinem Schwarz erstellen
-                canvas = np.full((win_h, win_w, 3), (35, 35, 35), dtype=np.uint8)
-                
-                # Berechne die Position, um das Bild zu zentrieren (Letterbox-Ränder)
-                x_offset = (win_w - new_w) // 2
-                y_offset = (win_h - new_h) // 2
-                
-                # Das vergrößerte Bild auf den schwarzen Hintergrund kleben
-                canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized_view
-                
-                # Die Variable austauschen, damit der Rest des Codes mit der Leinwand weiterarbeitet
-                combined_view = canvas
-                
-                # X und Y Scale sind nun identisch (da proportional) UND wir müssen den Offset speichern!
-                self.scale_x = scale
-                self.scale_y = scale
-                self.pad_x = x_offset # WICHTIG für das Zeichnen von Treffern und Klicks!
-                self.pad_y = y_offset
-            else:
-                win_w, win_h = orig_w, orig_h
-                self.pad_x = 0
-                self.pad_y = 0
-        except Exception:
-            win_w, win_h = orig_w, orig_h
-            self.pad_x = 0
-            self.pad_y = 0
-            
-        # Den Offset müssen wir im Kopf behalten, da die Skalierung (avg_scale) jetzt proportional ist
-        avg_scale = self.scale_x # self.scale_x und _y sind identisch
-        
-        # =========================================================================
-        # ---> NEU: ROI-CLIPPING (Unsichtbare Scheren gegen überlappende Elemente)
-        # =========================================================================
-        scaled_w_left = int(self.w_left_displayed * self.scale_x)
-        new_h = int(orig_h * self.scale_y)
-        
-        camera_rois = {}
-        roi_offsets = {}
-        
-        if self.nutze_kamera_links:
-            rx = self.pad_x
-            rw = scaled_w_left
-            camera_rois['left'] = combined_view[self.pad_y : self.pad_y + new_h, rx : rx + rw]
-            roi_offsets['left'] = rx
-            
-        if self.nutze_kamera_rechts:
-            rx = self.pad_x + scaled_w_left if self.nutze_kamera_links else self.pad_x
-            rw = int((orig_w - self.w_left_displayed) * self.scale_x)
-            camera_rois['right'] = combined_view[self.pad_y : self.pad_y + new_h, rx : rx + rw]
-            roi_offsets['right'] = rx
-
-        # ---> TREFFER ZEICHNEN (Nach Seite getrennt, in ihre ROIs gesperrt) <---
-        for side in ['left', 'right']:
-            if side not in camera_rois: continue # Nur aktive Kameras bearbeiten
-            
-            roi = camera_rois[side]
-            roi_off_x = roi_offsets[side]
-            
-            # =========================================================================
-            # ---> NEU: ELA-Optimierung! Wir nutzen den OFFIZIELLEN Radius aus der JSON,
-            # aber fallen auf den Slider-Wert zurück, wenn die Ringwertung aus ist!
-            # =========================================================================
-            aktive_scheibe = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-            targets = self.dm.load_targets() 
-            
-            if self.ringwertung_aktiv and aktive_scheibe in targets:
-                offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
-            else:
-                offizielles_kaliber_mm = self.config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
-            
-            seite_str = "links" if side == 'left' else "rechts"
-            px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-            px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-            avg_px = (px_x + px_y) / 2.0
-            
-            # Die Basis-Korrekturwerte für die aktuelle Seite holen
-            korrektur = self.fischaugenkorrektur_links if side == 'left' else self.fischaugenkorrektur_rechts
-            feedback = self.calib_feedback_left if side == 'left' else self.calib_feedback_right
-            
-            # =========================================================================
-            # ---> NEU: Die Magic-Number und ihre Radius-Kompensation <---
-            # =========================================================================
-            hit_thickness = 2
-            thickness_kompensation = hit_thickness / 2.0
-            
-            cal_r_offiziell = (offizielles_kaliber_mm / 2.0) * avg_px
-            final_radius_raw = cal_r_offiziell * zoom_params[side][0] * self.scale_x
-            
-            # Kompensation vom Fallback-Kreis abziehen
-            final_radius = max(2, int(round(final_radius_raw - thickness_kompensation)))
-            
-            side_shots = self.sm.get_shots_for_side(side)
-            for idx, shot in enumerate(side_shots):
-                x, y = shot['pos']
-                
-                z, ox, oy = zoom_params[side]
-                x_local = x * z + ox
-                y_local = y * z + oy
-                
-                if shot['side'] == 'right' and self.nutze_kamera_links:
-                    x_local += self.w_left_displayed
-                    
-                final_x = int(round(x_local * self.scale_x)) + self.pad_x
-                final_y = int(round(y_local * self.scale_y)) + self.pad_y
-                
-                # Koordinaten relativ zum zugeschnittenen Kamerabild
-                draw_x = final_x - roi_off_x
-                draw_y = final_y - self.pad_y
-                
-                color = (0, 0, 255) if (shot.get('is_new', False) and blink_state) else (255, 100, 0)
-                
-                # =========================================================================
-                # ---> DER FIX: Fischaugenkorrigierte Ellipse für ALLE Treffer! <---
-                # =========================================================================
-                if feedback and 'cx' in feedback and 'cy' in feedback:
-                    cx, cy = feedback['cx'], feedback['cy']
-                    
-                    dx_mm = (x - cx) / px_x
-                    dy_mm = (y - cy) / px_y
-                    r_mm = math.hypot(dx_mm, dy_mm)
-                    
-                    if r_mm > 0.05:
-                        angle_deg = math.degrees(math.atan2(dy_mm, dx_mm))
-                        scale_radial = 1.0 + (2.0 * r_mm * korrektur)
-                        scale_tangential = 1.0 + (r_mm * korrektur)
-                        
-                        r_shot_mm = offizielles_kaliber_mm / 2.0
-                        
-                        # Die rohen Fließkomma-Radien auf dem Monitor berechnen
-                        rx_raw = (r_shot_mm * scale_radial * px_x) * z * self.scale_x
-                        ry_raw = (r_shot_mm * scale_tangential * px_y) * z * self.scale_y
-                        
-                        # Kompensation abziehen und erst dann runden!
-                        rx = int(round(rx_raw - thickness_kompensation))
-                        ry = int(round(ry_raw - thickness_kompensation))
-                        
-                        cv2.ellipse(roi, (draw_x, draw_y), (max(2, rx), max(2, ry)), angle_deg, 0, 360, color, hit_thickness, cv2.LINE_AA)
-                    else:
-                        cv2.circle(roi, (draw_x, draw_y), final_radius, color, hit_thickness, cv2.LINE_AA)
-                else:
-                    cv2.circle(roi, (draw_x, draw_y), final_radius, color, hit_thickness, cv2.LINE_AA)
-                
-                # ---> TEXT (Treffer-Nummer) ZEICHNEN <---
-                if self.ringwertung_aktiv:
-                    id_str = str(idx + 1)
-                    font = cv2.FONT_HERSHEY_SIMPLEX
-                    font_scale = 0.5
-                    thickness = 1
-                    
-                    (text_w, text_h), _ = cv2.getTextSize(id_str, font, font_scale, thickness)
-                    text_x = draw_x - (text_w // 2)
-                    text_y = draw_y + (text_h // 2)
-                    
-                    cv2.putText(roi, id_str, (text_x, text_y), font, font_scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
-                    text_color = (255, 255, 255) if not shot.get('is_new', False) else (200, 200, 255)
-                    cv2.putText(roi, id_str, (text_x, text_y), font, font_scale, text_color, thickness, cv2.LINE_AA)
-
-        # ---> CAMERA OVERLAY ZEICHNEN (Buttons unten an der Kamera) <---
-        if self.nutze_kamera_links:
-            self.draw_camera_overlay(combined_view, 'left', self.pad_x, scaled_w_left, self.pad_y + new_h)
-        if self.nutze_kamera_rechts:
-            self.draw_camera_overlay(combined_view, 'right', self.pad_x + scaled_w_left, int((orig_w - self.w_left_displayed) * self.scale_x), self.pad_y + new_h)
-
-        # --- VISUELLES FEEDBACK (15s Kalibrierung) ---
-        current_time = time.time()
-        for s, feedback in [('left', self.calib_feedback_left), 
-                            ('right', self.calib_feedback_right)]:
-            if feedback and (current_time - feedback['time'] < 15.0):
-                if s in camera_rois:
-                    roi = camera_rois[s]
-                    roi_off_x = roi_offsets[s]
-                    
-                    z, ox, oy = zoom_params[s]
-                    offset_x = 0 if s == 'left' else scaled_w_left
-                    
-                    fb_cx_local = feedback['cx'] * z + ox
-                    fb_cy_local = feedback['cy'] * z + oy
-                    fb_red_cx_local = feedback['red_cx'] * z + ox
-                    fb_red_cy_local = feedback['red_cy'] * z + oy
-                    
-                    fb_cx = int(round(fb_cx_local * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
-                    fb_cy = int(round(fb_cy_local * self.scale_y)) + getattr(self, 'pad_y', 0)
-                    
-                    fb_red_cx = int(round(fb_red_cx_local * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
-                    fb_red_cy = int(round(fb_red_cy_local * self.scale_y)) + getattr(self, 'pad_y', 0)
-                    
-                    # ---> Mapping auf ROI <---
-                    draw_cx = fb_cx - roi_off_x
-                    draw_cy = fb_cy - self.pad_y
-                    draw_red_cx = fb_red_cx - roi_off_x
-                    draw_red_cy = fb_red_cy - self.pad_y
-                    
-                    fb_red_rx = int(round(feedback['red_rx'] * z * self.scale_x))
-                    fb_red_ry = int(round(feedback['red_ry'] * z * self.scale_y))
-
-                    def draw_dashed_ellipse(img, center, rx, ry, color):
-                        if rx <= 0 or ry <= 0: return
-                        for angle in range(0, 360, 6):
-                            cv2.ellipse(img, center, (int(rx), int(ry)), 0, angle, angle + 2, color, 1, cv2.LINE_AA)
-
-                    if feedback.get('show_red', False) or feedback.get('show_red') == True:
-                        draw_dashed_ellipse(roi, (draw_red_cx, draw_red_cy), fb_red_rx, fb_red_ry, (0, 0, 255))
-                    
-                    seite_str = "links" if s == 'left' else "rechts"
-                    px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-                    px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-                    korrektur = self.fischaugenkorrektur_links if s == 'left' else self.fischaugenkorrektur_rechts
-                    
-                    aktive_scheibe = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-                    targets = self.dm.load_targets()
-                    
-                    if aktive_scheibe in targets:
-                        target_data = targets[aktive_scheibe]
-                        spiegel_mm = float(target_data.get('spiegel_durchmesser_mm', 30.5))
-                        
-                        r_mm_base = spiegel_mm / 2.0
-                        r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur))
-                        fb_ideal_rx = round((r_mm_draw * px_x) * z * self.scale_x)
-                        fb_ideal_ry = round((r_mm_draw * px_y) * z * self.scale_y)
-                    else:
-                        fb_ideal_rx = int(round(feedback['ideal_rx'] * self.scale_x))
-                        fb_ideal_ry = int(round(feedback['ideal_ry'] * self.scale_y))
-
-                    draw_dashed_ellipse(roi, (draw_cx, draw_cy), fb_ideal_rx, fb_ideal_ry, (0, 255, 0))
-                    
-                    cross_size = 6
-                    cv2.line(roi, (draw_cx - cross_size, draw_cy), (draw_cx + cross_size, draw_cy), (0, 255, 0), 1, cv2.LINE_AA)
-                    cv2.line(roi, (draw_cx, draw_cy - cross_size), (draw_cx, draw_cy + cross_size), (0, 255, 0), 1, cv2.LINE_AA)
-                    
-                    if aktive_scheibe in targets:
-                        ringe = target_data.get('ringe_durchmesser_mm', {})
-                        if ringe:
-                            alle_durchmesser = sorted([float(d) for d in ringe.values()], reverse=True)
-                            aeusserste_zwei = alle_durchmesser[:2]
-                            
-                            for d_mm in aeusserste_zwei:
-                                r_mm_base = d_mm / 2.0
-                                r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur))
-                                rx = round((r_mm_draw * px_x) * self.scale_x)
-                                ry = round((r_mm_draw * px_y) * self.scale_y)
-                                draw_dashed_ellipse(roi, (draw_cx, draw_cy), rx, ry, (0, 255, 0))
-                                
-                    cv2.line(roi, (draw_cx - cross_size, draw_cy), (draw_cx + cross_size, draw_cy), (0, 255, 0), 1, cv2.LINE_AA)
-                    cv2.line(roi, (draw_cx, draw_cy - cross_size), (draw_cx, draw_cy + cross_size), (0, 255, 0), 1, cv2.LINE_AA)
-        
-        # =========================================================================
-        # ---> DAUERHAFTE ZIELSCHEIBEN-RINGE (In ROIs gesperrt und mit Zoom!) <---
-        # =========================================================================
-        if self.show_all_rings:
-            for s, fb in [('left', self.calib_feedback_left), ('right', self.calib_feedback_right)]:
-                if s in camera_rois and fb:
-                    roi = camera_rois[s]
-                    roi_off_x = roi_offsets[s]
-                    
-                    # ---> Zoom für die dauerhaften Ringe einberechnen! <---
-                    z, ox, oy = zoom_params[s]
-                    offset_x = 0 if s == 'left' else scaled_w_left
-                    
-                    fb_cx_local = fb['cx'] * z + ox
-                    fb_cy_local = fb['cy'] * z + oy
-                    
-                    cx = int(round(fb_cx_local * self.scale_x)) + offset_x + getattr(self, 'pad_x', 0)
-                    cy = int(round(fb_cy_local * self.scale_y)) + getattr(self, 'pad_y', 0)
-                    
-                    draw_cx = cx - roi_off_x
-                    draw_cy = cy - self.pad_y
-                    
-                    aktive_scheibe = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-                    targets = self.dm.load_targets()
-                    if aktive_scheibe in targets:
-                        target_data = targets[aktive_scheibe]
-                        ringe = target_data.get('ringe_durchmesser_mm', {})
-                        innenzehner = target_data.get('innenzehner_mm', 0.0)
-                        
-                        seite_str = "links" if s == 'left' else "rechts"
-                        px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-                        px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-                        korrektur = self.fischaugenkorrektur_links if s == 'left' else self.fischaugenkorrektur_rechts
-                        
-                        def draw_dashed_ellipse_perm(img, center, rx, ry, color):
-                            for angle in range(0, 360, 6):
-                                cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 2, color, 1, cv2.LINE_AA)
-                                
-                        for ring_name, d_mm in ringe.items():
-                            r_mm_base = float(d_mm) / 2.0
-                            r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) 
-                            rx = round((r_mm_draw * px_x) * z * self.scale_x)
-                            ry = round((r_mm_draw * px_y) * z * self.scale_y)
-                            draw_dashed_ellipse_perm(roi, (draw_cx, draw_cy), rx, ry, (0, 255, 0))
-                            
-                        if innenzehner > 0:
-                            r_mm_base = float(innenzehner) / 2.0
-                            r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur))
-                            rx = round((r_mm_draw * px_x) * z * self.scale_x)
-                            ry = round((r_mm_draw * px_y) * z * self.scale_y)
-                            draw_dashed_ellipse_perm(roi, (draw_cx, draw_cy), rx, ry, (0, 255, 0))
-        # --- BUTTON-LEISTE OBEN RECHTS ---
-        gap = 10     # Abstand zwischen den Buttons
-        start_y = 10
-        
-        # Hilfsfunktion für zentrierten Text mit dynamischer Button-Breite
-        def draw_button(view, text, right_x, bg_color):
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.5
-            thickness = 1
-            
-            # 1. Textgröße berechnen
-            (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, thickness)
-            
-            # 2. Button-Breite anpassen (Textbreite + 20 Pixel Puffer)
-            btn_w = text_w + 20
-            btn_h = 30
-            
-            # 3. Koordinaten berechnen (Wir zeichnen von rechts nach links)
-            x1 = right_x - btn_w
-            y1 = start_y
-            x2 = right_x
-            y2 = start_y + btn_h
-            
-            # Button Hintergrund und Rand
-            cv2.rectangle(view, (x1, y1), (x2, y2), bg_color, -1)
-            cv2.rectangle(view, (x1, y1), (x2, y2), (255, 255, 255), 1)
-            
-            # Text zentrieren
-            text_x = x1 + (btn_w - text_w) // 2
-            text_y = y1 + (btn_h + text_h) // 2
-            
-            cv2.putText(view, text, (text_x, text_y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
-            
-            # Gibt die Klick-Koordinaten zurück UND den neuen X-Startpunkt für den nächsten Button
-            return (x1, y1, x2, y2), x1 - gap
-
-        # Startpunkt ganz rechts am Fensterrand
-        x_cursor = win_w - 10
-        
-        # Buttons von rechts nach links aufbauen
-        # 1. Beenden (Grau)
-        self.btn_exit_coords, x_cursor = draw_button(combined_view, "Beenden", x_cursor, (60, 60, 60))
-        
-        # ---> NEU: 2. Handbuch (Warmes Blau) <---
-        self.btn_hilfe_coords, x_cursor = draw_button(combined_view, "Handbuch", x_cursor, (30, 140, 255))
-        
-        # 3. Bug ZIP (Grün)
-        self.btn_zip_coords, x_cursor = draw_button(combined_view, "Bug ZIP", x_cursor, (40, 120, 40))
-        
-        # 4. Highscore (Blau)
-        self.btn_highscore_coords, x_cursor = draw_button(combined_view, "Highscore", x_cursor, (50, 150, 200))
-        
-        # 5. Match Speichern (Rot)
-        self.btn_save_coords, x_cursor = draw_button(combined_view, "Match Speichern", x_cursor, (180, 70, 70))
-        
-        # 6. Labor (Lila)
-        self.btn_labor_coords, x_cursor = draw_button(combined_view, "Labor & Einstellungen", x_cursor, (150, 50, 150))
-        
-        # ---> NEU: 7. Zielscheiben-Ringe An/Aus <---
-        rings_text = "Scheibe: An" if self.show_all_rings else "Scheibe: Aus"
-        rings_color = (40, 160, 40) if self.show_all_rings else (80, 80, 80)
-        self.btn_rings_coords, x_cursor = draw_button(combined_view, rings_text, x_cursor, rings_color)
-        
-        
-        # ---> HUD / Trefferliste (Getrennt für beide Seiten) <---
-        if self.ringwertung_aktiv:
-            start_y_hud = 80  
-            line_h = 25   
-            max_items = max(5, (win_h - start_y_hud - 80) // line_h)
-            
-            # ---> DER FIX: Dynamische HUD-Breite (15 Pixel extra pro Nachkommastelle) <---
-            box_w = 95 + (self.nachkommastellen * 15)  
-
-            for side in ['left', 'right']:
-                side_shots = self.sm.get_shots_for_side(side)
-                if not side_shots: 
-                    continue # Wenn diese Scheibe noch leer ist, kein HUD zeichnen!
-                    
-                # Geister-HUDs verhindern, falls eine Kamera physisch aus ist
-                if side == 'left' and not self.nutze_kamera_links: continue
-                if side == 'right' and not self.nutze_kamera_rechts: continue
-
-                total_shots = len(side_shots)
-                display_shots = side_shots[-max_items:] if total_shots > max_items else side_shots
-                display_shots_rev = list(reversed(display_shots)) 
-                
-                if side == 'left':
-                    # ---> DER FIX: Wenn die rechte Kamera aus ist, binde das HUD IMMER an den rechten Fensterrand! <---
-                    if not self.nutze_kamera_rechts:
-                        box_x = win_w - box_w - 10
-                    else:
-                        box_x = max(10, scaled_w_left - box_w - 10)
-                else:
-                    box_x = win_w - box_w - 10
-                    
-                box_h = (len(display_shots_rev) + 2) * line_h
-                
-                hud_overlay = combined_view.copy()
-                cv2.rectangle(hud_overlay, (box_x - 10, start_y_hud - 25), (box_x + box_w, start_y_hud + box_h), (20, 20, 20), -1)
-                cv2.addWeighted(hud_overlay, 0.4, combined_view, 0.6, 0, combined_view)
-                
-                titel = "Treffer (L)" if side == 'left' else "Treffer (R)"
-                cv2.putText(combined_view, titel, (box_x - 5, start_y_hud - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-                cv2.line(combined_view, (box_x - 5, start_y_hud - 2), (box_x + box_w - 5, start_y_hud - 2), (100, 100, 100), 1)
-                
-                for i, shot in enumerate(display_shots_rev):
-                    shot_num = total_shots - i  
-                    score_val = shot.get('score', 0.0)
-                    text_color = (0, 255, 255) if score_val < 10.0 else (0, 255, 0)
-                    text = f" {shot_num}:"
-                    
-                    # ---> DER FIX: Dynamische Nachkommastellen im HUD! <---
-                    score_str = f"{score_val:.{self.nachkommastellen}f}"
-                    
-                    y_pos = start_y_hud + 20 + (i * line_h)
-                    
-                    if i == 0:
-                        f_scale_num = 0.55
-                        f_scale_score = 0.65
-                        thick = 2
-                        color_num = (255, 255, 255) # Leuchtendes reines Weiß
-                    else:
-                        f_scale_num = 0.5
-                        f_scale_score = 0.55
-                        thick = 1
-                        color_num = (200, 200, 200) # Gedimmtes Grau für die Historie
-
-                    cv2.putText(combined_view, text, (box_x - 5, y_pos), cv2.FONT_HERSHEY_SIMPLEX, f_scale_num, color_num, thick, cv2.LINE_AA)
-                    cv2.putText(combined_view, score_str, (box_x + 50, y_pos), cv2.FONT_HERSHEY_SIMPLEX, f_scale_score, text_color, thick, cv2.LINE_AA)
-                    
-                    if i == 0 and len(display_shots_rev) > 1:
-                        cv2.line(combined_view, (box_x - 5, y_pos + 8), (box_x + box_w - 5, y_pos + 8), (70, 70, 70), 1)
-
-                y_sum = start_y_hud + 8 + len(display_shots_rev) * line_h
-                cv2.line(combined_view, (box_x - 5, y_sum), (box_x + box_w - 5, y_sum), (100, 100, 100), 1)
-                
-                gesamt = sum(s.get('score', 0.0) for s in side_shots)
-                gesamt_text = "Ges.:"
-                # ---> DER FIX: Dynamische Nachkommastellen für Gesamtsumme! <---
-                gesamt_val = f"{gesamt:.{self.nachkommastellen}f}"
-                y_total = y_sum + 20
-                
-                cv2.putText(combined_view, gesamt_text, (box_x - 5, y_total), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-                cv2.putText(combined_view, gesamt_val, (box_x + 45, y_total), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (50, 200, 255), 2, cv2.LINE_AA)
-
-        # =========================================================================
-        # ---> NEU: Prominenter Serien-Balken (Footer) mit Hintergrund <---
-        # =========================================================================
-        if self.ringwertung_aktiv and self.serien_gruppierung > 0:
-            
-            scaled_h = int(orig_h * self.scale_y)
-            footer_y = getattr(self, 'pad_y', 0) + scaled_h - 65
-            
-            # ---> SCHRITT 1: Hintergrund vorbereiten <---
-            overlay = combined_view.copy()
-            
-            # Wir müssen erst den Hintergrund für alle aktiven Seiten zeichnen
-            for side in ['left', 'right']:
-                if side == 'left' and not self.nutze_kamera_links: continue
-                if side == 'right' and not self.nutze_kamera_rechts: continue
-                
-                side_shots = self.sm.get_shots_for_side(side)
-                if not side_shots: continue
-                
-                if side == 'left':
-                    start_x = getattr(self, 'pad_x', 0)
-                    available_w = int(self.w_left_displayed * self.scale_x)
-                else:
-                    start_x = getattr(self, 'pad_x', 0) + int(self.w_left_displayed * self.scale_x)
-                    available_w = int((orig_w - self.w_left_displayed) * self.scale_x)
-
-                serien = [side_shots[i:i + self.serien_gruppierung] for i in range(0, len(side_shots), self.serien_gruppierung)]
-                max_serien = 5 
-                anzeige_serien = serien[-max_serien:]
-                
-                # ---> DER FIX: Dynamische Block-Breite für den Hintergrund <---
-                block_w = 95 + (self.nachkommastellen * 15)
-                total_blocks_w = len(anzeige_serien) * block_w
-                cursor_x = start_x + (available_w - total_blocks_w) // 2
-                
-                padding = 15
-                box_x1 = cursor_x - padding
-                # Den rechten Puffer (vorher starr 90) dynamisch an den Block anpassen
-                box_x2 = cursor_x + total_blocks_w - 20 + padding
-                box_y1 = footer_y - 25
-                box_y2 = footer_y + 10
-                
-                # Nur das Rechteck auf das Overlay malen!
-                cv2.rectangle(overlay, (box_x1, box_y1), (box_x2, box_y2), (20, 20, 20), -1)
-                
-            # ---> SCHRITT 2: Overlay einblenden BEVOR der Text kommt <---
-            cv2.addWeighted(overlay, 0.4, combined_view, 0.6, 0, combined_view)
-
-            # ---> SCHRITT 3: Text knackscharf auf das fertige Bild schreiben <---
-            for side in ['left', 'right']:
-                if side == 'left' and not self.nutze_kamera_links: continue
-                if side == 'right' and not self.nutze_kamera_rechts: continue
-                
-                side_shots = self.sm.get_shots_for_side(side)
-                if not side_shots: continue
-                
-                if side == 'left':
-                    start_x = getattr(self, 'pad_x', 0)
-                    available_w = int(self.w_left_displayed * self.scale_x)
-                else:
-                    start_x = getattr(self, 'pad_x', 0) + int(self.w_left_displayed * self.scale_x)
-                    available_w = int((orig_w - self.w_left_displayed) * self.scale_x)
-
-                serien = [side_shots[i:i + self.serien_gruppierung] for i in range(0, len(side_shots), self.serien_gruppierung)]
-                max_serien = 6 
-                anzeige_serien = serien[-max_serien:]
-                
-                # ---> DER FIX: Dynamische Block-Breite auch für den Text-Abstand <---
-                block_w = 95 + (self.nachkommastellen * 15)
-                total_blocks_w = len(anzeige_serien) * block_w
-                cursor_x = start_x + (available_w - total_blocks_w) // 2
-                
-                for i, serie in enumerate(anzeige_serien):
-                    serien_index = len(serien) - len(anzeige_serien) + i + 1
-                    summe = sum(s.get('score', 0.0) for s in serie)
-                    
-                    is_active = (i == len(anzeige_serien) - 1) and (len(serie) < self.serien_gruppierung or len(side_shots) % self.serien_gruppierung == 0)
-                    
-                    color_label = (255, 255, 255) if is_active else (180, 180, 180)
-                    color_val = (50, 220, 255) if is_active else (220, 220, 220)
-                    
-                    text_l = f"S{serien_index}:"
-                    # ---> DER FIX: Dynamische Nachkommastellen im Footer! <---
-                    text_r = f"{summe:.{self.nachkommastellen}f}"
-                    
-                    cv2.putText(combined_view, text_l, (cursor_x, footer_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_label, 1, cv2.LINE_AA)
-                    cv2.putText(combined_view, text_r, (cursor_x + 35, footer_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_val, 2, cv2.LINE_AA)
-                    
-                    cursor_x += block_w
-                    
-        # =====================================================================
-        # ---> NEU: Blitzschnelles Logo-Overlay (Kostet < 0.5 ms!) <---
-        # =====================================================================
-        if getattr(self, 'logo_rgb_pre', None) is not None:
-            c_h, c_w = combined_view.shape[:2]
-            lh, lw = self.logo_h, self.logo_w
-            
-            # ---> NEU: Abstand von der Kamera-Ecke (in Pixeln) einstellen <---
-            margin_x = 20
-            margin_y = 20
-            
-            # Startpunkt berechnen: pad_x/pad_y ist exakt die linke obere Ecke 
-            # der ERSTEN aktiven Kamera (egal ob links oder rechts)
-            start_x = getattr(self, 'pad_x', 0) + margin_x
-            start_y = getattr(self, 'pad_y', 0) + margin_y
-            
-            end_x = start_x + lw
-            end_y = start_y + lh
-            
-            # Sicherheits-Check: Passt das Logo noch ins Fenster, ohne abgeschnitten zu werden?
-            if end_y <= c_h and end_x <= c_w and start_x >= 0 and start_y >= 0:
-                # 1. Den Bereich aus dem Live-Bild ausschneiden
-                roi = combined_view[start_y:end_y, start_x:end_x].astype(np.float32)
-                
-                # 2. Die pure Matrix-Magie: (Hintergrund * inverse Transparenz) + vorbereitetes Logo
-                blended = (roi * self.logo_inv_alpha) + self.logo_rgb_pre
-                
-                # 3. Den Bereich im Live-Bild überschreiben
-                combined_view[start_y:end_y, start_x:end_x] = blended.astype(np.uint8)
-        # =====================================================================
-
-        # =====================================================================
-        # ---> NEU: FPS-Counter (Geglättet für ruhigere Lesbarkeit) <---
-        # =====================================================================
-        current_time_fps = time.time()
-        delta_t = current_time_fps - getattr(self, 'prev_frame_time', current_time_fps)
-        self.prev_frame_time = current_time_fps
-        
-        if delta_t > 0:
-            current_fps = 1.0 / delta_t
-            # Wir mischen 90% des alten Wertes mit 10% des neuen Wertes. 
-            # Dadurch flackert die Zahl nicht wild hin und her.
-            self.fps = (self.fps * 0.9) + (current_fps * 0.1) 
-            
-        cv2.putText(combined_view, f"FPS: {int(self.fps)}", (15, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
-
-        cv2.imshow(self.window_name, combined_view)
-
-        cv2.imshow(self.window_name, combined_view)
-
     def check_keys(self, frame_start_time):
-        # ---> NEU: Dynamische Frame-Begrenzung <---
-        # Berechne, wie viele Millisekunden die CPU für dieses Bild gebraucht hat
         elapsed_ms = (time.perf_counter() - frame_start_time) * 1000.0
-        
-        # Berechne die Restzeit bis zu unserem Ziel-Takt (z.B. 33ms)
-        wait_ms = int(self.poll_ms - elapsed_ms)
-        
-        # OpenCV braucht zwingend mindestens 1ms für GUI-Updates (0 = Endlos-Freeze)
-        wait_ms = max(1, wait_ms)
+        wait_ms = max(1, int(self.poll_ms - elapsed_ms))
         
         raw_key = cv2.waitKeyEx(wait_ms)
         key = raw_key & 0xFF
@@ -1261,15 +326,9 @@ class TargetTracker:
             if self.nutze_kamera_links: self.trigger_reset_left = True
             if self.nutze_kamera_rechts: self.trigger_reset_right = True
 
-        # =========================================================================
-        # ---> NEU: ELA-Nudge-Funktion (Pixel-Schubsen per Pfeiltasten oder WASD) <---
-        # =========================================================================
-        # Windows Pfeiltasten: Hoch=2490368, Runter=2621440, Links=2424832, Rechts=2555904
-        # Linux Pfeiltasten: Hoch=65362, Runter=65364, Links=65361, Rechts=65363
         if raw_key in (2490368, 65362, 2621440, 65364, 2424832, 65361, 2555904, 65363) or key in (ord('w'), ord('a'), ord('s'), ord('d')):
             current_time = time.time()
             
-            # Herausfinden, welche Seite gerade aktiv kalibriert wird (Der neuere Timer gewinnt!)
             active_side = None
             active_fb = None
             
@@ -1290,32 +349,26 @@ class TargetTracker:
                 elif raw_key in (2424832, 65361) or key == ord('a'): dx = -0.2
                 elif raw_key in (2555904, 65363) or key == ord('d'): dx =  0.2
                 
-                # 1. Koordinaten um 0.2 Pixel verschieben und direkt runden!
                 new_x = round(active_fb['cx'] + dx, 3)
                 new_y = round(active_fb['cy'] + dy, 3)
                 
-                # 2. Ins System schreiben
                 self.sm.set_nullpunkt(active_side, new_x, new_y)
                 
-                # 3. Feedback updaten & TIMER VERLÄNGERN!
                 active_fb['cx'] = new_x
                 active_fb['cy'] = new_y
                 active_fb['time'] = current_time 
                 
-                # 4. Ringwertung aller bestehenden Schüsse live neu durchrechnen!
                 for shot in self.sm.shots:
                     if shot['side'] == active_side:
                         new_score, raw_score = self.sm.calculate_score(active_side, shot['pos'][0], shot['pos'][1])
                         shot['score'] = new_score
                         shot['raw_score'] = raw_score
                         
-                # Log-Ausgabe zwingend auf 3 Nachkommastelle formatieren
                 self.log("SYSTEM", f"🎯 Zentrum {active_side.upper()} feinjustiert: X:{new_x:.3f} Y:{new_y:.3f}", True)
 
         return False
 
     def cleanup(self):
-        # ---> NEU: Koch fertig arbeiten lassen vor dem Feierabend <---
         self.dm.flush_image_queue()
         if self.nutze_kamera_links: self.cap_left.release()
         if self.nutze_kamera_rechts: self.cap_right.release()
@@ -1323,19 +376,17 @@ class TargetTracker:
 
     def on_mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
-            # ---> NEU: Befinden wir uns im "Pick-Koordinaten"-Modus? <---
             if getattr(self, 'active_picker', None) is not None:
                 s = self.active_picker['side']
-                mode = self.active_picker.get('mode', 'edit') # <--- ELA: Fallback auf edit für den alten Dialog
+                mode = self.active_picker.get('mode', 'edit') 
                 
-                # ---> OFFSET ABZIEHEN! <---
-                raw_x = (x - getattr(self, 'pad_x', 0)) / self.scale_x
-                raw_y = (y - getattr(self, 'pad_y', 0)) / self.scale_y
+                raw_x = (x - self.renderer.pad_x) / self.renderer.scale_x
+                raw_y = (y - self.renderer.pad_y) / self.renderer.scale_y
                 
                 if s == 'right' and self.nutze_kamera_links:
-                    raw_x -= self.w_left_displayed
+                    raw_x -= self.renderer.w_left_displayed
                     
-                if (s == 'left' and raw_x > self.w_left_displayed and self.nutze_kamera_rechts) or \
+                if (s == 'left' and raw_x > self.renderer.w_left_displayed and self.nutze_kamera_rechts) or \
                    (s == 'right' and raw_x < 0):
                     self.log("SYSTEM", "⚠️ Klick war auf der falschen Seite! Bitte nochmal.", True)
                     return
@@ -1344,11 +395,9 @@ class TargetTracker:
                 picked_x, picked_y = int(raw_x), int(raw_y)
                 
                 if mode == 'center':
-                    # 1. Den Nullpunkt im System überschreiben
                     self.sm.set_nullpunkt(s, picked_x, picked_y)
                     self.log("SYSTEM", f"🎯 Neues Zentrum {s.upper()} gesetzt: X:{picked_x} Y:{picked_y}", True)
                     
-                    # 2. Visuelles Feedback aktualisieren (Wir füttern die manuellen Klick-Koordinaten direkt ins HUD!)
                     old_fb = self.calib_feedback_left if s == 'left' else self.calib_feedback_right
                     new_fb = {
                         'cx': picked_x, 'cy': picked_y,
@@ -1357,12 +406,11 @@ class TargetTracker:
                         'ideal_ry': old_fb['ideal_ry'] if old_fb else 150,
                         'red_rx': 0, 'red_ry': 0,
                         'show_red': False,
-                        'time': time.time() # Startet den 15s Timer
+                        'time': time.time() 
                     }
                     if s == 'left': self.calib_feedback_left = new_fb
                     else: self.calib_feedback_right = new_fb
                         
-                    # 3. Ringwertung aller bestehenden Schüsse live neu durchrechnen!
                     for shot in self.sm.shots:
                         if shot['side'] == s:
                             new_score, raw_score = self.sm.calculate_score(s, shot['pos'][0], shot['pos'][1])
@@ -1372,30 +420,25 @@ class TargetTracker:
                     self.active_picker = None 
                     return
                 else:
-                    # Der bisherige Editier-Modus für den Briefkasten
                     self.picked_coords = (picked_x, picked_y) 
                     self.picked_coords_ready = True
                     self.log("SYSTEM", f"✅ Koordinaten für Treffer übernommen!", True)
                     return
                 
         if event == cv2.EVENT_LBUTTONDOWN:
-            # Beenden Button
-            if self.btn_exit_coords:
-                ex1, ey1, ex2, ey2 = self.btn_exit_coords
+            if self.renderer.btn_exit_coords:
+                ex1, ey1, ex2, ey2 = self.renderer.btn_exit_coords
                 if ex1 <= x <= ex2 and ey1 <= y <= ey2:
                     self.trigger_exit = True
                     return
             
-            # Bug ZIP Button
-            if getattr(self, 'btn_zip_coords', None):
-                zx1, zy1, zx2, zy2 = self.btn_zip_coords
+            if getattr(self.renderer, 'btn_zip_coords', None):
+                zx1, zy1, zx2, zy2 = self.renderer.btn_zip_coords
                 if zx1 <= x <= zx2 and zy1 <= y <= zy2:
                     self.log("SYSTEM", "Generiere Debug-Paket... Bitte warten.", True)
-                    imestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     zip_filepath = os.path.join(self.dm.ZIP_FOLDER, f"Debug_Paket_{timestamp}.zip")
-                    # ---> NEU: Warten bis alle Bilder gespeichert sind! <---
                     self.dm.flush_image_queue()
-                    # ---> ELA: Auch der Bug-Zip nutzt jetzt die einheitliche Funktion <---
                     success = self.dm.export_match_package(
                         filepath=zip_filepath,
                         source_folder=self.dm.DEBUG_FOLDER,
@@ -1407,78 +450,67 @@ class TargetTracker:
                         self.log("SYSTEM", "Fehler beim Erstellen der Debug-ZIP!", True)
                     return
             
-            # Reset Button (Links)
-            if self.nutze_kamera_links and getattr(self, 'btn_left_coords', None):
-                bx1, by1, bx2, by2 = self.btn_left_coords
+            if self.nutze_kamera_links and getattr(self.renderer, 'btn_left_coords', None):
+                bx1, by1, bx2, by2 = self.renderer.btn_left_coords
                 if bx1 <= x <= bx2 and by1 <= y <= by2:
                     self.trigger_reset_left = True
                     return
             
-            # Reset Button (Rechts)
-            if self.nutze_kamera_rechts and getattr(self, 'btn_right_coords', None):
-                bx1, by1, bx2, by2 = self.btn_right_coords
+            if self.nutze_kamera_rechts and getattr(self.renderer, 'btn_right_coords', None):
+                bx1, by1, bx2, by2 = self.renderer.btn_right_coords
                 if bx1 <= x <= bx2 and by1 <= y <= by2:
                     self.trigger_reset_right = True
                     return
             
-            # Edit Button (Links)
-            if self.nutze_kamera_links and getattr(self, 'btn_edit_left_coords', None):
-                ex1, ey1, ex2, ey2 = self.btn_edit_left_coords
+            if self.nutze_kamera_links and getattr(self.renderer, 'btn_edit_left_coords', None):
+                ex1, ey1, ex2, ey2 = self.renderer.btn_edit_left_coords
                 if ex1 <= x <= ex2 and ey1 <= y <= ey2:
                     self.trigger_edit_left = True
                     return
             
-            # Edit Button (Rechts)
-            if self.nutze_kamera_rechts and getattr(self, 'btn_edit_right_coords', None):
-                ex1, ey1, ex2, ey2 = self.btn_edit_right_coords
+            if self.nutze_kamera_rechts and getattr(self.renderer, 'btn_edit_right_coords', None):
+                ex1, ey1, ex2, ey2 = self.renderer.btn_edit_right_coords
                 if ex1 <= x <= ex2 and ey1 <= y <= ey2:
                     self.trigger_edit_right = True
                     return
             
-            # Zentrum Button (Links)
-            if self.nutze_kamera_links and getattr(self, 'btn_center_left_coords', None):
-                cx1, cy1, cx2, cy2 = self.btn_center_left_coords
+            if self.nutze_kamera_links and getattr(self.renderer, 'btn_center_left_coords', None):
+                cx1, cy1, cx2, cy2 = self.renderer.btn_center_left_coords
                 if cx1 <= x <= cx2 and cy1 <= y <= cy2:
                     self.active_picker = {'mode': 'center', 'side': 'left'}
                     self.log("SYSTEM", "🎯 Klicke ins LINKE Kamerabild, um das neue Zentrum zu setzen!", True)
                     return
             
-            # Zentrum Button (Rechts)
-            if self.nutze_kamera_rechts and getattr(self, 'btn_center_right_coords', None):
-                cx1, cy1, cx2, cy2 = self.btn_center_right_coords
+            if self.nutze_kamera_rechts and getattr(self.renderer, 'btn_center_right_coords', None):
+                cx1, cy1, cx2, cy2 = self.renderer.btn_center_right_coords
                 if cx1 <= x <= cx2 and cy1 <= y <= cy2:
                     self.active_picker = {'mode': 'center', 'side': 'right'}
                     self.log("SYSTEM", "🎯 Klicke ins RECHTE Kamerabild, um das neue Zentrum zu setzen!", True)
                     return
             
-            # Highscore Button
-            if getattr(self, 'btn_highscore_coords', None):
-                hx1, hy1, hx2, hy2 = self.btn_highscore_coords
+            if getattr(self.renderer, 'btn_highscore_coords', None):
+                hx1, hy1, hx2, hy2 = self.renderer.btn_highscore_coords
                 if hx1 <= x <= hx2 and hy1 <= y <= hy2:
                     self.log("SYSTEM", "Öffne Highscore-Tabelle...", True)
                     
-                    # ---> NEU: Zeige den sauberen Wartebildschirm! <---
                     self.show_pause_screen("Highscore-Tabelle geöffnet")
                         
                     proc = subprocess.Popen(["python", "HighscoreViewDeLuebs.py"])
                     while proc.poll() is None:
                         cv2.waitKey(100)
                         
-                    # Nach Rückkehr Vollbild wiederherstellen
                     if self.vollbild:
                         cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
                         cv2.waitKey(50)
                     return
                     
-            # Match Speichern Button (mit Single/Multiplayer Logik)
-            if getattr(self, 'btn_save_coords', None):
-                sx1, sy1, sx2, sy2 = self.btn_save_coords
+            if getattr(self.renderer, 'btn_save_coords', None):
+                sx1, sy1, sx2, sy2 = self.renderer.btn_save_coords
                 if sx1 <= x <= sx2 and sy1 <= y <= sy2:
                     self.log("SYSTEM", "Frage nach Spielername...")
                     
                     player_counts = {}
                     for entry in self.sm.hm.data:
-                        # Auch geteilte Namen wie "Jan / Vater" wieder für die Vorschlagsliste trennen
                         names = entry.get("spieler", "Unbekannt").split(" / ")
                         for p in names:
                             p = p.strip()
@@ -1534,14 +566,11 @@ class TargetTracker:
                     player_name_r = result[1]
                     root_dialog.destroy()
                     
-                    # Einzelspieler-Logik
-                    # Wenn das rechte Feld leer gelassen wurde, setzen wir beide auf Spieler 1.
                     if player_name_l and not player_name_r:
                         player_name_r = player_name_l
                     
                     if player_name_l and player_name_r:
                         self.last_player_name_l = player_name_l
-                        # Wir merken uns das leere Feld fürs nächste Mal, falls es ein Einzelspieler war
                         self.last_player_name_r = player_name_r if player_name_l != player_name_r else ""
                         
                         log_msg = f"Speichere Match für {player_name_l} / {player_name_r}..." if player_name_l != player_name_r else f"Speichere Match für {player_name_l}..."
@@ -1550,18 +579,12 @@ class TargetTracker:
                         backup_mask_l = self.sm.state_left.cumulative_mask.copy() if (self.nutze_kamera_links and self.sm.state_left and self.sm.state_left.cumulative_mask is not None) else None
                         backup_mask_r = self.sm.state_right.cumulative_mask.copy() if (self.nutze_kamera_rechts and self.sm.state_right and self.sm.state_right.cumulative_mask is not None) else None
                         
-                        # ---> NEU: Erst warten, bis der Koch alle Bilder sicher auf der Platte hat <---
                         self.dm.flush_image_queue()
                         
-                        # =========================================================
-                        # ---> DER FIX: Wir holen uns das letzte PERFEKTE Bild von der Festplatte! <---
-                        # =========================================================
-                        # Links
                         path_l = os.path.join(self.dm.DEBUG_FOLDER, "letzte_aufnahme_left.png")
                         if not os.path.exists(path_l): path_l = os.path.join(self.dm.DEBUG_FOLDER, "referenz_left.png")
                         best_orig_l = cv2.imread(path_l) if os.path.exists(path_l) else None
 
-                        # Rechts
                         path_r = os.path.join(self.dm.DEBUG_FOLDER, "letzte_aufnahme_right.png")
                         if not os.path.exists(path_r): path_r = os.path.join(self.dm.DEBUG_FOLDER, "referenz_right.png")
                         best_orig_r = cv2.imread(path_r) if os.path.exists(path_r) else None
@@ -1569,25 +592,21 @@ class TargetTracker:
                         if self.sm.save_current_match(player_name_l, player_name_r):
                             self.log("SYSTEM", "Match erfolgreich gespeichert!", True)
                             
-                            # 1. Den Ordner fegen (löscht alle Schüsse/Diffs des alten Matches)
                             if self.nutze_kamera_links: self.dm.clear_debug_images('left', keep_startmask=True)
                             if self.nutze_kamera_rechts: self.dm.clear_debug_images('right', keep_startmask=True)
                             
-                            # 2. Die Masken wiederherstellen UND speichern
                             if self.nutze_kamera_links and self.sm.state_left:
                                 self.sm.state_left.cumulative_mask = backup_mask_l
                                 if backup_mask_l is not None:
                                     self.dm.save_debug_image("cumulative_startmask_left", backup_mask_l)
-                                    # ---> NEU: Das garantiert saubere Bild als Optik-Referenz mitspeichern <---
                                     if best_orig_l is not None:
                                         self.dm.save_debug_image("cumulative_orig_left", best_orig_l)
-                                    self.sm.state_left.is_fortsetzung = True  # Flag für JSON setzen
+                                    self.sm.state_left.is_fortsetzung = True 
                                     
                             if self.nutze_kamera_rechts and self.sm.state_right:
                                 self.sm.state_right.cumulative_mask = backup_mask_r
                                 if backup_mask_r is not None:
                                     self.dm.save_debug_image("cumulative_startmask_right", backup_mask_r)
-                                    # ---> NEU: Das garantiert saubere Bild als Optik-Referenz mitspeichern <---
                                     if best_orig_r is not None:
                                         self.dm.save_debug_image("cumulative_orig_right", best_orig_r)
                                     self.sm.state_right.is_fortsetzung = True
@@ -1600,9 +619,8 @@ class TargetTracker:
                             self.log("SYSTEM", "Speichern abgebrochen (Keine Treffer).", True)
                     return
 
-            # ---> NEU: Labor Button (Der Brückenschlag) <---
-            if getattr(self, 'btn_labor_coords', None):
-                lx1, ly1, lx2, ly2 = self.btn_labor_coords
+            if getattr(self.renderer, 'btn_labor_coords', None):
+                lx1, ly1, lx2, ly2 = self.renderer.btn_labor_coords
                 if lx1 <= x <= lx2 and ly1 <= y <= ly2:
                     
                     if getattr(self, 'labor_is_opening', False): 
@@ -1615,7 +633,6 @@ class TargetTracker:
                     if not ref_l and not ref_r:
                         self.log("SYSTEM", "Labor startet leer (Noch keine Scheibe erkannt).", True)
                         
-                        # ---> NEU: Wartebildschirm aufrufen <---
                         self.show_pause_screen("Labor & Einstellungen geöffnet")
                             
                         proc = subprocess.Popen(["python", "LaborDeLuebs.py"])
@@ -1629,11 +646,9 @@ class TargetTracker:
                         return
                     
                     self.log("SYSTEM", "Generiere Live-Snapshot und pausiere System...", True)
-                    # Den letzten Stand noch einmal kurz komplett rendern lassen...
-                    self.update_gui(self.last_frame_l, self.last_frame_r, True)
+                    self.renderer.update_gui(self.last_frame_l, self.last_frame_r, True)
                     cv2.waitKey(50) 
                     
-                    # ---> NEU: Und danach direkt in den Wartebildschirm wechseln! <---
                     self.show_pause_screen("Labor & Einstellungen geöffnet")
                     
                     if self.nutze_kamera_links and self.last_frame_l is not None:
@@ -1661,7 +676,6 @@ class TargetTracker:
                         while proc.poll() is None:
                             cv2.waitKey(100) 
                             
-                        # ---> NEU: Vollbild nach Rückkehr reaktivieren <---
                         if self.vollbild:
                             cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
                             cv2.waitKey(50)
@@ -1695,40 +709,31 @@ class TargetTracker:
                     self.labor_is_opening = False
                     return
             
-            # ---> NEU: Handbuch Button <---
-            if getattr(self, 'btn_hilfe_coords', None):
-                hx1, hy1, hx2, hy2 = self.btn_hilfe_coords
+            if getattr(self.renderer, 'btn_hilfe_coords', None):
+                hx1, hy1, hx2, hy2 = self.renderer.btn_hilfe_coords
                 if hx1 <= x <= hx2 and hy1 <= y <= hy2:
                     self.log("SYSTEM", "Öffne Handbuch...", True)
                     
-                    # =========================================================================
-                    # ---> DIE LÖSUNG (Idee B): Vollbild für das Handbuch verlassen! <---
-                    # =========================================================================
                     self.show_pause_screen("Handbuch geöffnet")
                     
-                    # WICHTIG: Dateiname angepasst!
                     proc = subprocess.Popen(["python", "HandbuchDeLuebs.py"]) 
                     
-                    # Warten, bis das Handbuch geschlossen wird
                     while proc.poll() is None:
                         cv2.waitKey(100)
                         
-                    # Nach Rückkehr Vollbild wiederherstellen
                     if self.vollbild:
                         cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
                         cv2.waitKey(50)
                         
                     return
                     
-            # ---> NEU: Zielscheiben-Ringe Button <---
-            if getattr(self, 'btn_rings_coords', None):
-                rx1, ry1, rx2, ry2 = self.btn_rings_coords
+            if getattr(self.renderer, 'btn_rings_coords', None):
+                rx1, ry1, rx2, ry2 = self.renderer.btn_rings_coords
                 if rx1 <= x <= rx2 and ry1 <= y <= ry2:
-                    self.show_all_rings = not self.show_all_rings
-                    self.log("SYSTEM", f"Zielscheiben-Ringe dauerhaft {'aktiviert' if self.show_all_rings else 'deaktiviert'}.", True)
+                    self.renderer.show_all_rings = not self.renderer.show_all_rings
+                    self.log("SYSTEM", f"Zielscheiben-Ringe dauerhaft {'aktiviert' if self.renderer.show_all_rings else 'deaktiviert'}.", True)
                     return
 
-            
     def process_edits(self):
         if self.trigger_edit_left:
             self.open_edit_dialog('left')
@@ -1743,26 +748,22 @@ class TargetTracker:
             self.log("SYSTEM", f"Keine Treffer auf {'links' if side=='left' else 'rechts'} zum Editieren.", True)
             return
 
-        # ---> NEU: Pause-Screen und Vollbild verlassen! <---
         self.show_pause_screen(f"Treffer bearbeiten - {'Links' if side=='left' else 'Rechts'}")
 
-        # Basis-Dialog erstellen
         root_dialog = tk.Tk()
         root_dialog.withdraw()
         dialog = tk.Toplevel(root_dialog)
         dialog.title(f"Treffer bearbeiten - {'Links' if side=='left' else 'Rechts'}")
         dialog.geometry("550x450")
         
-        # ---> LÖSCHEN: dialog.attributes('-topmost', True) <---
         dialog.focus_force()
 
-        # "Alle markieren" Kopfzeile
         top_frame = tk.Frame(dialog)
         top_frame.pack(fill="x", padx=10, pady=5)
         
         select_all_var = tk.BooleanVar(value=False)
         check_vars = []
-        entries = []  # Speichert: (shot_ref, x_var, y_var, score_var, check_var)
+        entries = []  
 
         def toggle_all():
             state = select_all_var.get()
@@ -1771,7 +772,6 @@ class TargetTracker:
 
         tk.Checkbutton(top_frame, text="Alle markieren", variable=select_all_var, command=toggle_all).pack(side="left")
 
-        # Scrollbarer Bereich
         canvas_frame = tk.Frame(dialog)
         canvas_frame.pack(fill="both", expand=True, padx=10, pady=5)
         
@@ -1786,7 +786,6 @@ class TargetTracker:
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        # Tabellen-Header
         header_frame = tk.Frame(scrollable_frame)
         header_frame.pack(fill="x", pady=(0, 5))
         tk.Label(header_frame, text="Löschen", width=7).grid(row=0, column=0)
@@ -1794,9 +793,8 @@ class TargetTracker:
         tk.Label(header_frame, text="X (px)", width=10).grid(row=0, column=2)
         tk.Label(header_frame, text="Y (px)", width=10).grid(row=0, column=3)
         tk.Label(header_frame, text="Ringe", width=10).grid(row=0, column=4)
-        tk.Label(header_frame, text="Pick", width=5).grid(row=0, column=5) # <--- NE
+        tk.Label(header_frame, text="Pick", width=5).grid(row=0, column=5) 
 
-        # Tabellen-Zeilen (Mit Entry für Editieren/Copy-Paste)
         for i, shot in enumerate(side_shots):
             row_frame = tk.Frame(scrollable_frame)
             row_frame.pack(fill="x", pady=2)
@@ -1807,19 +805,15 @@ class TargetTracker:
 
             tk.Label(row_frame, text=str(i+1), width=4).grid(row=0, column=1)
 
-            # X Koordinate
             x_var = tk.StringVar(value=str(round(float(shot['pos'][0]), 1)))
             tk.Entry(row_frame, textvariable=x_var, width=10).grid(row=0, column=2, padx=5)
 
-            # Y Koordinate
             y_var = tk.StringVar(value=str(round(float(shot['pos'][1]), 1)))
             tk.Entry(row_frame, textvariable=y_var, width=10).grid(row=0, column=3, padx=5)
 
-            # Ringwert
             score_var = tk.StringVar(value=str(shot.get('score', 0.0)))
             tk.Entry(row_frame, textvariable=score_var, width=10).grid(row=0, column=4, padx=5)
 
-            # ---> NEU: score_var (sv) wird mit in den Briefkasten gelegt <---
             def make_pick_cmd(xv, yv, sv, s_name):
                 def cmd():
                     self.active_picker = {'x_var': xv, 'y_var': yv, 'score_var': sv, 'side': s_name}
@@ -1828,9 +822,7 @@ class TargetTracker:
 
             tk.Button(row_frame, text="🎯", bg="#5bc0de", fg="black", command=make_pick_cmd(x_var, y_var, score_var, side)).grid(row=0, column=5, padx=2)
             entries.append((shot, x_var, y_var, score_var, c_var))
-            #entries.append((shot, x_var, y_var, score_var, c_var))
 
-        # Buttons Unten
         btn_frame = tk.Frame(dialog)
         btn_frame.pack(fill="x", pady=10)
 
@@ -1841,7 +833,6 @@ class TargetTracker:
                 if c_var.get():
                     to_delete.append(shot_ref)
                 else:
-                    # Werte auslesen und speichern
                     try:
                         new_x = float(x_var.get())
                         new_y = float(y_var.get())
@@ -1853,27 +844,22 @@ class TargetTracker:
             if to_delete:
                 self.sm.remove_shots(to_delete)
 
-            # ---> NEU: Polling stoppen bevor zerstört wird! <---
             if hasattr(dialog, 'poll_job'):
                 dialog.after_cancel(dialog.poll_job)
             dialog.destroy()
 
         def cancel():
-            # ---> NEU: Polling stoppen bevor zerstört wird! <---
             if hasattr(dialog, 'poll_job'):
                 dialog.after_cancel(dialog.poll_job)
             dialog.destroy()
             
-        # ---> NEU: Fängt den Klick auf das rote 'X' des Fensters ab! <---
         dialog.protocol("WM_DELETE_WINDOW", cancel)
 
         tk.Button(btn_frame, text="Übernehmen & Löschen", command=apply_changes, bg="#4CAF50", fg="white", font=('Arial', 10, 'bold')).pack(side="left", padx=20)
         tk.Button(btn_frame, text="Abbrechen", command=cancel, font=('Arial', 10)).pack(side="right", padx=20)
 
-        # ---> NEU: Der sichere Tkinter-Briefkasten-Prüfer <---
         def poll_picker():
             try:
-                # 1. Sicherheits-Check: Gibt es das Fenster überhaupt noch?
                 if not dialog.winfo_exists(): 
                     return
                     
@@ -1890,27 +876,22 @@ class TargetTracker:
                     self.picked_coords_ready = False
                     self.active_picker = None 
                     
-                # 2. Den "Wecker" stellen UND den Ausweis (poll_job) speichern, damit wir ihn abbrechen können
                 dialog.poll_job = dialog.after(100, poll_picker)
             except Exception:
-                pass # Falls das Fenster genau in dieser Millisekunde zerstört wird, sanft ignorieren
+                pass 
                 
-        poll_picker() # Polling-Schleife starten
+        poll_picker() 
 
-        # Dialog blockierend ausführen
         root_dialog.wait_window(dialog)
         root_dialog.destroy()
         
-        # ---> NEU: Vollbild wiederherstellen <---
         if self.vollbild:
             cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
             cv2.waitKey(50)
         
-        # Kamera-Puffer nach dem Blockieren kurz leeren (verhindert Framestau)
         for _ in range(5): 
             if self.nutze_kamera_links: self.cap_left.read()
             if self.nutze_kamera_rechts: self.cap_right.read()
-
 
     def run(self):
         blink_timer = time.time()
@@ -1927,7 +908,6 @@ class TargetTracker:
         self.log("SYSTEM", "=== PROGRAMM GESTARTET ===", True)
 
         while True:
-            # ---> NEU: Startzeitpunkt des aktuellen Frames erfassen! <---
             frame_start_time = time.perf_counter() 
             
             frame_l, frame_r = self.read_frames()
@@ -1944,16 +924,14 @@ class TargetTracker:
                 blink_state = not blink_state
                 blink_timer = time.time()
 
-            self.update_gui(frame_l, frame_r, blink_state)
+            self.renderer.update_gui(frame_l, frame_r, blink_state)
 
-            # ---> NEU: Startzeitpunkt an die Tastenprüfung übergeben! <---
             if self.check_keys(frame_start_time):
                 break
 
         self.cleanup()
 
 if __name__ == "__main__":
-    # ---> NEU: Nur das Hauptprogramm darf beim Start die alten Bilder löschen!
     dm = DateiManager(clear_on_start=True)
     config = dm.load_or_create_config()
     sm = StateManager(config, dm)
