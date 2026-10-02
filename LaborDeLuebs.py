@@ -1914,7 +1914,7 @@ class LaborApp:
             txt.insert(tk.END, "Legende: 'E' = Manuell editiert | '*' = Methode hat sich zum Original geändert\n")
             
             # Neuer, erweiterter Header mit Platz für die Ringwertung
-            header = f"{'Nr':>3} | {'Bild':>4} | {'Orig-Methode':<25} | {'Neu-Methode':<25} | {'Orig (X,Y, Ring)':<26} | {'Neu (X,Y, Ring)':<26} | {'Dist':>6} | {'O-CV':>6} | {'N-CV':>6} | {'% Kal':<10}\n"
+            header = f"{'Nr':>3} | {'Bild':>4} | {'Orig-Methode':<25} | {'Neu-Methode':<25} | {'Orig (X,Y, Ring)':<27} | {'Neu (X,Y, Ring)':<27} | {'Dist':>6} | {'O-CV':>6} | {'N-CV':>6} | {'% Kal':<10}\n"
             txt.insert(tk.END, header)
             txt.insert(tk.END, "-"*165 + "\n")
             
@@ -1948,8 +1948,15 @@ class LaborApp:
                     warn = "⚠️" if pct > 25.0 else ""
                     edit_marker = "E" if orig.get('edited', False) else " "
                     
+                    # =========================================================================
+                    # ---> NEU: Original-Score dynamisch formatieren (Die ungeschminkte Wahrheit!)
+                    # =========================================================================
+                    o_score_str = f"{orig_score:.4f}".rstrip('0')
+                    if o_score_str.endswith('.'): 
+                        o_score_str += "0" # Aus "10." machen wir sauber wieder "10.0"
+                    
                     # String-Zusammenbau inkl. formatierter Ringwertung
-                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>5.1f},{oy:>5.1f} ({orig_score:.{decimals}f})"
+                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>5.1f},{oy:>5.1f} ({o_score_str})"
                     curr_str = f"N:{curr_idx+1:02d}  {cx:>5.1f},{cy:>5.1f} ({curr_score:.{decimals}f})"
                     
                     f_num = curr.get('frame_num', 0)
@@ -1961,18 +1968,24 @@ class LaborApp:
                     orig_cv, curr_cv = orig.get('cv_score', 0.0), curr.get('cv_score', 0.0)
                     pct_str = f"{pct:.1f}% {warn}"
                     
-                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {orig_method:<25} | {display_curr_method:<25} | {orig_str:<26} | {curr_str:<26} | {dist:6.1f}p | {orig_cv:6.1f} | {curr_cv:6.1f} | {pct_str:<10}\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {orig_method:<25} | {display_curr_method:<25} | {orig_str:<27} | {curr_str:<27} | {dist:6.1f}p | {orig_cv:6.1f} | {curr_cv:6.1f} | {pct_str:<10}\n")
                     
                 elif orig_idx is not None:
                     orig = orig_shots[orig_idx]
                     edit_marker = "E" if orig.get('edited', False) else " "
                     ox, oy = float(orig['x']), float(orig['y'])
                     orig_score = float(orig.get('score', 0.0))
-                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>5.1f},{oy:>5.1f} ({orig_score:.{decimals}f})"
+                    
+                    # ---> HIER AUCH DIE NEUE FORMATIERUNG EINFÜGEN <---
+                    o_score_str = f"{orig_score:.4f}".rstrip('0')
+                    if o_score_str.endswith('.'): 
+                        o_score_str += "0"
+                        
+                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>5.1f},{oy:>5.1f} ({o_score_str})"
                     orig_cv = orig.get('cv_score', 0.0)
                     orig_method = orig.get('winner_method', 'Unbekannt')
                     
-                    txt.insert(tk.END, f"{idx+1:3d} | {'--':>4} | {orig_method:<25} | {'--- FEHLT ---':<25} | {orig_str:<26} | {'--- FEHLT ---':<26} | {'--':>6} | {orig_cv:6.1f} | {'--':>6} | {'-- ❌':<10}\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | {'--':>4} | {orig_method:<25} | {'--- FEHLT ---':<25} | {orig_str:<27} | {'--- FEHLT ---':<27} | {'--':>6} | {orig_cv:6.1f} | {'--':>6} | {'-- ❌':<10}\n")
                     
                 elif curr_idx is not None:
                     curr = curr_shots[curr_idx]
@@ -1983,7 +1996,7 @@ class LaborApp:
                     f_num = curr.get('frame_num', 0)
                     curr_method = curr.get('winner_method', 'Std')
                     
-                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {'--- FEHLT ---':<25} | {curr_method:<25} | {'--- FEHLT ---':<26} | {curr_str:<26} | {'--':>6} | {'--':>6} | {curr_cv:6.1f} | {'-- 🆕':<10}\n")
+                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {'--- FEHLT ---':<25} | {curr_method:<25} | {'--- FEHLT ---':<27} | {curr_str:<27} | {'--':>6} | {'--':>6} | {curr_cv:6.1f} | {'-- 🆕':<10}\n")
 
             if match_count > 0:
                 avg_dist = total_dist / match_count
