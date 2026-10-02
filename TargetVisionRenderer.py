@@ -3,6 +3,7 @@ import numpy as np
 import time
 import math
 import os
+from HelperDeLuebs import Helfer
 
 class TargetVisionRenderer:
     def __init__(self, tracker):
@@ -140,94 +141,6 @@ class TargetVisionRenderer:
             self.btn_right_coords = (bx1, by1, bx2, by2)
             self.btn_edit_right_coords = (ex1, ey1, ex2, ey2) 
             self.btn_center_right_coords = (cx1, cy1, cx2, cy2)
-
-    # =========================================================================
-    # ---> DAS SCHWEIZER TASCHENMESSER: Die universelle Ellipsen-Funktion <---
-    # =========================================================================
-    def draw_smart_ellipse(self, roi, side, center_x, center_y, radius_mm, color, thickness=1, dashed=False, text=None, text_color=(0,0,0), is_hit=False, zoom_params=(1.0, 0.0, 0.0)):
-        """
-        Regelt vollautomatisch:
-        - Fischaugen-Verzerrung in Bezug auf das Kamerazentrum
-        - Cinematic Zoom Matrix (z, ox, oy)
-        - Fenster-Skalierung (scale_x, scale_y)
-        - Intelligentes Stroke-Alignment (Linienstärke nach innen bei Treffern)
-        """
-        z, ox, oy = zoom_params
-        
-        # 1. Den echten Mittelpunkt blitzschnell auf das Monitor-ROI mappen
-        draw_cx = int(round((center_x * z + ox) * self.scale_x))
-        draw_cy = int(round((center_y * z + oy) * self.scale_y))
-        
-        # 2. Kalibrierungsdaten holen
-        seite_str = "links" if side == 'left' else "rechts"
-        px_x = self.tracker.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-        px_y = self.tracker.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-        korrektur = self.fischaugenkorrektur_links if side == 'left' else self.fischaugenkorrektur_rechts
-        feedback = self.tracker.calib_feedback_left if side == 'left' else self.tracker.calib_feedback_right
-        
-        # 3. Stroke Alignment (Soll die Linie nur nach innen wachsen?)
-        thickness_komp = (thickness / 2.0) if is_hit else 0.0
-        
-        rx, ry, angle_deg = 0, 0, 0
-        
-        # 4. Verzerrung berechnen (falls Zentrum kalibriert ist)
-        if feedback and 'cx' in feedback and 'cy' in feedback:
-            dx_mm = (center_x - feedback['cx']) / px_x
-            dy_mm = (center_y - feedback['cy']) / px_y
-            r_mm_center = math.hypot(dx_mm, dy_mm)
-            
-            if r_mm_center > 0.05:
-                # ---> Fall A: Das ist ein Treffer (oder Ring), der NICHT im Zentrum liegt <---
-                angle_deg = math.degrees(math.atan2(dy_mm, dx_mm))
-                scale_radial = 1.0 + (2.0 * r_mm_center * korrektur)
-                scale_tangential = 1.0 + (r_mm_center * korrektur)
-                
-                rx_raw = (radius_mm * scale_radial * px_x) * z * self.scale_x
-                ry_raw = (radius_mm * scale_tangential * px_y) * z * self.scale_y
-            else:
-                # ---> DER FIX (Fall B): Objekt liegt EXAKT im optischen Zentrum! <---
-                # Sein Radius muss trotzdem nach außen hin wachsen/verzerrt werden.
-                angle_deg = 0
-                r_mm_draw = radius_mm * (1.0 + (radius_mm * korrektur))
-                
-                rx_raw = (r_mm_draw * px_x) * z * self.scale_x
-                ry_raw = (r_mm_draw * px_y) * z * self.scale_y
-
-            rx = int(round(rx_raw - thickness_komp))
-            ry = int(round(ry_raw - thickness_komp))
-        else:
-            # Fallback (Keine Kalibrierung)
-            avg_px = (px_x + px_y) / 2.0
-            r_raw = (radius_mm * avg_px) * z * self.scale_x
-            rx = ry = int(round(r_raw - thickness_komp))
-            
-        # Sicherheitssperre, damit es nicht crasht, wenn der Radius winzig wird
-        rx, ry = max(2, rx), max(2, ry)
-        
-        # 5. Zeichnen!
-        if dashed:
-            for angle in range(0, 360, 6):
-                cv2.ellipse(roi, (draw_cx, draw_cy), (rx, ry), angle_deg, angle, angle + 2, color, thickness, cv2.LINE_AA)
-        else:
-            if rx == ry and angle_deg == 0:
-                cv2.circle(roi, (draw_cx, draw_cy), rx, color, thickness, cv2.LINE_AA)
-            else:
-                cv2.ellipse(roi, (draw_cx, draw_cy), (rx, ry), angle_deg, 0, 360, color, thickness, cv2.LINE_AA)
-                
-        # 6. Text zentrieren (Falls übergeben)
-        if text:
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.5
-            text_thick = 1
-            
-            (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, text_thick)
-            text_x = draw_cx - (text_w // 2)
-            text_y = draw_cy + (text_h // 2)
-            
-            cv2.putText(roi, text, (text_x, text_y), font, font_scale, (0, 0, 0), text_thick + 2, cv2.LINE_AA)
-            cv2.putText(roi, text, (text_x, text_y), font, font_scale, text_color, text_thick, cv2.LINE_AA)
-            
-    # =========================================================================
 
     def update_gui(self, frame_l, frame_r, blink_state):
         def prepare_disp(f, use_cam):
@@ -413,6 +326,15 @@ class TargetVisionRenderer:
                 kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
             else:
                 kaliber_mm = self.tracker.config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
+                
+            # Kameradaten für den Helfer abrufen
+            seite_str = "links" if side == 'left' else "rechts"
+            px_x = self.tracker.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+            px_y = self.tracker.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+            korrektur = self.fischaugenkorrektur_links if side == 'left' else self.fischaugenkorrektur_rechts
+            feedback = self.tracker.calib_feedback_left if side == 'left' else self.tracker.calib_feedback_right
+            fb_cx = feedback['cx'] if feedback and 'cx' in feedback else None
+            fb_cy = feedback['cy'] if feedback and 'cy' in feedback else None
             
             # 1. SHOTS (TREFFER) ZEICHNEN
             side_shots = self.tracker.sm.get_shots_for_side(side)
@@ -426,11 +348,14 @@ class TargetVisionRenderer:
                     id_str = str(idx + 1)
                     text_color = (255, 255, 255) if not shot.get('is_new', False) else (200, 200, 255)
                     
-                self.draw_smart_ellipse(
-                    roi=roi, side=side, center_x=x, center_y=y, 
-                    radius_mm=kaliber_mm / 2.0, color=color, thickness=2, 
-                    dashed=False, text=id_str, text_color=text_color, 
-                    is_hit=True, zoom_params=zoom_params[side]
+                Helfer.draw_smart_ellipse(
+                    img=roi, center_x=x, center_y=y, 
+                    radius_mm=kaliber_mm / 2.0, color=color, 
+                    px_x=px_x, px_y=px_y, korrektur=korrektur,
+                    feedback_cx=fb_cx, feedback_cy=fb_cy,
+                    thickness=2, dashed=False, text=id_str, text_color=text_color, 
+                    is_hit=True, zoom_params=zoom_params[side],
+                    scale_x=self.scale_x, scale_y=self.scale_y
                 )
 
         # 2. CALIBRATION FEEDBACK (15s Ansicht)
@@ -440,6 +365,12 @@ class TargetVisionRenderer:
                 roi = camera_rois[s]
                 z, ox, oy = zoom_params[s]
                 
+                # Kameradaten für den Helfer abrufen
+                seite_str = "links" if s == 'left' else "rechts"
+                px_x = self.tracker.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+                px_y = self.tracker.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+                korrektur = self.fischaugenkorrektur_links if s == 'left' else self.fischaugenkorrektur_rechts
+
                 # Der optische Mittelpunkt
                 draw_cx = int(round((feedback['cx'] * z + ox) * self.scale_x))
                 draw_cy = int(round((feedback['cy'] * z + oy) * self.scale_y))
@@ -462,15 +393,28 @@ class TargetVisionRenderer:
                 if aktive_scheibe in targets:
                     target_data = targets[aktive_scheibe]
                     
-                    # ---> DER FIX: Den Spiegel wieder zeichnen! <---
                     spiegel_mm = float(target_data.get('spiegel_durchmesser_mm', 30.5))
-                    self.draw_smart_ellipse(roi, s, feedback['cx'], feedback['cy'], spiegel_mm / 2.0, (0, 255, 0), thickness=1, dashed=True, is_hit=False, zoom_params=zoom_params[s])
+                    Helfer.draw_smart_ellipse(
+                        img=roi, center_x=feedback['cx'], center_y=feedback['cy'], 
+                        radius_mm=spiegel_mm / 2.0, color=(0, 255, 0), 
+                        px_x=px_x, px_y=px_y, korrektur=korrektur, 
+                        feedback_cx=feedback['cx'], feedback_cy=feedback['cy'],
+                        thickness=1, dashed=True, is_hit=False, 
+                        zoom_params=zoom_params[s], scale_x=self.scale_x, scale_y=self.scale_y
+                    )
                     
                     ringe = target_data.get('ringe_durchmesser_mm', {})
                     if ringe:
                         alle_durchmesser = sorted([float(d) for d in ringe.values()], reverse=True)
                         for d_mm in alle_durchmesser[:2]: # Die zwei größten
-                            self.draw_smart_ellipse(roi, s, feedback['cx'], feedback['cy'], d_mm / 2.0, (0, 255, 0), thickness=1, dashed=True, is_hit=False, zoom_params=zoom_params[s])
+                            Helfer.draw_smart_ellipse(
+                                img=roi, center_x=feedback['cx'], center_y=feedback['cy'], 
+                                radius_mm=d_mm / 2.0, color=(0, 255, 0), 
+                                px_x=px_x, px_y=px_y, korrektur=korrektur, 
+                                feedback_cx=feedback['cx'], feedback_cy=feedback['cy'],
+                                thickness=1, dashed=True, is_hit=False, 
+                                zoom_params=zoom_params[s], scale_x=self.scale_x, scale_y=self.scale_y
+                            )
                 else:
                     # Fallback (Ideal-Ringe aus Pixeln, falls keine JSON geladen ist)
                     fb_ideal_rx = int(round(feedback['ideal_rx'] * z * self.scale_x))
@@ -489,6 +433,12 @@ class TargetVisionRenderer:
             for s, fb in [('left', self.tracker.calib_feedback_left), ('right', self.tracker.calib_feedback_right)]:
                 if s in camera_rois and fb:
                     roi = camera_rois[s]
+                    
+                    seite_str = "links" if s == 'left' else "rechts"
+                    px_x = self.tracker.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+                    px_y = self.tracker.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+                    korrektur = self.fischaugenkorrektur_links if s == 'left' else self.fischaugenkorrektur_rechts
+
                     aktive_scheibe = self.tracker.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
                     targets = self.tracker.dm.load_targets()
                     if aktive_scheibe in targets:
@@ -497,11 +447,24 @@ class TargetVisionRenderer:
                         innenzehner = target_data.get('innenzehner_mm', 0.0)
                         
                         for ring_name, d_mm in ringe.items():
-                            self.draw_smart_ellipse(roi, s, fb['cx'], fb['cy'], float(d_mm) / 2.0, (0, 255, 0), thickness=1, dashed=True, is_hit=False, zoom_params=zoom_params[s])
+                            Helfer.draw_smart_ellipse(
+                                img=roi, center_x=fb['cx'], center_y=fb['cy'], 
+                                radius_mm=float(d_mm) / 2.0, color=(0, 255, 0), 
+                                px_x=px_x, px_y=px_y, korrektur=korrektur, 
+                                feedback_cx=fb['cx'], feedback_cy=fb['cy'],
+                                thickness=1, dashed=True, is_hit=False, 
+                                zoom_params=zoom_params[s], scale_x=self.scale_x, scale_y=self.scale_y
+                            )
                             
                         if innenzehner > 0:
-                            self.draw_smart_ellipse(roi, s, fb['cx'], fb['cy'], float(innenzehner) / 2.0, (0, 255, 0), thickness=1, dashed=True, is_hit=False, zoom_params=zoom_params[s])
-                            
+                            Helfer.draw_smart_ellipse(
+                                img=roi, center_x=fb['cx'], center_y=fb['cy'], 
+                                radius_mm=float(innenzehner) / 2.0, color=(0, 255, 0), 
+                                px_x=px_x, px_y=px_y, korrektur=korrektur, 
+                                feedback_cx=fb['cx'], feedback_cy=fb['cy'],
+                                thickness=1, dashed=True, is_hit=False, 
+                                zoom_params=zoom_params[s], scale_x=self.scale_x, scale_y=self.scale_y
+                            )
         # =========================================================================
                             
         # ---> CAMERA OVERLAY ZEICHNEN <---

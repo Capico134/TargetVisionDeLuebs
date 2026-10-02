@@ -3,6 +3,7 @@ import numpy as np
 import math
 from PIL import Image, ImageTk
 import time
+from HelperDeLuebs import Helfer
 
 class LaborRenderer:
     def __init__(self, app):
@@ -11,7 +12,7 @@ class LaborRenderer:
     def update_image_display(self, full_rebuild=True, push_to_gui=True):
         """Zeichnet die Bilder. full_rebuild=False nutzt den Cache für extremes Tempo beim Blinken!"""
         if getattr(self.app, 'last_live_img', None) is None: return
-        t_start = time.perf_counter() # Präzise Stoppuhr starten
+        t_start = time.perf_counter()
 
         h, w = self.app.last_live_img.shape[:2]
         
@@ -132,7 +133,6 @@ class LaborRenderer:
             #
             #            cv2.circle(right_img, start_pt, 2, hellblau, -1)
             #            cv2.circle(right_img, end_pt, 2, hellblau, -1)
-
             # Zoom-Faktor einrechnen
             self.app.current_scale = (550 / h) * self.app.zoom_factor
             self.app.current_img_w = int(w * self.app.current_scale)
@@ -144,7 +144,7 @@ class LaborRenderer:
             combined = np.hstack((resized_live, resized_right))
             
             # =========================================================================
-            # ---> NEU: High-Res Abrisskanten-Linien (Knackig scharf auf Monitor-Auflösung) <---
+            # High-Res Abrisskanten-Linien (Knackig scharf auf Monitor-Auflösung) <---
             # =========================================================================
             if mode == 4 and hasattr(self.app, 'current_engine_shots'):
                 side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
@@ -159,9 +159,6 @@ class LaborRenderer:
                     bx, by = shot.get('base_pos', (0, 0))
                     ex, ey = shot.get('end_pos', (0, 0))
 
-                    # 1. +0.5 schiebt den Punkt in die exakte optische Mitte des (gezoomten) Pixels
-                    # 2. Koordinaten mit dem Zoom-Faktor multiplizieren
-                    # 3. X-Koordinate um die Breite des linken Bildes verschieben
                     scaled_bx = int(round((bx + 0.5) * self.app.current_scale)) + self.app.current_img_w
                     scaled_by = int(round((by + 0.5) * self.app.current_scale))
                     
@@ -171,83 +168,74 @@ class LaborRenderer:
                     start_pt = (scaled_bx, scaled_by)
                     end_pt = (scaled_ex, scaled_ey)
 
-                    ## =========================================================================
-                    ## ---> NEU: Konsolen-Log für die Monitor-Koordinaten <---
-                    ## =========================================================================
-                    #print(f"\n📐 ABRISSKANTE RENDER-LOG (Zoom {self.app.zoom_factor:.1f}x | Scale {self.app.current_scale:.2f}):")
-                    #print(f"   -> START    [Kante] : Original ({bx:.2f}, {by:.2f}) ➔ Monitor-Pixel: {start_pt}")
-                    #print(f"   -> ENDPUNKT [Rumpf] : Original ({ex:.2f}, {ey:.2f}) ➔ Monitor-Pixel: {end_pt}")
-
                     hellblau = (255, 200, 0) 
                     gruen = (0, 255, 0) 
                     
                     if start_pt != end_pt:
-                        # Strichstärke 1, aber auf Monitorauflösung gezeichnet (LINE_8 = ohne Antialiasing!)
                         cv2.line(combined, start_pt, end_pt, gruen, 1, cv2.LINE_8) 
 
-                    # Fester Radius von 3 Monitor-Pixeln für die Punkte (unabhängig vom Zoom!)
                     cv2.circle(combined, start_pt, 3, hellblau, -1, cv2.LINE_8)
                     cv2.circle(combined, end_pt, 3, hellblau, -1, cv2.LINE_8)
             
-            if getattr(self.app, 'show_target_rings_var', None) and self.app.show_target_rings_var.get():
-                meta = getattr(self.app, 'original_match_data', {})
-                if meta: meta = meta.get("metadata", {})
-                    
-                side = self.app.active_camera_var.get()
-                center_key = 'center_l' if side == 'left' else 'center_r'
-                center_pts = meta.get(center_key)
+            
+            # =========================================================================
+            # ---> RENDER-HELFER: Daten sammeln <---
+            # =========================================================================
+            side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
+            seite_str = "links" if side == 'left' else "rechts"
+            d_config = self.app.package_data['config']
+            px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+            px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+            korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
+            
+            meta = getattr(self.app, 'original_match_data', {})
+            meta_dict = meta.get("metadata", {}) if isinstance(meta, dict) else {}
+            center_key = 'center_l' if side == 'left' else 'center_r'
+            center_pts = meta_dict.get(center_key)
+            fb_cx = center_pts[0] if center_pts else None
+            fb_cy = center_pts[1] if center_pts else None
+            
+            aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+            ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+            targets = self.app.dm.load_targets()
+            
+            if aktive_scheibe in targets and ringwertung_aktiv:
+                kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
+            else:
+                kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
                 
-                if center_pts:
-                    cx, cy = center_pts
-                    d_config = self.app.package_data['config']  
-                    aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-                    targets = self.app.dm.load_targets()
-                    
+            zoom_p = (1.0, self.app.current_img_w / self.app.current_scale, 0.0)
+
+            # ---> RENDER-HELFER: Ringe zeichnen <---
+            if getattr(self.app, 'show_target_rings_var', None) and self.app.show_target_rings_var.get():
+                if fb_cx is not None and fb_cy is not None:
                     if aktive_scheibe in targets:
                         target_data = targets[aktive_scheibe]
                         ringe = target_data.get('ringe_durchmesser_mm', {})
                         innenzehner = target_data.get('innenzehner_mm', 0.0)
                         
-                        seite_str = "links" if side == 'left' else "rechts"
-                        px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-                        px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-                        korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) 
+                        ring_color = (255, 255, 0) # Cyan (BGR)
                         
-                        scaled_cx = round(cx * self.app.current_scale) + self.app.current_img_w
-                        scaled_cy = round(cy * self.app.current_scale)
-                        ring_color = (255, 255, 0)
-                        
-                        def draw_dashed_ellipse(img, center, rx, ry, color):
-                            for angle in range(1, 361, 6): 
-                                cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 2, color, 1, cv2.LINE_8)
-                        
+                        # 1. Standard-Ringe (gestrichelt)
                         for ring_name, d_mm in ringe.items():
-                            r_mm_base = float(d_mm) / 2.0
-                            r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) 
-                            rx = round((r_mm_draw * px_x) * self.app.current_scale)
-                            ry = round((r_mm_draw * px_y) * self.app.current_scale)
-                            draw_dashed_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, ring_color)
-                            
+                            Helfer.draw_smart_ellipse(
+                                img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=float(d_mm)/2.0,
+                                color=ring_color, px_x=px_x, px_y=px_y, korrektur=korrektur,
+                                feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=True, is_hit=False,
+                                zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
+                            )
                         if innenzehner > 0:
-                            r_mm_base = float(innenzehner) / 2.0
-                            r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) 
-                            rx = round((r_mm_draw * px_x) * self.app.current_scale)
-                            ry = round((r_mm_draw * px_y) * self.app.current_scale)
-                            draw_dashed_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, ring_color)
-            
+                            Helfer.draw_smart_ellipse(
+                                img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=float(innenzehner)/2.0,
+                                color=ring_color, px_x=px_x, px_y=px_y, korrektur=korrektur,
+                                feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=True, is_hit=False,
+                                zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
+                            )
+                            
+                        # 2. Die dezenten gestrichelten 10tel-Ringe
                         if '10' in ringe:
-                            def draw_orange_ellipse(img, center, rx, ry, color):
-                                if rx <= 0 or ry <= 0: return
-                                for angle in range(0, 360, 12):
-                                    cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 4, color, 1, cv2.LINE_8)
-                                    
-                            def draw_purple_ellipse(img, center, rx, ry, color):
-                                if rx <= 0 or ry <= 0: return
-                                for angle in range(6, 360, 12):
-                                    cv2.ellipse(img, center, (rx, ry), 0, angle, angle + 4, color, 1, cv2.LINE_8)
-                                    
-                            color_outer = (0, 165, 255) 
-                            color_inner = (82, 4, 87)   
+                            color_outer = (0, 165, 255) # Orange
+                            color_inner = (82, 4, 87)   # Purple
                             
                             sorted_ring_items = sorted(ringe.items(), key=lambda x: int(x[0]))
                             radii_list = [(int(r_name), float(d_val) / 2.0) for r_name, d_val in sorted_ring_items]
@@ -260,10 +248,12 @@ class LaborRenderer:
                                 for step in range(1, 10):
                                     fraction = step / 10.0
                                     r_mm_base = r_outer_mm + (r_inner_mm - r_outer_mm) * fraction
-                                    r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) 
-                                    rx = round((r_mm_draw * px_x) * self.app.current_scale)
-                                    ry = round((r_mm_draw * px_y) * self.app.current_scale)
-                                    draw_orange_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, color_outer)
+                                    Helfer.draw_smart_ellipse(
+                                        img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
+                                        color=color_outer, px_x=px_x, px_y=px_y, korrektur=korrektur,
+                                        feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=True, dash_step=12, dash_length=2, is_hit=False,
+                                        zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
+                                    )
                             
                             d_10 = float(ringe['10'])
                             kaliber_mm = float(target_data.get('kaliber_mm', 4.5))
@@ -273,71 +263,172 @@ class LaborRenderer:
                                 prozent = (target_score - 10.0) / 0.99
                                 r_mm_base = radius_10_score * (1.0 - prozent)
                                 if r_mm_base > 0:
-                                    r_mm_draw = r_mm_base * (1.0 + (r_mm_base * korrektur)) 
-                                    rx = round((r_mm_draw * px_x) * self.app.current_scale)
-                                    ry = round((r_mm_draw * px_y) * self.app.current_scale)
-                                    draw_purple_ellipse(combined, (scaled_cx, scaled_cy), rx, ry, color_inner)
+                                    Helfer.draw_smart_ellipse(
+                                        img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
+                                        color=color_inner, px_x=px_x, px_y=px_y, korrektur=korrektur,
+                                        feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=True, dash_offset=6, dash_step=12, dash_length=2, is_hit=False,
+                                        zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
+                                    )
+                            
+                        # 3. Bracket-Highlighting (durchgezogene 10tel-Ringe für den neuesten Schuss)
+                        current_frame_num = self.app.current_index
+                        new_score = None
+                        if hasattr(self.app, 'current_engine_shots'):
+                            for shot in self.app.current_engine_shots:
+                                if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
+                                    new_score = shot.get('score', 0.0)
+                                    break
+                                    
+                        if new_score is not None and new_score >= 1.0:
+                            highlight_color = (255, 110, 255) # Etwas weniger Knalliges Magenta
+                            
+                            # ---> DER FIX: Die Mathematik spaltet sich bei 10.0 <---
+                            if new_score >= 10.0:
+                                if '10' in ringe:
+                                    d_10 = float(ringe['10'])
+                                    radius_10_score = (d_10 + kaliber_mm) / 2.0
+                                    
+                                    #for step in range(0, 10):
+                                    for step in range(1, 10):
+                                        target_score = 10.0 + (step / 10.0)
+                                        prozent = (target_score - 10.0) / 0.99
+                                        r_mm_base = radius_10_score * (1.0 - prozent)
+                                        if r_mm_base >= 0:
+                                            Helfer.draw_smart_ellipse(
+                                                img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
+                                                color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur,
+                                                feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=False, is_hit=False,
+                                                zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
+                                            )
+                            else:
+                                base_ring = int(math.floor(new_score))
+                                str_base = str(base_ring)
+                                str_next = str(base_ring + 1)
+                                
+                                if str_base in ringe:
+                                    r_outer = float(ringe[str_base]) / 2.0
+                                    if str_next in ringe:
+                                        r_inner = float(ringe[str_next]) / 2.0
+                                    else:
+                                        if str(base_ring - 1) in ringe:
+                                            step = (float(ringe[str(base_ring - 1)]) / 2.0) - r_outer
+                                            r_inner = max(0.0, r_outer - step)
+                                        else:
+                                            r_inner = 0.0
+                                    
+                                    #for i in range(11):
+                                    for i in range(1,10):
+                                        fraction = i / 10.0
+                                        r_draw = r_outer + (r_inner - r_outer) * fraction
+                                        Helfer.draw_smart_ellipse(
+                                            img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_draw,
+                                            color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur,
+                                            feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=False, is_hit=False,
+                                            zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
+                                        )
             
+            # ---> RENDER-HELFER: Gelbe Original-Treffer <---
             if getattr(self.app, 'show_orig_hits_var', None) and self.app.show_orig_hits_var.get():
                 orig_shots = getattr(self.app, 'last_orig_shots_to_draw', [])
                 if orig_shots:
-                    base_r = getattr(self.app, 'official_radius_px', 15)
-                    scaled_r = round(base_r * self.app.current_scale)
-                    
                     for s in orig_shots:
-                        self._draw_distorted_shot_ellipse(combined, s['x'], s['y'], (0, 255, 255), thickness=1)
+                        Helfer.draw_smart_ellipse(
+                            img=combined, center_x=s['x'], center_y=s['y'], radius_mm=kaliber_mm/2.0,
+                            color=(0, 255, 255), px_x=px_x, px_y=px_y, korrektur=korrektur,
+                            feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=False, is_hit=True,
+                            zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True
+                        )
             
-            # ---> DEN FERTIGEN BACKGROUND-CACHE SICHERN <---
             self.app.cached_static_layer = combined.copy()
-
 
         # =====================================================================
         # ---> SCHICHT 2: LIVE-OVERLAYS (Wird auf die Kopie des Caches gemalt) <---
         # =====================================================================
-        # HIER ORANGENER BLINKENDER KREIS!!! #
         combined = self.app.cached_static_layer.copy()
-
-        if getattr(self.app, 'blink_state', True) and hasattr(self.app, 'current_engine_shots'):
-            side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
-            current_frame_num = self.app.current_index
+        
+        # Helfer-Daten auch hier laden (für Overlays)
+        side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
+        seite_str = "links" if side == 'left' else "rechts"
+        d_config = self.app.package_data['config']
+        px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+        px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+        korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
+        
+        meta = getattr(self.app, 'original_match_data', {})
+        meta_dict = meta.get("metadata", {}) if isinstance(meta, dict) else {}
+        center_key = 'center_l' if side == 'left' else 'center_r'
+        center_pts = meta_dict.get(center_key)
+        fb_cx = center_pts[0] if center_pts else None
+        fb_cy = center_pts[1] if center_pts else None
+        
+        aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+        ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+        targets = self.app.dm.load_targets()
+        
+        if aktive_scheibe in targets and ringwertung_aktiv:
+            kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
+        else:
+            kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
             
+        zoom_p = (1.0, self.app.current_img_w / self.app.current_scale, 0.0)
+        current_frame_num = self.app.current_index
+
+        # ---> RENDER-HELFER: Blinkender Live-Treffer <---
+        if getattr(self.app, 'blink_state', True) and hasattr(self.app, 'current_engine_shots'):
             for shot in self.app.current_engine_shots:
                 if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
                     hx, hy = shot['pos']
-                    # Die gesamte Fischaugen-Mathematik in einer einzigen Zeile gekapselt!
-                    self._draw_distorted_shot_ellipse(combined, hx, hy, (0, 165, 255), thickness=1)
+                    Helfer.draw_smart_ellipse(
+                        img=combined, center_x=hx, center_y=hy, radius_mm=kaliber_mm/2.0,
+                        #color=(0, 165, 255), px_x=px_x, px_y=px_y, korrektur=korrektur,
+                        color=(133, 83, 255), px_x=px_x, px_y=px_y, korrektur=korrektur,  #Neon-Koralle
+                        feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=False, is_hit=True,
+                        zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True
+                    )
 
+        # ---> RENDER-HELFER: Angeklickter / Hervorgehobener Treffer <---
         hl = getattr(self.app, 'highlighted_shot', None)
         if hl is not None:
             if time.time() - hl['time'] < 5.0:
                 hx, hy = hl['pos']
                 f_num = hl['frame']
                 
+                # 1. Linke Seite (Röntgenblick - bleibt als reiner OpenCV-Kreis ohne Linsenverzerrung!)
                 scaled_x1 = round(hx * self.app.current_scale)
                 scaled_y = round(hy * self.app.current_scale)
                 
                 base_r = getattr(self.app, 'official_radius_px', 15)
                 scaled_r = round(base_r * self.app.current_scale)
-                scaled_x2 = scaled_x1 + self.app.current_img_w 
-                
                 color = (255, 50, 200) 
-                
                 cv2.circle(combined, (scaled_x1, scaled_y), scaled_r, color, 1)
                 cv2.circle(combined, (scaled_x1, scaled_y), 4, (0, 0, 0), -1)    
                 cv2.circle(combined, (scaled_x1, scaled_y), 2, color, -1)        
                 cv2.putText(combined, f"#{f_num}", (scaled_x1 - 25, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2, cv2.LINE_8) 
+                ## 2. Rechte Seite (Linsenkorrigierte Ansicht über Helfer)
+                #Helfer.draw_smart_ellipse(
+                #    img=combined, center_x=hx, center_y=hy, radius_mm=kaliber_mm/2.0,
+                #    color=color, px_x=px_x, px_y=px_y, korrektur=korrektur,
+                #    feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=False, is_hit=True,
+                #    zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True
+                #)
+                ## Text für die rechte Seite
+                #scaled_x2 = round(hx * self.app.current_scale) + self.app.current_img_w 
+                #cv2.putText(combined, f"#{f_num}", (scaled_x2 - 30, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_8)
+
+                # 2. Rechte Seite (Die ungeschönte Wahrheit der Score-Berechnung!)
+                # Wir berechnen den exakten Pixelradius, den auch die Erkennung nutzt
+                avg_px_pro_mm = (px_x + px_y) / 2.0
+                echter_score_radius_px = (kaliber_mm / 2.0) * avg_px_pro_mm
+                scaled_r = round(echter_score_radius_px * self.app.current_scale)
                 
-                # 2. Rechte Seite (Varianten-Ansicht): Perfekt linsenkorrigiert über den Helfer!
-                #ALT:
-                cv2.circle(combined, (scaled_x2, scaled_y), scaled_r, color, 1)
-                cv2.circle(combined, (scaled_x2, scaled_y), 4, (0, 0, 0), -1)    
-                cv2.circle(combined, (scaled_x2, scaled_y), 2, color, -1)        
-                #NEU:
-                #self._draw_distorted_shot_ellipse(combined, hx, hy, color, thickness=1)
-                
-                #cv2.putText(combined, f"#{f_num}", (scaled_x2 - 30, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_8) #ALT!!!
-                # Text-Label für die rechte Seite positionieren
                 scaled_x2 = round(hx * self.app.current_scale) + self.app.current_img_w 
+                
+                # Der "dumme", aber für den Score exakt verwendete OpenCV-Kreis
+                cv2.circle(combined, (scaled_x2, scaled_y), scaled_r, color, 2, cv2.LINE_8)
+                cv2.circle(combined, (scaled_x2, scaled_y), 4, (0, 0, 0), -1, cv2.LINE_8)
+                cv2.circle(combined, (scaled_x2, scaled_y), 2, color, -1, cv2.LINE_8)
+                
+                # Text für die rechte Seite
                 cv2.putText(combined, f"#{f_num}", (scaled_x2 - 30, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_8)
         
         if getattr(self.app, 'calib_mode_active', False) and hasattr(self.app, 'calib_points'):
@@ -351,13 +442,9 @@ class LaborRenderer:
                 cv2.circle(combined, (final_x, final_y), 4, (0, 0, 0), -1)
                 cv2.circle(combined, (final_x, final_y), 3, (0, 0, 255), -1)
         
-        # Sichert das Bild für das Fadenkreuz
         self.app.base_combined_img = combined.copy()
-        
-        # Wir konvertieren und cachen das RGB-Bild EINZIGES MAL hier!
         self.app.base_combined_img_rgb = cv2.cvtColor(combined, cv2.COLOR_BGR2RGB)
         
-        # ---> DER FIX: Nur an die GUI schicken, wenn es nicht sofort vom Fadenkreuz überschrieben wird! <---
         if push_to_gui:
             img_pil = Image.fromarray(self.app.base_combined_img_rgb)
             self.app.tk_image = ImageTk.PhotoImage(img_pil)
@@ -372,17 +459,15 @@ class LaborRenderer:
         #    modus = "FULL-REBUILD" if full_rebuild else "QUICK-UPDATE"
         #    # ---> DER FIX: Erst definieren, dann drucken! <---
         #    gui_upload = "+ GUI" if push_to_gui else "(RAM ONLY)"
-        #    print(f"🐌 Render-Zyklus [{modus} {gui_upload}]: {dauer_ms:.1f} ms")
+        #    print(f"🐌 Render-Zyklus [{modus} {gui_upload}]: {dauer_ms:.1f} ms")		
 
     def draw_crosshair(self, x, y):
-        # Wir nutzen jetzt den RGB-Cache!
         if getattr(self.app, 'base_combined_img_rgb', None) is None or not hasattr(self.app, 'current_scale'):
             return
             
         temp_img = self.app.base_combined_img_rgb.copy()
         kreis_radius = int(getattr(self.app, 'current_radius_px', 15) * self.app.current_scale) 
         
-        # Da das Bild schon RGB ist, ist Cyan = (0, 255, 255) statt (255, 255, 0)!
         neon_cyan_rgb = (0, 255, 255) 
         
         is_left = (x < self.app.current_img_w)
@@ -391,7 +476,6 @@ class LaborRenderer:
         cv2.circle(temp_img, (mirror_x, y), kreis_radius, neon_cyan_rgb, 2)
         cv2.circle(temp_img, (mirror_x, y), 2, neon_cyan_rgb, -1) 
 
-        # ---> NEU: Direkt umwandeln, da schon RGB! <---
         img_pil = Image.fromarray(temp_img)
         self.app.tk_image = ImageTk.PhotoImage(img_pil)
         self.app.lbl_image.config(image=self.app.tk_image)
@@ -408,72 +492,7 @@ class LaborRenderer:
         self.app.tk_image = ImageTk.PhotoImage(img_pil)
         self.app.lbl_image.config(image=self.app.tk_image)
         
-        # ---> DER FIX: Wir zwingen Tkinter, das Bild SOFORT auf den Monitor 
-        # zu schicken, bevor das nächste Mausevent verarbeitet werden darf! <---
         self.app.root.update_idletasks()
-        
-        t_end = time.perf_counter()
-        dauer_ms = (t_end - t_start) * 1000
-        #print("draw_zoom_box time: ", dauer_ms)
-        
-    def _draw_distorted_shot_ellipse(self, img, hx, hy, color, thickness=1):
-        """Zentraler Helfer: Zeichnet einen Schuss perfekt linsenkorrigiert als Ellipse oder Kreis."""
-        side = self.app.active_camera_var.get()
-        d_config = self.app.package_data['config']
-        seite_str = "links" if side == 'left' else "rechts"
-        
-        px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-        px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-        korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
-        
-        aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-        ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
-        targets = self.app.dm.load_targets()
-        
-        if aktive_scheibe in targets and ringwertung_aktiv:
-            offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
-        else:
-            offizielles_kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
-        r_shot_mm = offizielles_kaliber_mm / 2.0
-        
-        meta = getattr(self.app, 'original_match_data', {})
-        if meta and "metadata" in meta: meta_dict = meta.get("metadata", {})
-        else: meta_dict = meta if isinstance(meta, dict) else {}
-        
-        center_key = 'center_l' if side == 'left' else 'center_r'
-        center_pts = meta_dict.get(center_key)
-        
-        avg_px = (px_x + px_y) / 2.0
-        fallback_r = int(r_shot_mm * avg_px * self.app.current_scale)
-        
-        scaled_x1 = round(hx * self.app.current_scale)
-        scaled_y = round(hy * self.app.current_scale)
-        scaled_x2 = scaled_x1 + self.app.current_img_w 
-        
-        if center_pts:
-            cx, cy = center_pts
-            dx_mm = (hx - cx) / px_x
-            dy_mm = (hy - cy) / px_y
-            r_mm = math.hypot(dx_mm, dy_mm)
-            
-            if r_mm > 0.05:
-                angle_deg = math.degrees(math.atan2(dy_mm, dx_mm))
-                scale_radial = 1.0 + (2.0 * r_mm * korrektur)
-                scale_tangential = 1.0 + (r_mm * korrektur)
-                
-                rx = round((r_shot_mm * scale_radial * px_x) * self.app.current_scale)
-                ry = round((r_shot_mm * scale_tangential * px_y) * self.app.current_scale)
-                
-                cv2.ellipse(img, (scaled_x2, scaled_y), (int(rx), int(ry)), angle_deg, 0, 360, color, thickness, cv2.LINE_8) 
-            else:
-                cv2.circle(img, (scaled_x2, scaled_y), fallback_r, color, thickness, cv2.LINE_8) 
-        else:
-            cv2.circle(img, (scaled_x2, scaled_y), fallback_r, color, thickness, cv2.LINE_8) 
-            
-        cv2.circle(img, (scaled_x2, scaled_y), 1, (0, 0, 0) if color != (0,0,0) else (255,255,255), -1, cv2.LINE_8)
-    
-    
-    
     #!!!!!!!!!!!!! EI-KORREKTUR !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     """
         # =========================================================================
