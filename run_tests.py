@@ -8,37 +8,28 @@ import configparser
 import re
 from datetime import datetime
 import time
+import math
 
 # Deine echte Engine importieren
 from DetectionDeLuebs import TargetDetector
 from AuditedConfig import AuditedConfigParser
+from StateManagerDeLuebs import StateManager
+from DateiManagerDeLuebs import DateiManager
 
 # ==========================================
 # MINIMALISTISCHE DUMMYS FÜR DEN TESTLAUF
 # ==========================================
-class DummyState:
-    def __init__(self, side):
-        self.side = side
-        self.cumulative_mask = None
-
-class DummyStateManager:
-    def __init__(self):
-        self.state_left = DummyState('left')
-        self.state_right = DummyState('right')
-        self.shots = []
-        
-    def add_shot(self, side, cx, cy, area, cv_score=0.0, base_pos=None, end_pos=None):
-        shot = {'side': side, 'pos': (cx, cy), 'area': area, 'score': -1.0, 'is_new': True, 'cv_score': cv_score}
-        self.shots.append(shot)
-        return shot
-        
-    def set_nullpunkt(self, side, x, y): pass
-
 class DummyDateiManager:
-    # Schluckt alle Speicherbefehle
+    def __init__(self, dm_real):
+        self.dm_real = dm_real
+        self.debug_images = {}
+        
     def save_debug_image(self, name, image): pass
-    def load_targets(self): return {}
-
+    def write_log(self, msg): pass
+    
+    def load_targets(self):
+        # Holt die echten Scheibendaten (Luftgewehr, Pistole etc.)
+        return self.dm_real.load_targets()
 
 # ==========================================
 # DER INTELLIGENTE SPIONAGE-LOGGER
@@ -163,9 +154,21 @@ def run_all_tests():
                     continue
                 original_match_data = json.loads(zf.read(match_json_name).decode('utf-8'))
                 
-                # 3. Engine aufbauen
-                d_dm = DummyDateiManager()
-                d_sm = DummyStateManager()
+                # 3. Echte Engine & ECHTEN StateManager aufbauen
+                dm_real = DateiManager()
+                d_dm = DummyDateiManager(dm_real)
+                d_sm = StateManager(config, d_dm)
+                
+                # =========================================================================
+                # ---> DER FIX: Wir zwingen den Test, die echten Zentren der match.json zu nutzen! <---
+                # =========================================================================
+                if "metadata" in original_match_data:
+                    meta = original_match_data["metadata"]
+                    if "center_l" in meta and meta["center_l"]:
+                        d_sm.set_nullpunkt('left', meta["center_l"][0], meta["center_l"][1])
+                    if "center_r" in meta and meta["center_r"]:
+                        d_sm.set_nullpunkt('right', meta["center_r"][0], meta["center_r"][1])
+                        
                 detector = TargetDetector(config, d_dm, d_sm, smart_logger.log_callback)
                 
                 # 4. Bilder durch die Engine jagen
@@ -220,20 +223,25 @@ def run_all_tests():
                         
                         f_num = curr.get('labor_frame_num', '?')
                         
-                        # ---> NEU: Score vergleichen <---
                         orig_score = float(orig.get('score', -1.0))
                         curr_score = float(curr.get('score', -1.0))
                         score_diff = abs(curr_score - orig_score)
                         
+                        # 1. POSITIONS-CHECK (Endlich mit aussagekräftigem Log!)
                         if dist > tolerance_px:
                             match_passed = False
-                            error_messages.append(f"[{side.upper()}] Bild #{f_num:<3} | Score weicht ab: Orig {orig_score:.1f} vs Neu {curr_score:.1f}")
+                            error_messages.append(
+                                f"[{side.upper():<5}] Bild #{f_num:<3} | 📍 POSITION | "
+                                f"Orig: {ox:>6.1f}, {oy:>6.1f} | Neu: {cx:>6.1f}, {cy:>6.1f} | Dist: {dist:>5.2f} px"
+                            )
                             
-                        # ---> NEU: Falls der Score um mehr als 0.1 abweicht <---
+                        # 2. SCORE-CHECK (Nur wenn beide valide Scores haben)
                         if orig_score != -1.0 and curr_score != -1.0 and score_diff > tolerance_score:
                             match_passed = False
-                            error_messages.append(f"[{side.upper()}] Bild #{f_num:<3} | Score weicht ab: Orig {orig_score:.1f} vs Neu {curr_score:.1f}")
-
+                            error_messages.append(
+                                f"[{side.upper():<5}] Bild #{f_num:<3} | 🎯 SCORE    | "
+                                f"Orig: {orig_score:>5.1f}          | Neu: {curr_score:>5.1f}          | Diff: {score_diff:>5.2f} R "
+                            )
                 
                 # 6. ERGEBNIS DRUCKEN & LOGGEN
                 if match_passed:

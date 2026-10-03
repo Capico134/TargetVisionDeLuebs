@@ -126,6 +126,7 @@ class LaborApp:
         self.clipping_factor_current_var = tk.DoubleVar(value=0.95)
         # ---> NEU: Variable für den Filter <---
         self.max_treffer_je_frame_var = tk.IntVar(value=0)
+        #self.debug_subpixel_export_var = tk.BooleanVar(value=False) # <--- NEU
         # ---> NEU: Farb-Bonus System <---
         self.farb_bonus_aktiv_var = tk.BooleanVar(value=False)
         self.farb_bonus_limit_var = tk.DoubleVar(value=150.0)
@@ -294,12 +295,18 @@ class LaborApp:
             
             # =========================================================================
             # ---> DER FIX: Den Slider-losen Parameter einfach mit auf die Liste packen! <---
+            # !!!!!!!!!!!!!!!!!!!!!! DIE ECHTE LAZY INJECTION !!!!!!!!!!!!!!!!!!!!!!
             # =========================================================================
             if not parser.has_section('Zielscheibe'):
                 parser.add_section('Zielscheibe')
             if not parser.has_option('Zielscheibe', 'ringwertung_nachkommastellen'):
                 parser.set('Zielscheibe', 'ringwertung_nachkommastellen', '1')
                 self.migrated_keys.append('ringwertung_nachkommastellen')
+            if not parser.has_section('Erkennung'):
+                parser.add_section('Erkennung')
+            if not parser.has_option('Erkennung', 'debug_subpixel_export'):
+                parser.set('Erkennung', 'debug_subpixel_export', 'No')
+                self.migrated_keys.append('debug_subpixel_export')
             # =========================================================================
             
             # d_config = self.package_data['config']
@@ -808,7 +815,7 @@ class LaborApp:
         zoom_multiplier = min(container_w / box_w, container_h / box_h)
         zoom_multiplier = max(1.01, min(zoom_multiplier, 15.0))
         
-        self.zoom_factor = max(0.2, min(self.zoom_factor * zoom_multiplier, 10.0))
+        self.zoom_factor = max(0.2, min(self.zoom_factor * zoom_multiplier, 12.5))
         print("apply_zoom_box - zoom_factor: ",self.zoom_factor)
         
         # Neuen Maßstab ermitteln
@@ -1374,7 +1381,7 @@ class LaborApp:
         # 4. Den internen zoom_factor der Engine füttern
         # (Die Engine rechnet intern immer mit einer Basis-Höhe von 550 Pixeln)
         self.zoom_factor = target_scale * (h / 550.0)
-        self.zoom_factor = max(0.2, min(self.zoom_factor, 10.0)) # Sicherheits-Grenzen
+        self.zoom_factor = max(0.2, min(self.zoom_factor, 12.5)) # Sicherheits-Grenzen
         
         # Echte Skalierung für das Panning (falls die Grenzen gegriffen haben)
         echte_scale = (550.0 / h) * self.zoom_factor
@@ -1387,32 +1394,56 @@ class LaborApp:
 
     
     def on_mouse_scroll(self, event):
-        old_zoom = self.zoom_factor
-        
-        # Prüfen, ob nach oben (num 4 / delta > 0) oder unten gescrollt wurde
+        # ---> DER FIX: Wir merken uns den Zoom & die Maus VOR dem ersten Scroll-Tick! <---
+        if not getattr(self, '_is_scrolling', False):
+            self._is_scrolling = True
+            self._scroll_start_zoom = self.zoom_factor
+            self._scroll_mouse_x = event.x
+            self._scroll_mouse_y = event.y
+            
+        # Prüfen, ob nach oben oder unten gescrollt wurde
         if event.num == 4 or getattr(event, 'delta', 0) > 0:
             self.zoom_factor *= 1.15  # 15% Reinzoomen
         elif event.num == 5 or getattr(event, 'delta', 0) < 0:
             self.zoom_factor *= 0.85  # 15% Rauszoomen
             
-        # Grenzen setzen (Minimal 20% der Originalgröße, Maximal 10-facher Zoom)
-        self.zoom_factor = max(0.2, min(self.zoom_factor, 10.0))
+        # Grenzen setzen
+        self.zoom_factor = max(0.2, min(self.zoom_factor, 12.5))
         
-        # ---> NEU: Das Bild zur Maus hin zoomen (wie bei Google Maps) <---
+        # Titelzeile sofort updaten (direktes visuelles Feedback)
+        self.update_frame_title()
+        
+        # Laufenden Timer abbrechen, wenn noch fleißig am Rad gedreht wird
+        if hasattr(self, '_scroll_timer') and self._scroll_timer is not None:
+            self.root.after_cancel(self._scroll_timer)
+            
+        # Render-Befehl erst ausführen, wenn 100 ms lang Ruhe am Mausrad war!
+        self._scroll_timer = self.root.after(100, lambda e=event: self._apply_scroll(e))
+
+    def _apply_scroll(self, event):
+        """Führt das tatsächliche, schwere Rendern nach Abschluss der Mausrad-Bewegung aus."""
+        self._scroll_timer = None
+        self._is_scrolling = False # Scroll-Vorgang abgeschlossen
+        
+        old_zoom = getattr(self, '_scroll_start_zoom', self.zoom_factor)
+        
         if self.zoom_factor != old_zoom:
             scale_change = self.zoom_factor / old_zoom
             
-            # Berechnet, wie weit der Pixel unter der Maus "wegrutschen" würde und zieht das Label nach
-            self.pan_x -= (event.x * scale_change - event.x)
-            self.pan_y -= (event.y * scale_change - event.y)
+            # Wir nutzen die gespeicherten Koordinaten vom START des Scrollens
+            mx = self._scroll_mouse_x
+            my = self._scroll_mouse_y
+            
+            # Verschiebung berechnen und Label exakt in diesem Moment umsetzen
+            self.pan_x -= int(mx * scale_change - mx)
+            self.pan_y -= int(my * scale_change - my)
             self.lbl_image.place(x=self.pan_x, y=self.pan_y)
-        
-        # Bild blitzschnell neu zeichnen
+            
+        # Jetzt, wo das Bild passend verschoben ist, wird es passend groß gerendert!
         self.renderer.update_image_display()
-        self.update_frame_title() # <--- NEU
         
         # Koordinaten-Anzeige manuell triggern, damit sie nach dem Zoom sofort stimmt
-        self.on_mouse_move(event)   
+        self.on_mouse_move(event)
 
     def process_and_display(self):
         #self.root.focus()
@@ -1827,8 +1858,9 @@ class LaborApp:
         w, h = int(1600 * sf), int(750 * sf) # Etwas breiter gemacht für die Ringwerte
         comp_win.geometry(f"{w}x{h}")
         
-        comp_win.transient(self.root)
-        comp_win.attributes('-topmost', True)
+        # ---> DER FIX: transient und topmost restlos entfernt! <---
+        # Wir holen das Fenster nur einmalig sanft nach vorne, ohne es festzunageln.
+        comp_win.lift()
         comp_win.focus_force()
 
         # =====================================================================

@@ -39,6 +39,7 @@ class TargetDetector:
         self.ausloeser_durch_erschuetterung = self.config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.max_image_change_percent = self.config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
         self.debug_alle_bilder_speichern = self.config.getboolean('Erkennung', 'debug_alle_bilder_speichern', fallback=False)
+        self.debug_subpixel_export = self.config.getboolean('Erkennung', 'debug_subpixel_export', fallback=False) # <--- NEU
         self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         self.ringwertung_nachkommastellen = self.config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1) # <--- HIER ERGÄNZEN
         self.hough_param1 = self.config.getint('Erkennung', 'hough_param1', fallback=25)
@@ -87,11 +88,12 @@ class TargetDetector:
         live_float += diff
         return np.clip(live_float, 0, 255).astype(np.uint8)
 
-    def calculate_hole_score(self, cx, cy, radius, thresh_new, thresh_raw):
+    def calculate_hole_score(self, cx, cy, radius, thresh_new, thresh_raw, export_details=False):
         """
-        Berechnet den Score mit unbestechlichem harten Supersampling (keine Kantenglättungs-Fehler!).
+        Berechnet den Score mit unbestechlichem harten Supersampling.
+        Optional: Exportiert die exakten Subpixel-Daten für das Labor-HUD!
         """
-        # ---> NEU: Jeder Aufruf zählt, ganz ohne Log-Eintrag! <---
+																	
         self.eval_counter += 1
         
         # 1. Bounding Box (ROI) um den Treffer berechnen (+2 Pixel Puffer)
@@ -103,7 +105,9 @@ class TargetDetector:
         
         roi_w = x2 - x1
         roi_h = y2 - y1
+        
         if roi_w <= 0 or roi_h <= 0:
+            if export_details: return 0.0, 0.0, 0.0, None
             return 0.0, 0.0, 0.0
             
         local_cx = cx - x1
@@ -125,16 +129,19 @@ class TargetDetector:
         
         scaled_cx = int(round(local_cx * scale))
         scaled_cy = int(round(local_cy * scale))
+        #scaled_cx = int(round((local_cx + 0.5) * scale - 0.5))
+        #scaled_cy = int(round((local_cy + 0.5) * scale - 0.5))		  
         scaled_r = int(round(radius * scale))
         
-        # Knallhartes Zeichnen ohne Anti-Aliasing (cv2.LINE_8)
+															  
         cv2.circle(circle_mask_highres, (scaled_cx, scaled_cy), scaled_r, 255, -1, cv2.LINE_8)
         
         pixels_in_circle = cv2.countNonZero(circle_mask_highres)
         if pixels_in_circle == 0: 
+            if export_details: return 0.0, 0.0, 0.0, None
             return 0.0, 0.0, 0.0
             
-        # 5. Echte, binäre Schnittmengen bilden (0 oder 255, keine Graustufen!)
+        # 5. Echte, binäre Schnittmengen bilden (0 oder 255)
         intersection_new = cv2.bitwise_and(circle_mask_highres, roi_new_highres)
         intersection_raw = cv2.bitwise_and(circle_mask_highres, roi_raw_highres)
         
@@ -147,6 +154,37 @@ class TargetDetector:
         weight_new = 1.0 - self.gesamt_anteil_am_200score
         total_score = 2.0 * ((coverage_new * weight_new) + (coverage_raw * self.gesamt_anteil_am_200score))
         
+        # =========================================================================
+        # ---> NEU: DER SUBPIXEL-DATEN-EXPORT FÜR DAS LABOR <---
+        # =========================================================================
+        if export_details:
+            # ---> DER FIX: reshape(-1, 2) bügelt alle OpenCV-Dimensionen glatt! <---
+            pts_new = cv2.findNonZero(intersection_new)
+            if pts_new is not None:
+                list_new = [(int(pt[0]), int(pt[1])) for pt in pts_new.reshape(-1, 2)]
+            else:
+                list_new = []
+            
+            pts_raw = cv2.findNonZero(intersection_raw)
+            if pts_raw is not None:
+                list_raw = [(int(pt[0]), int(pt[1])) for pt in pts_raw.reshape(-1, 2)]
+            else:
+                list_raw = []
+            
+            details = {
+                'scale': scale,          # Skalierungsfaktor (Wichtig fürs Labor zum Rückrechnen!)
+                'offset_x': x1,          # Die echte X-Startkoordinate der Bounding-Box im Originalbild
+                'offset_y': y1,          # Die echte Y-Startkoordinate der Bounding-Box im Originalbild
+                'local_cx': local_cx,    # Der Mittelpunkt innerhalb der Bounding Box
+                'local_cy': local_cy,
+                'radius': radius,        # Der exakte Radius in Original-Pixeln
+                'subpixels_new': list_new, # Liste aller X/Y Subpixel des NEUEN Risses (Orange)
+                'subpixels_raw': list_raw  # Liste aller X/Y Subpixel des RAW Hintergrunds (Rot)
+            }
+            return total_score, coverage_new, coverage_raw, details
+            
+        return total_score, coverage_new, coverage_raw
+            
         return total_score, coverage_new, coverage_raw
         
     def ninja_kalibrierungs_check(self, ref_bgr, side):
@@ -570,15 +608,22 @@ class TargetDetector:
                                         cy_float = M_int["m01"] / M_int["m00"]
                                     else:
                                         cx_float, cy_float = np.mean(edge_cnt[:,0,0]), np.mean(edge_cnt[:,0,1])
+                                        
                                     best_pt_center = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - cx_float, pt[0][1] - cy_float))[0]
-                                    cx_edge_center, cy_edge_center = best_pt_center
+                                    # ---> DER PHYSIK-FIX: Exakt in die Pixel-Mitte springen! <---
+                                    cx_edge_center = float(best_pt_center[0]) + 0.5
+                                    cy_edge_center = float(best_pt_center[1]) + 0.5
                                     
                                     # 2. Startpunkt Variante B: Der kürzeste Weg zum Rumpf (Dynamic)
                                     best_pt_cog = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - cog_x, pt[0][1] - cog_y))[0]
-                                    cx_edge_cog, cy_edge_cog = best_pt_cog
+                                    # ---> DER PHYSIK-FIX <---
+                                    cx_edge_cog = float(best_pt_cog[0]) + 0.5
+                                    cy_edge_cog = float(best_pt_cog[1]) + 0.5
                                     
                                     best_pt_mec = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - circle_x, pt[0][1] - circle_y))[0]
-                                    cx_edge_mec, cy_edge_mec = best_pt_mec
+                                    # ---> DER PHYSIK-FIX <---
+                                    cx_edge_mec = float(best_pt_mec[0]) + 0.5
+                                    cy_edge_mec = float(best_pt_mec[1]) + 0.5
                                     
                                     # Das Log zeigt dir exakt, warum ein Bonus vergeben oder verweigert wurde
                                     pct_str = int(max_edge_percent * 100)
@@ -603,29 +648,30 @@ class TargetDetector:
                                     # ---> KANDIDAT 1: CoG (Classic - Riss-Mitte) <---
                                     d_cog_center = np.hypot(cog_x - cx_edge_center, cog_y - cy_edge_center)
                                     if d_cog_center > min_hebel:
-                                        tcx = cx_edge_center + ((cog_x - cx_edge_center)/d_cog_center) * current_caliber_radius
-                                        tcy = cy_edge_center + ((cog_y - cy_edge_center)/d_cog_center) * current_caliber_radius
+                                        tcx = cx_edge_center + ((cog_x - cx_edge_center)/d_cog_center) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
+                                        tcy = cy_edge_center + ((cog_y - cy_edge_center)/d_cog_center) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
                                         add_candidate(f"Abriss-{e_idx+1}-CoG (Classic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_center, cy_edge_center), end_pos=(cog_x, cog_y))
                                         
                                     # ---> KANDIDAT 2: MEC (Classic - Riss-Mitte) <---
                                     d_mec_center = np.hypot(circle_x - cx_edge_center, circle_y - cy_edge_center)
                                     if d_mec_center > min_hebel:
-                                        tcx = cx_edge_center + ((circle_x - cx_edge_center)/d_mec_center) * current_caliber_radius
-                                        tcy = cy_edge_center + ((circle_y - cy_edge_center)/d_mec_center) * current_caliber_radius
+                                        tcx = cx_edge_center + ((circle_x - cx_edge_center)/d_mec_center) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
+                                        tcy = cy_edge_center + ((circle_y - cy_edge_center)/d_mec_center) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
                                         add_candidate(f"Abriss-{e_idx+1}-MEC (Classic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_center, cy_edge_center), end_pos=(circle_x, circle_y))
 
                                     # ---> KANDIDAT 3: CoG (Dynamic - Kürzester Weg) <---
                                     d_cog_dyn = np.hypot(cog_x - cx_edge_cog, cog_y - cy_edge_cog)
                                     if d_cog_dyn > min_hebel:
-                                        tcx = cx_edge_cog + ((cog_x - cx_edge_cog)/d_cog_dyn) * current_caliber_radius
-                                        tcy = cy_edge_cog + ((cog_y - cy_edge_cog)/d_cog_dyn) * current_caliber_radius
+                                        tcx = cx_edge_cog + ((cog_x - cx_edge_cog)/d_cog_dyn) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
+                                        tcy = cy_edge_cog + ((cog_y - cy_edge_cog)/d_cog_dyn) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
                                         add_candidate(f"Abriss-{e_idx+1}-CoG (Dynamic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_cog, cy_edge_cog), end_pos=(cog_x, cog_y))
 
                                     # ---> KANDIDAT 4: MEC (Dynamic - Kürzester Weg) <---
                                     d_mec_dyn = np.hypot(circle_x - cx_edge_mec, circle_y - cy_edge_mec)
                                     if d_mec_dyn > min_hebel:
-                                        tcx = cx_edge_mec + ((circle_x - cx_edge_mec)/d_mec_dyn) * current_caliber_radius
-                                        tcy = cy_edge_mec + ((circle_y - cy_edge_mec)/d_mec_dyn) * current_caliber_radius
+                                        #print(f"Kandadiat 4: {current_caliber_radius}")
+                                        tcx = cx_edge_mec + ((circle_x - cx_edge_mec)/d_mec_dyn) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
+                                        tcy = cy_edge_mec + ((circle_y - cy_edge_mec)/d_mec_dyn) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
                                         add_candidate(f"Abriss-{e_idx+1}-MEC (Dynamic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_mec, cy_edge_mec), end_pos=(circle_x, circle_y))
                                     else:
                                         self.log(side, f"⚠️ Abriss-{e_idx+1}-MEC (Dynamic) ignoriert: Hebel zu kurz ({d_mec_dyn:.1f}px < {min_hebel}px). Peilung unsicher!")
@@ -673,7 +719,7 @@ class TargetDetector:
                     cx, cy = winner['cx'], winner['cy']
                     final_shot_score = winner['score']
                     winning_method = winner['name'] # <--- NEU
-                    
+
                     # ---> NEU: Kante nur auf die Leinwand malen, wenn sie das Duell gewinnt! <---
                     if "Abriss" in winner['name'] and current_outer_edge is not None:
                         frame_abrisskanten = cv2.bitwise_or(frame_abrisskanten, current_outer_edge)
@@ -700,6 +746,14 @@ class TargetDetector:
                     update_mask_only = True
                     continue
 
+                # =========================================================================
+                # 🔬 QUICK & DIRTY: RÖNTGENBLICK FÜR DEN FINALAUSGEWÄHLTEN KANDIDATEN
+                # =========================================================================
+                if self.debug_subpixel_export:
+                    _, _, _, export_details = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw, export_details=True)
+                else:
+                    export_details = None
+                # =========================================================================
                 
                 # Doppelzählungs-Schutz (Getrennt nach Historie und aktueller Frame-Schleife)
                 is_new = True
@@ -737,7 +791,8 @@ class TargetDetector:
                                     'winner_method': winning_method,
                                     'mec_radius': new_mec_radius,
                                     'base_pos': winner.get('base_pos', (cx, cy)),
-                                    'end_pos': winner.get('end_pos', (cx, cy))
+                                    'end_pos': winner.get('end_pos', (cx, cy)),
+                                    'score_export_details': export_details # <--- Sicheres Variablen-Mapping
                                 }
                             else:
                                 self.log(side, f"⚠️ Treffer ignoriert: Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) verliert Sichel-Duell gegen besseres Fragment ({existing_shot['score']:.1f})!")
@@ -752,7 +807,8 @@ class TargetDetector:
                         'winner_method': winner['name'],
                         'mec_radius': mec_radius,
                         'base_pos': winner['base_pos'],
-                        'end_pos': winner.get('end_pos', (winner['cx'], winner['cy'])) # <--- Zielpunkt sichern
+                        'end_pos': winner.get('end_pos', (winner['cx'], winner['cy'])), # <--- Zielpunkt sichern
+                        'score_export_details': export_details # <--- Sicheres Variablen-Mapping
                     })
                     self.log(side, f"---> NEUES LOCH BESTÄTIGT: Pos ({cx:.2f}, {cy:.2f}) | Fläche: {area:.1f}px | Score: {final_shot_score:.1f} | Riss-Anteil: {winner['cov_new']:.1f}%")
                     self.log(side, "------------------------------------------------------------")
@@ -786,6 +842,10 @@ class TargetDetector:
                     # ---> HIER MUSS base_pos EXPLIZIT MIT ÜBERGEBEN WERDEN! <---
                     shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'], cv_score=sd.get('score', 0.0), base_pos=sd.get('base_pos'), end_pos=sd.get('end_pos'))
                     shot['winner_method'] = sd.get('winner_method', 'Unbekannt') 
+                    # =========================================================================
+                    # ---> DER FIX: Die Export-Details dauerhaft an den Schuss heften! <---
+                    # =========================================================================
+                    shot['score_export_details'] = sd.get('score_export_details')
                     
                     shot_num = sum(1 for s in self.sm.shots if s['side'] == side)
                     

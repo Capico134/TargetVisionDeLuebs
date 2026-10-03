@@ -38,19 +38,27 @@ class Helfer:
             dy_mm = (center_y - feedback_cy) / px_y
             r_mm_center = math.hypot(dx_mm, dy_mm)
             
-            if r_mm_center > 0.05:
-                # Fall A: Das Objekt liegt NICHT im optischen Zentrum
+            # ---> DER FIX: Wir dürfen nur drehen, wenn es WIRKLICH eine Fischaugen-Linsenverzerrung gibt! <---
+            if r_mm_center > 0.05 and abs(korrektur) > 0.00001:
+                # Fall A: Fischauge AKTIV! Objekt liegt NICHT im optischen Zentrum.
+                # Hier rotieren wir die Ellipse physikalisch zum Zentrum hin.
                 angle_deg = math.degrees(math.atan2(dy_mm, dx_mm))
                 scale_radial = 1.0 + (2.0 * r_mm_center * korrektur)
                 scale_tangential = 1.0 + (r_mm_center * korrektur)
                 
-                rx_raw = (radius_mm * scale_radial * px_x) * z * scale_x
-                ry_raw = (radius_mm * scale_tangential * px_y) * z * scale_y
+                # Bei Rotation MÜSSEN wir einen Durchschnitts-Pixelwert nehmen. 
+                # OpenCV kann eine X/Y-Streckung nicht nachträglich schräg rotieren, 
+                # ohne das Koordinatensystem zu zerstören.
+                avg_px = (px_x + px_y) / 2.0
+                rx_raw = (radius_mm * scale_radial * avg_px) * z * scale_x
+                ry_raw = (radius_mm * scale_tangential * avg_px) * z * scale_y
             else:
-                # Fall B: Objekt liegt EXAKT im optischen Zentrum
+                # Fall B: Normale Linse (korrektur=0) ODER exakt im Zentrum.
+                # Hier greift AUSSCHLIESSLICH die kartesische Kamera-Verzerrung (Rechteckige Pixel)!
                 angle_deg = 0
-                r_mm_draw = radius_mm * (1.0 + (radius_mm * korrektur))
+                r_mm_draw = radius_mm * (1.0 + (radius_mm * korrektur)) # (Ist bei korrektur=0 einfach radius_mm)
                 
+                # Absolut starr an den festen X/Y-Monitor-Achsen ausgerichtet:
                 rx_raw = (r_mm_draw * px_x) * z * scale_x
                 ry_raw = (r_mm_draw * px_y) * z * scale_y
 

@@ -156,27 +156,72 @@ class LaborRenderer:
                     winner_method = shot.get('winner_method', '')
                     if "Abriss" not in winner_method: continue
 
-                    bx, by = shot.get('base_pos', (0, 0))
-                    ex, ey = shot.get('end_pos', (0, 0))
+                    bx, by = shot.get('base_pos', (0, 0)) # Start (Kante)
+                    ex, ey = shot.get('end_pos', (0, 0))  # Anker (Rumpf / CoG)
+                    zx, zy = shot['pos']                  # Ziel (Final berechnetes Schuss-Zentrum)
 
-                    scaled_bx = int(round((bx + 0.5) * self.app.current_scale)) + self.app.current_img_w
-                    scaled_by = int(round((by + 0.5) * self.app.current_scale))
+                    # 1. DEN +0.5 BUG ENTFERNEN: Exakt die Werte nehmen, die die Engine nutzte!
+                    scaled_bx = int(round(bx * self.app.current_scale)) + self.app.current_img_w
+                    scaled_by = int(round(by * self.app.current_scale))
                     
-                    scaled_ex = int(round((ex) * self.app.current_scale)) + self.app.current_img_w
-                    scaled_ey = int(round((ey) * self.app.current_scale))
+                    scaled_ex = int(round(ex * self.app.current_scale)) + self.app.current_img_w
+                    scaled_ey = int(round(ey * self.app.current_scale))
+                    
+                    scaled_zx = int(round(zx * self.app.current_scale)) + self.app.current_img_w
+                    scaled_zy = int(round(zy * self.app.current_scale))
 
-                    start_pt = (scaled_bx, scaled_by)
-                    end_pt = (scaled_ex, scaled_ey)
+                    kante_pt = (scaled_bx, scaled_by)
+                    rumpf_pt = (scaled_ex, scaled_ey)
+                    ziel_pt  = (scaled_zx, scaled_zy)
 
                     hellblau = (255, 200, 0) 
                     gruen = (0, 255, 0) 
                     
-                    if start_pt != end_pt:
-                        cv2.line(combined, start_pt, end_pt, gruen, 1, cv2.LINE_8) 
+                    # 2. DIE KOMPLETTE STRECKE ZEICHNEN (Kante -> Ziel)
+                    if kante_pt != ziel_pt:
+                        cv2.line(combined, kante_pt, ziel_pt, gruen, 1, cv2.LINE_8) 
 
-                    cv2.circle(combined, start_pt, 3, hellblau, -1, cv2.LINE_8)
-                    cv2.circle(combined, end_pt, 3, hellblau, -1, cv2.LINE_8)
+                    # 3. ALLE DREI PUNKTE MARKIEREN (Zur besseren Diagnose!)
+                    cv2.circle(combined, kante_pt, 3, hellblau, -1, cv2.LINE_8) # Startpunkt
+                    cv2.circle(combined, rumpf_pt, 3, hellblau, -1, cv2.LINE_8) # Rumpf 
+                    cv2.circle(combined, ziel_pt, 3, hellblau, -1, cv2.LINE_8)  # Endpunkt
             
+            # =========================================================================
+            # ---> NEU: High-Res Subpixel-Röntgenblick für Modus 2 <---
+            # =========================================================================
+            if mode == 2 and hasattr(self.app, 'current_engine_shots'):
+                side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
+                current_frame_num = self.app.current_index
+
+                for shot in self.app.current_engine_shots:
+                    if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
+                        details = shot.get('score_export_details')
+                        if details:
+                            scale = details.get('scale', 4)
+                            off_x = details.get('offset_x', 0)
+                            off_y = details.get('offset_y', 0)
+                            
+                            sub_new = details.get('subpixels_new', [])
+                            sub_raw = details.get('subpixels_raw', [])
+                            
+                            # 1. Raw-Hintergrund zeichnen (Die alten, grauen Schlieren in Dunkelrot)
+                            color_raw = (0, 0, 150) # BGR
+                            for sx, sy in sub_raw:
+                                # Wir rechnen exakt aus, auf welchem Monitor-Pixel das Subpixel beginnt und endet
+                                ui_x1 = int(round((off_x + (sx / scale)) * self.app.current_scale)) + self.app.current_img_w
+                                ui_y1 = int(round((off_y + (sy / scale)) * self.app.current_scale))
+                                ui_x2 = int(round((off_x + ((sx + 1) / scale)) * self.app.current_scale)) + self.app.current_img_w
+                                ui_y2 = int(round((off_y + ((sy + 1) / scale)) * self.app.current_scale))
+                                cv2.rectangle(combined, (ui_x1, ui_y1), (ui_x2, ui_y2), color_raw, -1)
+
+                            # 2. Neue Riss-Pixel zeichnen (Leuchtend Orange)
+                            color_new = (0, 165, 255) # BGR
+                            for sx, sy in sub_new:
+                                ui_x1 = int(round((off_x + (sx / scale)) * self.app.current_scale)) + self.app.current_img_w
+                                ui_y1 = int(round((off_y + (sy / scale)) * self.app.current_scale))
+                                ui_x2 = int(round((off_x + ((sx + 1) / scale)) * self.app.current_scale)) + self.app.current_img_w
+                                ui_y2 = int(round((off_y + ((sy + 1) / scale)) * self.app.current_scale))
+                                cv2.rectangle(combined, (ui_x1, ui_y1), (ui_x2, ui_y2), color_new, -1)
             
             # =========================================================================
             # ---> RENDER-HELFER: Daten sammeln <---
@@ -393,43 +438,47 @@ class LaborRenderer:
                 hx, hy = hl['pos']
                 f_num = hl['frame']
                 
-                # 1. Linke Seite (Röntgenblick - bleibt als reiner OpenCV-Kreis ohne Linsenverzerrung!)
-                scaled_x1 = round(hx * self.app.current_scale)
-                scaled_y = round(hy * self.app.current_scale)
+                color = (255, 50, 200) # Lila
                 
+                # Der Subpixel-Multiplikator für perfekte OpenCV Fließkomma-Kreise
+                shift = 4
+                mult = 2 ** shift
+                
+                # 1. Linke Seite (Röntgenblick - bleibt als reiner OpenCV-Kreis ohne Linsenverzerrung!)
                 base_r = getattr(self.app, 'official_radius_px', 15)
-                scaled_r = round(base_r * self.app.current_scale)
-                color = (255, 50, 200) 
-                cv2.circle(combined, (scaled_x1, scaled_y), scaled_r, color, 1)
-                cv2.circle(combined, (scaled_x1, scaled_y), 4, (0, 0, 0), -1)    
-                cv2.circle(combined, (scaled_x1, scaled_y), 2, color, -1)        
-                cv2.putText(combined, f"#{f_num}", (scaled_x1 - 25, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2, cv2.LINE_8) 
-                ## 2. Rechte Seite (Linsenkorrigierte Ansicht über Helfer)
-                #Helfer.draw_smart_ellipse(
-                #    img=combined, center_x=hx, center_y=hy, radius_mm=kaliber_mm/2.0,
-                #    color=color, px_x=px_x, px_y=px_y, korrektur=korrektur,
-                #    feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=False, is_hit=True,
-                #    zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True
-                #)
-                ## Text für die rechte Seite
-                #scaled_x2 = round(hx * self.app.current_scale) + self.app.current_img_w 
-                #cv2.putText(combined, f"#{f_num}", (scaled_x2 - 30, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_8)
+                
+                # Exakte Subpixel-Koordinaten für den linken Kreis berechnen
+                scaled_x1_sub = int(round(hx * self.app.current_scale * mult))
+                scaled_y_sub  = int(round(hy * self.app.current_scale * mult))
+                scaled_r1_sub = int(round(base_r * self.app.current_scale * mult))
+                
+                cv2.circle(combined, (scaled_x1_sub, scaled_y_sub), scaled_r1_sub, color, 1, cv2.LINE_AA, shift=shift)
+                cv2.circle(combined, (scaled_x1_sub, scaled_y_sub), 4 * mult, (0, 0, 0), -1, cv2.LINE_AA, shift=shift)    
+                cv2.circle(combined, (scaled_x1_sub, scaled_y_sub), 2 * mult, color, -1, cv2.LINE_AA, shift=shift)        
+                
+                # Text für die linke Seite (braucht keine Subpixel)
+                txt_x1 = int(round(hx * self.app.current_scale))
+                txt_y  = int(round(hy * self.app.current_scale))
+                r1_px  = int(round(base_r * self.app.current_scale))
+                cv2.putText(combined, f"#{f_num}", (txt_x1 - 25, txt_y - r1_px - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2, cv2.LINE_8) 
 
                 # 2. Rechte Seite (Die ungeschönte Wahrheit der Score-Berechnung!)
-                # Wir berechnen den exakten Pixelradius, den auch die Erkennung nutzt
                 avg_px_pro_mm = (px_x + px_y) / 2.0
                 echter_score_radius_px = (kaliber_mm / 2.0) * avg_px_pro_mm
-                scaled_r = round(echter_score_radius_px * self.app.current_scale)
                 
-                scaled_x2 = round(hx * self.app.current_scale) + self.app.current_img_w 
+                # Exakte Subpixel-Koordinaten für den rechten Kreis berechnen
+                scaled_x2_sub = int(round((hx * self.app.current_scale + self.app.current_img_w) * mult))
+                scaled_r2_sub = int(round(echter_score_radius_px * self.app.current_scale * mult))
                 
-                # Der "dumme", aber für den Score exakt verwendete OpenCV-Kreis
-                cv2.circle(combined, (scaled_x2, scaled_y), scaled_r, color, 2, cv2.LINE_8)
-                cv2.circle(combined, (scaled_x2, scaled_y), 4, (0, 0, 0), -1, cv2.LINE_8)
-                cv2.circle(combined, (scaled_x2, scaled_y), 2, color, -1, cv2.LINE_8)
+                # Der perfekte mathematische OpenCV-Kreis!
+                cv2.circle(combined, (scaled_x2_sub, scaled_y_sub), scaled_r2_sub, color, 2, cv2.LINE_AA, shift=shift)
+                cv2.circle(combined, (scaled_x2_sub, scaled_y_sub), 4 * mult, (0, 0, 0), -1, cv2.LINE_AA, shift=shift)
+                cv2.circle(combined, (scaled_x2_sub, scaled_y_sub), 2 * mult, color, -1, cv2.LINE_AA, shift=shift)
                 
                 # Text für die rechte Seite
-                cv2.putText(combined, f"#{f_num}", (scaled_x2 - 30, scaled_y - scaled_r - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_8)
+                txt_x2 = int(round(hx * self.app.current_scale)) + self.app.current_img_w
+                r2_px  = int(round(echter_score_radius_px * self.app.current_scale))
+                cv2.putText(combined, f"#{f_num}", (txt_x2 - 30, txt_y - r2_px - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_8)
         
         if getattr(self.app, 'calib_mode_active', False) and hasattr(self.app, 'calib_points'):
             for pt in self.app.calib_points:
