@@ -450,16 +450,17 @@ class LaborRenderer:
             self.app.tk_image = ImageTk.PhotoImage(img_pil)
             self.app.lbl_image.config(image=self.app.tk_image, text="")
 
-        ## ---> DIAGNOSE: Stoppuhr auswerten <---
-        #t_end = time.perf_counter()
-        #dauer_ms = (t_end - t_start) * 1000
-        #
-        ## Zeige nur an, wenn der Renderer spürbar arbeiten muss (> 50ms)
-        #if dauer_ms > 50:
-        #    modus = "FULL-REBUILD" if full_rebuild else "QUICK-UPDATE"
-        #    # ---> DER FIX: Erst definieren, dann drucken! <---
-        #    gui_upload = "+ GUI" if push_to_gui else "(RAM ONLY)"
-        #    print(f"🐌 Render-Zyklus [{modus} {gui_upload}]: {dauer_ms:.1f} ms")		
+        # # ---> DIAGNOSE: Stoppuhr auswerten <---
+        # t_end = time.perf_counter()
+        # dauer_ms = (t_end - t_start) * 1000
+        
+        # # Zeige nur an, wenn der Renderer spürbar arbeiten muss (> 50ms)
+        # #if dauer_ms > 50:
+        # if dauer_ms >   5:
+        #     modus = "FULL-REBUILD" if full_rebuild else "QUICK-UPDATE"
+        #     # ---> DER FIX: Erst definieren, dann drucken! <---
+        #     gui_upload = "+ GUI" if push_to_gui else "(RAM ONLY)"
+        #     print(f"🐌 Render-Zyklus [{modus} {gui_upload}]: {dauer_ms:.1f} ms  -  t_end: {t_end}")		
 
     def draw_crosshair(self, x, y):
         if getattr(self.app, 'base_combined_img_rgb', None) is None or not hasattr(self.app, 'current_scale'):

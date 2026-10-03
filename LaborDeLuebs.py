@@ -166,12 +166,27 @@ class LaborApp:
         
     def _toggle_blink(self):
         """Kippt das Blink-Flag alle 1000ms und erzwingt einen GUI-Redraw."""
-        self.blink_state = not getattr(self, 'blink_state', True)
+        old_state = getattr(self, 'blink_state', True)
+        
+        # Dauer-Leuchten bei Zoom >= 5.0, normales Blinken bei < 5.0
+        if getattr(self, 'zoom_factor', 1.0) >= 5.0:
+            new_state = True
+        else:
+            new_state = not old_state
+            
+        self.blink_state = new_state
+        
+        # =========================================================================
+        # ---> DER GENIALE FIX: Wir rendern nur, wenn sich WIRKLICH was ändert! <---
+        # =========================================================================
+        if old_state == new_state:
+            # Das Bild sieht exakt so aus wie vor 1 Sekunde. 
+            # Wir sparen uns 100% CPU-Last und würgen den Render-Zyklus hier ab!
+            self.root.after(1000, self._toggle_blink)
+            return
         
         if getattr(self, 'base_combined_img', None) is not None:
-            # =========================================================================
-            # ---> NEU: Blockiert das Blinken bei JEGLICHER Interaktion (Zoom, Panning)! <---
-            # =========================================================================
+            # Blockiert das Blinken bei JEGLICHER Interaktion (Zoom, Panning)! 
             if self.is_interacting:
                 self.root.after(1000, self._toggle_blink)
                 return
