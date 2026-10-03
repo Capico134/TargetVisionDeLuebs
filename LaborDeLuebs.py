@@ -911,9 +911,13 @@ class LaborApp:
         self.pan_x = int((container_w / 2.0) - (center_x / old_scale) * new_scale)
         self.pan_y = int((container_h / 2.0) - (center_y / old_scale) * new_scale)
         
-        # Bild an die neue Position setzen und neu zeichnen
-        self.lbl_image.place(x=self.pan_x, y=self.pan_y)
+        # =========================================================================
+        # ---> DER FIX: Wir zwingen Tkinter, das Bild erst nach dem Rendern zu verschieben! <---
+        # =========================================================================
+        # Wir übergeben die neuen Koordinaten STUMM an den Renderer, rufen place() aber erst 
+        # auf, wenn das neue Bild wirklich fertig im RAM liegt.
         self.renderer.update_image_display()
+        self.lbl_image.place(x=self.pan_x, y=self.pan_y)
         self.update_frame_title()
     
     def toggle_color_picker(self):
@@ -1515,13 +1519,17 @@ class LaborApp:
             mx = self._scroll_mouse_x
             my = self._scroll_mouse_y
             
-            # Verschiebung berechnen und Label exakt in diesem Moment umsetzen
+            # Verschiebung berechnen
             self.pan_x -= int(mx * scale_change - mx)
             self.pan_y -= int(my * scale_change - my)
-            self.lbl_image.place(x=self.pan_x, y=self.pan_y)
             
-        # Jetzt, wo das Bild passend verschoben ist, wird es passend groß gerendert!
+        # =========================================================================
+        # ---> DER FIX: Erst in Ruhe das HD-Bild im RAM zeichnen lassen! <---
+        # =========================================================================
         self.renderer.update_image_display()
+        
+        # Und JETZT erst das fertige Bild an die neue Position schieben
+        self.lbl_image.place(x=self.pan_x, y=self.pan_y)
         
         # Koordinaten-Anzeige manuell triggern, damit sie nach dem Zoom sofort stimmt
         self.on_mouse_move(event)
