@@ -140,6 +140,7 @@ class LaborApp:
         self.abriss_min_hebel_var = tk.DoubleVar(value=0.0)
         
         self.zoom_factor = 1.0
+        self.max_zoom_factor = 12.5  # <--- NEU: Zentrales Limit für extremen Deep-Zoom
         self.pan_x = 0
         self.pan_y = 0
         self.view_mode_var = tk.IntVar(value=1) # <--- HIER AUCH ÄNDERN
@@ -682,34 +683,105 @@ class LaborApp:
 
     def on_zoom_box_start(self, event):
         """Startet den Rahmen-Zoom (Strg / Shift)"""
-        #if getattr(self, 'calib_mode_active', False) or getattr(self, 'color_picker_active', False):
-        # ---> DER FIX: Wir haben die Kalibrierungs-Sperre entfernt! <---
         if getattr(self, 'color_picker_active', False):
             return "break"
+            
+        # ---> DER FIX: Türsteher entfernt! Wir lassen den Klick erstmal zu. <---
         
         self.is_zoom_box_active = True
         self.zoom_box_start_x = event.x
         self.zoom_box_start_y = event.y
-        return "break" # Verhindert, dass das normale Klick-Event feuert!
+        
+        # 4 hauchdünne UI-Linien erzeugen (falls noch nicht existent)
+        if not hasattr(self, 'zoom_borders'):
+            self.zoom_borders = [tk.Frame(self.img_container, bg="yellow") for _ in range(4)]
+            
+        return "break"
+        
+    #def on_zoom_box_motion(self, event):
+    #    """Zeichnet den Rahmen butterweich über natives Tkinter (0% CPU, Anti-Glitch)"""
+    #    if getattr(self, 'is_zoom_box_active', False):
+    #        
+    #        # 25 FPS Türsteher (0.040 Sekunden)
+    #        current_time = time.time()
+    #        if current_time - getattr(self, 'last_zoombox_update_time', 0) < 0.040:
+    #            return
+    #        self.last_zoombox_update_time = current_time
+    #        
+    #        x1, y1 = self.zoom_box_start_x, self.zoom_box_start_y
+    #        x2, y2 = event.x, event.y
+    #        
+    #        min_x, max_x = min(x1, x2), max(x1, x2)
+    #        min_y, max_y = min(y1, y2), max(y1, y2)
+    #        
+    #        t = 3 # Liniendicke
+    #        
+    #        w = max(t * 2, max_x - min_x)
+    #        h = max(t * 2, max_y - min_y)
+    #        
+    #        # =========================================================================
+    #        # DER FIX GEGEN DAS VERSCHWINDEN: 1 Pixel absichtlicher Overlap + Z-Order
+    #        # =========================================================================
+    #        # Wir machen die horizontalen Striche 2 Pixel breiter (w+2) und schieben sie 1px nach links
+    #        self.zoom_borders[0].place(x=min_x - 1, y=min_y, width=w + 2, height=t)
+    #        self.zoom_borders[1].place(x=min_x - 1, y=min_y + h - t, width=w + 2, height=t)
+    #        
+    #        # Die vertikalen Striche klemmen wir wie gehabt dazwischen
+    #        self.zoom_borders[2].place(x=min_x, y=min_y + t, width=t, height=h - 2*t)
+    #        self.zoom_borders[3].place(x=min_x + w - t, y=min_y + t, width=t, height=h - 2*t)
+    #
+    #        # Zwingt Windows, diese 4 Linien sofort ganz nach vorne zu rendern
+    #        for border in self.zoom_borders:
+    #            border.lift()
+    #
+    #    return "break"
 
     def on_zoom_box_motion(self, event):
-        """Zeichnet den Rahmen (Strg / Shift) mit FPS-Drossel"""
+        """Zeichnet den Rahmen butterweich über natives Tkinter (ohne Overlap-Flackern)"""
         if getattr(self, 'is_zoom_box_active', False):
-            # 40 FPS Türsteher (0.025 Sekunden)
             
+            # ---> NEU: Floating-Point sicherer Türsteher für den Rahmen! <---
+            if self.zoom_factor >= self.max_zoom_factor - 0.01:
+                return "break"
+                
+            # 25 FPS Türsteher
             current_time = time.time()
-            #print("on_zoom_box_motion: ",  current_time)
-            if current_time - getattr(self, 'last_zoombox_update_time', 0) < 0.025:
+            if current_time - getattr(self, 'last_zoombox_update_time', 0) < 0.040:
                 return
             self.last_zoombox_update_time = current_time
             
-            self.renderer.draw_zoom_box(self.zoom_box_start_x, self.zoom_box_start_y, event.x, event.y)
+            x1, y1 = self.zoom_box_start_x, self.zoom_box_start_y
+            x2, y2 = event.x, event.y
+            
+            min_x, max_x = min(x1, x2), max(x1, x2)
+            min_y, max_y = min(y1, y2), max(y1, y2)
+            
+            t = 2 # Liniendicke in Pixeln
+            
+            w = max(t * 2, max_x - min_x)
+            h = max(t * 2, max_y - min_y)
+            
+            draw_x = min_x + getattr(self, 'pan_x', 0)
+            draw_y = min_y + getattr(self, 'pan_y', 0)
+            
+            self.zoom_borders[0].place(x=draw_x, y=draw_y, width=w, height=t)
+            self.zoom_borders[1].place(x=draw_x, y=draw_y + h - t, width=w, height=t)
+            self.zoom_borders[2].place(x=draw_x, y=draw_y + 2*t, width=t, height=h - 4*t)
+            self.zoom_borders[3].place(x=draw_x + w - t, y=draw_y + 2*t, width=t, height=h - 4*t)
+
         return "break"
 
+
     def on_zoom_box_stop(self, event):
-        """Führt den Box-Zoom aus (Strg / Shift)"""
+        """Führt den Box-Zoom aus"""
         if getattr(self, 'is_zoom_box_active', False):
             self.is_zoom_box_active = False
+            
+            # UI-Linien wieder unsichtbar machen
+            if hasattr(self, 'zoom_borders'):
+                for border in self.zoom_borders:
+                    border.place_forget()
+                    
             self.apply_zoom_box(self.zoom_box_start_x, self.zoom_box_start_y, event.x, event.y)
         return "break"
 
@@ -719,8 +791,13 @@ class LaborApp:
             self.is_zoom_box_active = False
             self.zoom_box_start_x = None
             self.zoom_box_start_y = None
+            
+            # UI-Linien wieder unsichtbar machen
+            if hasattr(self, 'zoom_borders'):
+                for border in self.zoom_borders:
+                    border.place_forget()
+                    
             self.print_log("SYSTEM", "Zoom-Rahmen abgebrochen.")
-            self.renderer.update_image_display(full_rebuild=False) # Löscht die gelbe Box
 
     def on_drag_start(self, event):
         """Normaler Linksklick (Verschieben, Kalibrieren, Pipette)"""
@@ -799,11 +876,15 @@ class LaborApp:
         box_w = max_x - min_x
         box_h = max_y - min_y
         
-        # ---> DER FIX: Winz-Klicks werden jetzt als Zeitsprung gewertet! <---
+        # 1. Winz-Klicks als Zeitsprung werten (funktioniert IMMER, auch bei Max-Zoom!)
         if box_w < 15 or box_h < 15:
-            # Wir rufen den Röntgen-Klick auf und geben ihm den Sprung-Befehl mit
             self.identify_shot_at_click(x2, y2, jump_to_frame=True)
             return
+            
+        # ---> NEU: 2. Rahmen-Zoom sicher abfangen und willkürliches Panning stoppen <---
+        if self.zoom_factor >= self.max_zoom_factor - 0.01:
+            self.print_log("SYSTEM", f"Maximaler Zoom ({self.max_zoom_factor}x) erreicht. Rahmen-Zoom gesperrt.")
+            return # ZWINGEND NÖTIG, SONST GIBT ES PANNING OHNE ZOOM!
             
         self.root.update_idletasks()
         container_w = self.img_container.winfo_width()
@@ -815,8 +896,8 @@ class LaborApp:
         zoom_multiplier = min(container_w / box_w, container_h / box_h)
         zoom_multiplier = max(1.01, min(zoom_multiplier, 15.0))
         
-        self.zoom_factor = max(0.2, min(self.zoom_factor * zoom_multiplier, 12.5))
-        print("apply_zoom_box - zoom_factor: ",self.zoom_factor)
+        self.zoom_factor = max(0.2, min(self.zoom_factor * zoom_multiplier, self.max_zoom_factor))
+        print("apply_zoom_box - zoom_factor: ", self.zoom_factor)
         
         # Neuen Maßstab ermitteln
         h, w = self.last_live_img.shape[:2] if hasattr(self, 'last_live_img') and self.last_live_img is not None else (720, 1280)
@@ -833,7 +914,7 @@ class LaborApp:
         # Bild an die neue Position setzen und neu zeichnen
         self.lbl_image.place(x=self.pan_x, y=self.pan_y)
         self.renderer.update_image_display()
-        self.update_frame_title() # <--- NEU
+        self.update_frame_title()
     
     def toggle_color_picker(self):
         """Schaltet den Modus um und ändert das Aussehen des Buttons/Mauszeigers"""
@@ -1381,7 +1462,7 @@ class LaborApp:
         # 4. Den internen zoom_factor der Engine füttern
         # (Die Engine rechnet intern immer mit einer Basis-Höhe von 550 Pixeln)
         self.zoom_factor = target_scale * (h / 550.0)
-        self.zoom_factor = max(0.2, min(self.zoom_factor, 12.5)) # Sicherheits-Grenzen
+        self.zoom_factor = max(0.2, min(self.zoom_factor, self.max_zoom_factor)) # Sicherheits-Grenzen
         
         # Echte Skalierung für das Panning (falls die Grenzen gegriffen haben)
         echte_scale = (550.0 / h) * self.zoom_factor
@@ -1408,7 +1489,7 @@ class LaborApp:
             self.zoom_factor *= 0.85  # 15% Rauszoomen
             
         # Grenzen setzen
-        self.zoom_factor = max(0.2, min(self.zoom_factor, 12.5))
+        self.zoom_factor = max(0.2, min(self.zoom_factor, self.max_zoom_factor))
         
         # Titelzeile sofort updaten (direktes visuelles Feedback)
         self.update_frame_title()

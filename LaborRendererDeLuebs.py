@@ -530,19 +530,8 @@ class LaborRenderer:
         self.app.tk_image = ImageTk.PhotoImage(img_pil)
         self.app.lbl_image.config(image=self.app.tk_image)
         
-    def draw_zoom_box(self, x1, y1, x2, y2):
-        t_start = time.perf_counter() 
-        if getattr(self.app, 'base_combined_img_rgb', None) is None: 
-            return
-            
-        temp_img = self.app.base_combined_img_rgb.copy()
-        cv2.rectangle(temp_img, (x1, y1), (x2, y2), (255, 255, 0), 1)
+
         
-        img_pil = Image.fromarray(temp_img)
-        self.app.tk_image = ImageTk.PhotoImage(img_pil)
-        self.app.lbl_image.config(image=self.app.tk_image)
-        
-        self.app.root.update_idletasks()
     #!!!!!!!!!!!!! EI-KORREKTUR !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     """
         # =========================================================================
