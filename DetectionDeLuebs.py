@@ -38,7 +38,7 @@ class TargetDetector:
         self.hough_max_faktor = self.config.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15)
         self.ausloeser_durch_erschuetterung = self.config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.max_image_change_percent = self.config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
-        self.debug_alle_bilder_speichern = self.config.getboolean('Erkennung', 'debug_alle_bilder_speichern', fallback=False)
+        #self.debug_alle_bilder_speichern = self.config.getboolean('Erkennung', 'debug_alle_bilder_speichern', fallback=False)
         self.debug_subpixel_export = self.config.getboolean('Erkennung', 'debug_subpixel_export', fallback=False) # <--- NEU
         self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         self.ringwertung_nachkommastellen = self.config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1) # <--- HIER ERGÄNZEN
@@ -895,49 +895,37 @@ class TargetDetector:
             #self.save_debug_image(f"letzte_aufnahme_normalized_{side}", current_normalized)
             
             # =========================================================================
-            # ---> NEU: Bilder intelligent abspeichern (Diät für Discards) <---
+            # ---> NEU: Bilder intelligent abspeichern (Immer aktiv für das Labor) <---
             # =========================================================================
-            if self.debug_alle_bilder_speichern:
-                ts = datetime.now().strftime('%H%M%S_%f')[:-3]
+            ts = datetime.now().strftime('%H%M%S_%f')[:-3]
+            
+            if new_shots_found_this_frame:
+                shot_idx = sum(1 for s in self.sm.shots if s['side'] == side) 
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff", thresh_new)
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_orig", frame)
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff_gesamt", state.cumulative_mask)
                 
-                if new_shots_found_this_frame:
-                    # Bei echten Treffern speichern wir das volle Paket für das Labor
-                    shot_idx = sum(1 for s in self.sm.shots if s['side'] == side) 
-                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff", thresh_new)
-                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_orig", frame)
-                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_diff_gesamt", state.cumulative_mask)
-                    
-                elif update_mask_only:
-                    # ---> DER FIX: Geister-Frames als "_orig" speichern für das Labor! <---
-                    # Wir nutzen den gleichen Präfix "Schuss_XX", damit der Zeitstempel
-                    # für eine perfekte chronologische Sortierung im Labor-ZIP sorgt.
-                    shot_idx = sum(1 for s in self.sm.shots if s['side'] == side)
-                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_diff", thresh_new)
-                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_orig", frame)
-                    self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_diff_gesamt", state.cumulative_mask)
+            elif update_mask_only:
+                shot_idx = sum(1 for s in self.sm.shots if s['side'] == side)
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_diff", thresh_new)
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_orig", frame)
+                self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_diff_gesamt", state.cumulative_mask)
 
             return True if new_shots_found_this_frame else False
             
         else:
             if self.ausloeser_durch_erschuetterung:
                 self.log(side, "Keine validen neuen Treffer im Bild gefunden.")
-                
             # =========================================================================
             # ---> NEU: Geisterbilder nur speichern, wenn sich WIRKLICH etwas 
             # Relevantes verändert hat (> 0.005 % entspricht ca. 25 Pixeln)
             # =========================================================================
-            if self.debug_alle_bilder_speichern and change_percent > 0.005:
+            if change_percent > 0.005:
                 ts = datetime.now().strftime('%H%M%S_%f')[:-3]
                 shot_idx = sum(1 for s in self.sm.shots if s['side'] == side)
-#!              #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                # ZUKUNFTS-BAUSTELLE: Hier würden die verworfenen Risse in die Maske wandern
-                # state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, thresh_new)
-#!              #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!                
-                # Wir nennen sie "_Geist_", damit das Labor sie nahtlos in die Zeitachse einsortiert
                 self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_diff", thresh_new)
                 self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_orig", frame)
                 self.save_debug_image(f"Schuss_{shot_idx:02d}_{side}_{ts}_Geist_diff_gesamt", state.cumulative_mask)
-                
             return False
 
     def check_background_and_evaluate(self, frame, state):

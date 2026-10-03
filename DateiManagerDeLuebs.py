@@ -546,6 +546,10 @@ treffer_anzeigedauer = 5
             self.update_ini_value('Zielscheibe', 'ringwertung_nachkommastellen', '3')
             needs_reload = True  
 
+        if config.has_option('Erkennung', 'debug_alle_bilder_speichern'):
+            print("🔧 Führe Auto-Patch aus: Entferne obsoleten Parameter 'debug_alle_bilder_speichern'...")
+            self.remove_ini_value('Erkennung', 'debug_alle_bilder_speichern')
+            needs_reload = True
         
         if needs_reload:
             config.read(self.CONFIG_FILE, encoding='utf-8')

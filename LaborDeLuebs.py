@@ -306,7 +306,7 @@ class LaborApp:
             if not parser.has_section('Erkennung'):
                 parser.add_section('Erkennung')
             if not parser.has_option('Erkennung', 'debug_subpixel_export'):
-                parser.set('Erkennung', 'debug_subpixel_export', 'No')
+                parser.set('Erkennung', 'debug_subpixel_export', 'no')
                 self.migrated_keys.append('debug_subpixel_export')
             # =========================================================================
             
