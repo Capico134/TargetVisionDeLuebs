@@ -446,7 +446,7 @@ class TargetDetector:
                         })
                         
                         valid_str = "✅" if valid else f"❌ (Zu wenig Riss-Anteil: < {min_coverage}%)"
-                        bonus_str = f" (inkl. +{bonus:.1f} Bonus)" if bonus > 0 else ""
+                        bonus_str = f" (inkl. +{bonus:.2f} Bonus)" if bonus > 0 else ""
                         
                         # =====================================================================
                         # ---> NEU: Dynamische und glasklare Log-Ausgabe für Vektoren <---
@@ -544,7 +544,8 @@ class TargetDetector:
                         self.save_debug_image(f"abrisskante_outer_{side}_{ts_abriss}", outer_edge)
                         #self.save_debug_image(f"letzte_abrisskante_{side}", outer_edge) # <--- Unser Schmuggel-Bild für das Labor!
                         
-                        inter_contours, _ = cv2.findContours(outer_edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        #inter_contours, _ = cv2.findContours(outer_edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        inter_contours, _ = cv2.findContours(outer_edge, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
                         if inter_contours:
                             # ---> NEU: Rauschen filtern (nur Kanten > 3 Pixel) <---
                             valid_edges = [cnt for cnt in inter_contours if len(cnt) > 3]
@@ -610,6 +611,21 @@ class TargetDetector:
                                         cx_float, cy_float = np.mean(edge_cnt[:,0,0]), np.mean(edge_cnt[:,0,1])
                                         
                                     best_pt_center = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - cx_float, pt[0][1] - cy_float))[0]
+                                    
+                                    # # =========================================================================
+                                    # # ---> DEBUG LOGGING FÜR DIE ABRISSKANTE <---
+                                    # # =========================================================================
+                                    # pixel_liste = [(int(pt[0][0]), int(pt[0][1])) for pt in edge_cnt]
+                                    # self.log(side, f"🔴 DEBUG Abrisskante #{e_idx+1}:")
+                                    # self.log(side, f"   -> Berechnetes COG (Classic): X:{cx_float:.2f}, Y:{cy_float:.2f}")
+                                    # self.log(side, f"   -> Nahegelegenster Pixel: X:{best_pt_center[0]}, Y:{best_pt_center[1]}")
+                                    # self.log(side, f"   -> Alle Pixel ({len(pixel_liste)}): {pixel_liste}")
+                                    # # =========================================================================
+                                    
+                                    
+                                    
+                                    
+                                    
                                     # ---> DER PHYSIK-FIX: Exakt in die Pixel-Mitte springen! <---
                                     cx_edge_center = float(best_pt_center[0]) + 0.5
                                     cy_edge_center = float(best_pt_center[1]) + 0.5
@@ -643,7 +659,7 @@ class TargetDetector:
                                     
                                     # Das Sicherheitsnetz für das "Hebel-Problem"
                                     min_hebel = self.abriss_min_hebel 
-                                    grenzwert_abriss = 4.70 
+                                    grenzwert_abriss = 4.58 
                                     
                                     # ---> KANDIDAT 1: CoG (Classic - Riss-Mitte) <---
                                     d_cog_center = np.hypot(cog_x - cx_edge_center, cog_y - cy_edge_center)
@@ -674,7 +690,7 @@ class TargetDetector:
                                         tcy = cy_edge_mec + ((circle_y - cy_edge_mec)/d_mec_dyn) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
                                         add_candidate(f"Abriss-{e_idx+1}-MEC (Dynamic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_mec, cy_edge_mec), end_pos=(circle_x, circle_y))
                                     else:
-                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-MEC (Dynamic) ignoriert: Hebel zu kurz ({d_mec_dyn:.1f}px < {min_hebel}px). Peilung unsicher!")
+                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-MEC (Dynamic) ignoriert: Hebel zu kurz ({d_mec_dyn:.2f}px < {min_hebel}px). Peilung unsicher!")
                         else:
                             self.log(side, "⚠️ Abrisskante gescheitert: Berührt kein intaktes Papier.")
                             
