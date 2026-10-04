@@ -912,12 +912,20 @@ class LaborApp:
         self.pan_y = int((container_h / 2.0) - (center_y / old_scale) * new_scale)
         
         # =========================================================================
-        # ---> DER FIX: Wir zwingen Tkinter, das Bild erst nach dem Rendern zu verschieben! <---
+        # ---> DER FIX: Absolut atomares Tkinter-Update <---
         # =========================================================================
-        # Wir übergeben die neuen Koordinaten STUMM an den Renderer, rufen place() aber erst 
-        # auf, wenn das neue Bild wirklich fertig im RAM liegt.
-        self.renderer.update_image_display()
+        # 1. Bild STUMM rendern lassen (ohne es der GUI zu geben)
+        self.renderer.update_image_display(push_to_gui=False)
+        
+        # 2. Tkinter-Bild selbst erzeugen
+        img_pil = Image.fromarray(self.base_combined_img_rgb)
+        self.tk_image = ImageTk.PhotoImage(img_pil)
+        
+        # 3. Bild und Position in exakt demselben CPU-Tick an die GUI feuern!
+        self.lbl_image.config(image=self.tk_image)
         self.lbl_image.place(x=self.pan_x, y=self.pan_y)
+        
+                
         self.update_frame_title()
     
     def toggle_color_picker(self):
@@ -1524,12 +1532,19 @@ class LaborApp:
             self.pan_y -= int(my * scale_change - my)
             
         # =========================================================================
-        # ---> DER FIX: Erst in Ruhe das HD-Bild im RAM zeichnen lassen! <---
+        # ---> DER FIX: Absolut atomares Tkinter-Update <---
         # =========================================================================
-        self.renderer.update_image_display()
+        # 1. Bild STUMM rendern lassen
+        self.renderer.update_image_display(push_to_gui=False)
         
-        # Und JETZT erst das fertige Bild an die neue Position schieben
+        # 2. Tkinter-Bild selbst erzeugen
+        img_pil = Image.fromarray(self.base_combined_img_rgb)
+        self.tk_image = ImageTk.PhotoImage(img_pil)
+        
+        # 3. Bild und Position in exakt demselben CPU-Tick an die GUI feuern!
+        self.lbl_image.config(image=self.tk_image)
         self.lbl_image.place(x=self.pan_x, y=self.pan_y)
+        
         
         # Koordinaten-Anzeige manuell triggern, damit sie nach dem Zoom sofort stimmt
         self.on_mouse_move(event)
