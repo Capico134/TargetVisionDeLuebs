@@ -610,34 +610,42 @@ class TargetDetector:
                                     else:
                                         cx_float, cy_float = np.mean(edge_cnt[:,0,0]), np.mean(edge_cnt[:,0,1])
                                         
-                                    best_pt_center = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - cx_float, pt[0][1] - cy_float))[0]
+                                    # =========================================================================
+                                    # ---> DER HD-RÖNTGENBLICK: ECHTE LABOR-PIXEL ISOLIEREN <---
+                                    # =========================================================================
+                                    # Wir malen die Kontur extra dick (5 Pixel) als "Schablone"
+                                    blob_mask = np.zeros_like(outer_edge)
+                                    cv2.drawContours(blob_mask, [edge_cnt], -1, 255, thickness=5)
                                     
-                                    # # =========================================================================
-                                    # # ---> DEBUG LOGGING FÜR DIE ABRISSKANTE <---
-                                    # # =========================================================================
-                                    # pixel_liste = [(int(pt[0][0]), int(pt[0][1])) for pt in edge_cnt]
-                                    # self.log(side, f"🔴 DEBUG Abrisskante #{e_idx+1}:")
-                                    # self.log(side, f"   -> Berechnetes COG (Classic): X:{cx_float:.2f}, Y:{cy_float:.2f}")
-                                    # self.log(side, f"   -> Nahegelegenster Pixel: X:{best_pt_center[0]}, Y:{best_pt_center[1]}")
-                                    # self.log(side, f"   -> Alle Pixel ({len(pixel_liste)}): {pixel_liste}")
-                                    # # =========================================================================
+                                    # Jetzt schneiden wir mit der Schablone die echten Pixel aus der Labor-Maske aus!
+                                    # Das Donut-Loch bleibt leer, weil "outer_edge" dort schwarz ist.
+                                    isolated_edge = cv2.bitwise_and(outer_edge, blob_mask)
                                     
+                                    pts_raw = cv2.findNonZero(isolated_edge)
                                     
+                                    if pts_raw is not None:
+                                        all_pixels = pts_raw.reshape(-1, 2)
+                                    else:
+                                        all_pixels = edge_cnt.reshape(-1, 2)
+                                        
+                                    pixel_liste = [(int(pt[0]), int(pt[1])) for pt in all_pixels]
                                     
+                                    # ---> DEBUG LOGGING <---
+                                    #self.log(side, f"🔴 DEBUG Abrisskante #{e_idx+1}:")
+                                    #self.log(side, f"   -> Berechnetes COG (Classic): X:{cx_float:.2f}, Y:{cy_float:.2f}")
+                                    #self.log(side, f"   -> Echte Labor-Pixel genutzt: {len(pixel_liste)} (reiner Kontur-Rand war {len(edge_cnt)})")
                                     
-                                    
-                                    # ---> DER PHYSIK-FIX: Exakt in die Pixel-Mitte springen! <---
+                                    # Wir suchen im Array der echten Masken-Pixel nach dem besten Startpunkt!
+                                    best_pt_center = min(pixel_liste, key=lambda pt: np.hypot(pt[0] - cx_float, pt[1] - cy_float))
                                     cx_edge_center = float(best_pt_center[0]) + 0.5
                                     cy_edge_center = float(best_pt_center[1]) + 0.5
                                     
                                     # 2. Startpunkt Variante B: Der kürzeste Weg zum Rumpf (Dynamic)
-                                    best_pt_cog = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - cog_x, pt[0][1] - cog_y))[0]
-                                    # ---> DER PHYSIK-FIX <---
+                                    best_pt_cog = min(pixel_liste, key=lambda pt: np.hypot(pt[0] - cog_x, pt[1] - cog_y))
                                     cx_edge_cog = float(best_pt_cog[0]) + 0.5
                                     cy_edge_cog = float(best_pt_cog[1]) + 0.5
                                     
-                                    best_pt_mec = min(edge_cnt, key=lambda pt: np.hypot(pt[0][0] - circle_x, pt[0][1] - circle_y))[0]
-                                    # ---> DER PHYSIK-FIX <---
+                                    best_pt_mec = min(pixel_liste, key=lambda pt: np.hypot(pt[0] - circle_x, pt[1] - circle_y))
                                     cx_edge_mec = float(best_pt_mec[0]) + 0.5
                                     cy_edge_mec = float(best_pt_mec[1]) + 0.5
                                     
