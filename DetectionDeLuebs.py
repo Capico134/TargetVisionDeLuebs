@@ -775,8 +775,14 @@ class TargetDetector:
                 # =========================================================================
                 if self.debug_subpixel_export:
                     _, _, _, export_details = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw, export_details=True)
+                    
+                    # ---> DEINE IDEE: Wir quetschen die Metadaten der Verlierer schlank mit rein! <---
+                    if self.erkennungs_methode == 'C' and 'valid_candidates' in locals():
+                        export_details['all_candidates'] = valid_candidates
+                    #print(f"export_details: {export_details}")
                 else:
                     export_details = None
+                # =========================================================================
                 # =========================================================================
                 
                 # Doppelzählungs-Schutz (Getrennt nach Historie und aktueller Frame-Schleife)

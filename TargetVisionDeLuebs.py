@@ -321,6 +321,17 @@ class TargetTracker:
         if self.trigger_exit:
             return True
 
+        # =========================================================================
+        # ---> DER ZOMBIE-FIX: Prüfen, ob das Fenster über das 'X' geschlossen wurde!
+        # =========================================================================
+        try:
+            if cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
+                self.log("SYSTEM", "Fenster über 'X' geschlossen. Beende TargetVision...")
+                return True
+        except cv2.error:
+            # Fallback, falls OpenCV beim Prüfen eines toten Fensters meckert
+            return True
+
         if key == ord('q'): return True
         elif key == ord('r'):
             if self.nutze_kamera_links: self.trigger_reset_left = True

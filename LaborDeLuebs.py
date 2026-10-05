@@ -1368,6 +1368,62 @@ class LaborApp:
         self.renderer.update_image_display()
         self.update_frame_title() # <--- NEU
 
+    def toggle_var_mode(self, step, event=None):
+        """Aktiviert das Battle Royale VAR für ALLE neuen Schüsse im aktuellen Bild."""
+        if isinstance(self.root.focus_get(), (tk.Entry, ttk.Combobox)): return
+        if self.current_index == 0: return # Im Referenzbild gibt es keine Schüsse
+        
+        # 1. Sammle alle NEUEN Schüsse in diesem Frame
+        side = getattr(self, 'current_side', self.active_camera_var.get())
+        current_frame_num = self.current_index
+        
+        self.var_shots = []
+        for s in getattr(self, 'current_engine_shots', []):
+            if s.get('side') == side and s.get('labor_frame_num') == current_frame_num and s.get('is_new', False):
+                details = s.get('score_export_details', {})
+                if details and 'all_candidates' in details and details['all_candidates']:
+                    self.var_shots.append(s)
+                    
+        if not self.var_shots:
+            self.print_log("SYSTEM", "Keine Kandidaten-Daten im aktuellen Bild gefunden (Wurden ohne Subpixel-Export generiert).")
+            return
+            
+        was_active = getattr(self, 'candidate_view_active', False)
+        self.candidate_view_active = True
+        
+        # 2. Globalen Index weiterschalten
+        max_candidates = len(self.var_shots[0]['score_export_details']['all_candidates'])
+        
+        if not was_active:
+            # Erster Tastendruck: Bei "Runter" starten wir sauber mit Kandidat 1 (Index 0).
+            # Bei "Rauf" springen wir direkt zum letzten Kandidaten.
+            self.candidate_idx = 0 if step > 0 else max_candidates - 1
+        else:
+            # VAR ist schon aktiv -> Normal weiterblättern
+            current_idx = getattr(self, 'candidate_idx', 0)
+            self.candidate_idx = (current_idx + step) % max_candidates
+        
+        # Timer zurücksetzen
+        if hasattr(self, '_var_timer') and self._var_timer is not None:
+            self.root.after_cancel(self._var_timer)
+            self._var_timer = None                                      #TIMER AUSSCHALTEN!!!!!!!!!!!!!!!!!
+        #self._var_timer = self.root.after(10000, self.clear_var_mode)  #TIMER AUSSCHALTEN!!!!!!!!!!!!!!!!!
+        
+        self.renderer.update_image_display(full_rebuild=False)
+
+    def clear_var_mode(self, event=None):
+        """Beendet den VAR-Modus und räumt auf."""
+        if getattr(self, 'candidate_view_active', False):
+            self.candidate_view_active = False
+            self.candidate_idx = 0
+            self.var_shots = []
+            if hasattr(self, '_var_timer') and self._var_timer is not None:
+                self.root.after_cancel(self._var_timer)
+                self._var_timer = None
+            #self.print_log("VAR", "Overlay beendet.")
+            self.renderer.update_image_display(full_rebuild=False)
+
+
     def update_frame_title(self):
         """Aktualisiert die Überschrift des Bild-Bereichs mit dynamischem Zoom und Shortcuts."""
         if not getattr(self, 'current_zip_path', None):
@@ -1553,6 +1609,10 @@ class LaborApp:
         #self.root.focus()
         self.update_frame_title()
         if not self.current_zip_path: return
+
+        # ---> NEU: VAR-Modus beim Bildwechsel killen <--- ACHTUNG GEHÖRT DAS HIER HIN???????????????
+        if getattr(self, 'candidate_view_active', False):
+            self.clear_var_mode()
         
         side = self.active_camera_var.get()
         

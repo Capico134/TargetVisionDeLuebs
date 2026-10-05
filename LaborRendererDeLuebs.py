@@ -156,35 +156,8 @@ class LaborRenderer:
                     winner_method = shot.get('winner_method', '')
                     if "Abriss" not in winner_method: continue
 
-                    bx, by = shot.get('base_pos', (0, 0)) # Start (Kante)
-                    ex, ey = shot.get('end_pos', (0, 0))  # Anker (Rumpf / CoG)
-                    zx, zy = shot['pos']                  # Ziel (Final berechnetes Schuss-Zentrum)
-
-                    # 1. DEN +0.5 BUG ENTFERNEN: Exakt die Werte nehmen, die die Engine nutzte!
-                    scaled_bx = int(round(bx * self.app.current_scale)) + self.app.current_img_w
-                    scaled_by = int(round(by * self.app.current_scale))
-                    
-                    scaled_ex = int(round(ex * self.app.current_scale)) + self.app.current_img_w
-                    scaled_ey = int(round(ey * self.app.current_scale))
-                    
-                    scaled_zx = int(round(zx * self.app.current_scale)) + self.app.current_img_w
-                    scaled_zy = int(round(zy * self.app.current_scale))
-
-                    kante_pt = (scaled_bx, scaled_by)
-                    rumpf_pt = (scaled_ex, scaled_ey)
-                    ziel_pt  = (scaled_zx, scaled_zy)
-
-                    hellblau = (255, 200, 0) 
-                    gruen = (0, 255, 0) 
-                    
-                    # 2. DIE KOMPLETTE STRECKE ZEICHNEN (Kante -> Ziel)
-                    if kante_pt != ziel_pt:
-                        cv2.line(combined, kante_pt, ziel_pt, gruen, 1, cv2.LINE_8) 
-
-                    # 3. ALLE DREI PUNKTE MARKIEREN (Zur besseren Diagnose!)
-                    cv2.circle(combined, kante_pt, 3, hellblau, -1, cv2.LINE_8) # Startpunkt
-                    cv2.circle(combined, rumpf_pt, 3, hellblau, -1, cv2.LINE_8) # Rumpf 
-                    cv2.circle(combined, ziel_pt, 3, hellblau, -1, cv2.LINE_8)  # Endpunkt
+                    # ---> DER FIX: Aufruf der neuen ausgelagerten Funktion (Rechte Bildhälfte -> offset_x) <---
+                    self._draw_candidate_vector(combined, shot.get('base_pos'), shot.get('end_pos'), shot['pos'], offset_x=self.app.current_img_w)
             
             # =========================================================================
             # ---> NEU: High-Res Subpixel-Röntgenblick für Modus 2 <---
@@ -431,6 +404,9 @@ class LaborRenderer:
                         zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True
                     )
 
+        # Linker Kreis: Der Erkennungs-Durchmesser (config.ini), der auch fürs Fadenkreuz gilt
+        base_r = getattr(self.app, 'current_radius_px', 15)
+
         # ---> RENDER-HELFER: Angeklickter / Hervorgehobener Treffer <---
         hl = getattr(self.app, 'highlighted_shot', None)
         if hl is not None:
@@ -463,8 +439,7 @@ class LaborRenderer:
                 cv2.putText(combined, f"#{f_num}", (txt_x1 - 25, txt_y - r1_px - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2, cv2.LINE_8) 
 
                 # 2. Rechte Seite (Die ungeschönte Wahrheit der Score-Berechnung!)
-                avg_px_pro_mm = (px_x + px_y) / 2.0
-                echter_score_radius_px = (kaliber_mm / 2.0) * avg_px_pro_mm
+                echter_score_radius_px = getattr(self.app, 'current_radius_px', 15)
                 
                 # Exakte Subpixel-Koordinaten für den rechten Kreis berechnen
                 scaled_x2_sub = int(round((hx * self.app.current_scale + self.app.current_img_w) * mult))
@@ -480,6 +455,97 @@ class LaborRenderer:
                 r2_px  = int(round(echter_score_radius_px * self.app.current_scale))
                 cv2.putText(combined, f"#{f_num}", (txt_x2 - 30, txt_y - r2_px - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_8)
         
+        # =====================================================================
+        # ---> NEU: BATTLE ROYALE VAR - ALLE SCHÜSSE IM FRAME <---
+        # =====================================================================
+        if getattr(self.app, 'candidate_view_active', False) and hasattr(self.app, 'var_shots'):
+            shift = 4
+            mult = 2 ** shift
+            
+            # Linke Seite (Config/Erkennung), Rechte Seite (Config/Erkennung)
+            base_r = getattr(self.app, 'current_radius_px', 15)
+            echter_score_radius_px = getattr(self.app, 'current_radius_px', 15)
+            
+            idx = getattr(self.app, 'candidate_idx', 0)
+            
+            for shot_idx, shot in enumerate(self.app.var_shots):
+                candidates = shot['score_export_details']['all_candidates']
+                #print(f"candidates: {candidates}")
+                # Falls ein Schuss weniger Kandidaten hat, nehmen wir den letzten (Fallback)
+                safe_idx = min(idx, len(candidates) - 1)
+                cand = candidates[safe_idx]
+                
+                hx, hy = cand['cx'], cand['cy']
+                is_valid = cand['valid']
+                
+                # Farbe und detaillierten Status festlegen
+                if not is_valid:
+                    color = (150, 150, 150) # Grau für verworfen
+                    status_text = f"VERWORFEN (Riss: {cand.get('cov_new', 0.0):.1f}%)"
+                else:
+                    # ---> NEU: Prüfen, ob dieser Kandidat der finale Gewinner des Schusses war <---
+                    # Wir sichern ab, dass der Name exakt mit der im Schuss gespeicherten winner_method übereinstimmt
+                    if cand['name'] == shot.get('winner_method', ''):
+                        color = (0, 255, 0) # Leuchtend Grün für den Sieger
+                        status_text = "GEWINNER"
+                    else:
+                        color = (255, 50, 200) # Lila für andere gültige Kandidaten
+                        status_text = "OK"
+                    
+                
+                scaled_x1_sub = int(round(hx * self.app.current_scale * mult))
+                scaled_y_sub  = int(round(hy * self.app.current_scale * mult))
+                scaled_r1_sub = int(round(base_r * self.app.current_scale * mult))
+                ## 1. Linke Seite (Röntgenblick - reiner OpenCV Kreis)
+                #cv2.circle(combined, (scaled_x1_sub, scaled_y_sub), scaled_r1_sub, color, 1, cv2.LINE_AA, shift=shift)
+                #cv2.circle(combined, (scaled_x1_sub, scaled_y_sub), 4 * mult, (0, 0, 0), -1, cv2.LINE_AA, shift=shift)    
+                #cv2.circle(combined, (scaled_x1_sub, scaled_y_sub), 2 * mult, color, -1, cv2.LINE_AA, shift=shift)        
+
+                # =====================================================================
+                # ---> NEU: Vektordarstellung auf der rechten Seite (nur für Abrisskanten) <---
+                # =====================================================================
+                if "Abriss" in cand['name']:
+                    self._draw_candidate_vector(combined, cand.get('base_pos'), cand.get('end_pos'), (hx, hy), offset_x=self.app.current_img_w)
+
+                # 2. Rechte Seite (Score-Kreis))
+                scaled_x2_sub = int(round((hx * self.app.current_scale + self.app.current_img_w) * mult))
+                scaled_r2_sub = int(round(echter_score_radius_px * self.app.current_scale * mult))
+                
+                # Linienstärke auf 1px reduziert
+                cv2.circle(combined, (scaled_x2_sub, scaled_y_sub), scaled_r2_sub, color, 1, cv2.LINE_AA, shift=shift)
+                cv2.circle(combined, (scaled_x2_sub, scaled_y_sub), 4 * mult, (0, 0, 0), -1, cv2.LINE_AA, shift=shift)
+                cv2.circle(combined, (scaled_x2_sub, scaled_y_sub), 2 * mult, color, -1, cv2.LINE_AA, shift=shift)
+                
+                # Text direkt an den Kreis heften
+                txt_x2 = int(round(hx * self.app.current_scale)) + self.app.current_img_w   
+                txt_y = int(round(hy * self.app.current_scale))                             
+                r2_px  = int(round(echter_score_radius_px * self.app.current_scale))
+                
+                # Drei Textzeilen bauen
+                line1 = f"S{shot_idx+1}: {cand['score']:.1f} [{safe_idx+1}/{len(candidates)}]"
+                line2 = f"{cand['name']}"
+                line3 = f"Status: {status_text}"
+                
+                # Startposition (knapp über dem Kreis)
+                start_y = txt_y - r2_px - 40
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                
+                # =====================================================================
+                # ---> DER FIX: Gleiche Linienstärke (thickness=1) verhindert das Auseinanderdriften! <---
+                # =====================================================================
+                for i, text_line in enumerate([line1, line2, line3]):
+                    y_pos = start_y + (i * 18)
+                    
+                    # 1. Der perfekte 1px-Umriss (4x in alle Himmelsrichtungen, IMMER Dicke 1)
+                    cv2.putText(combined, text_line, (txt_x2+55 - 49, y_pos-10 ), font,     0.65,     (65, 0, 10), 1, cv2.LINE_AA) # Rechts
+                    cv2.putText(combined, text_line, (txt_x2+55 - 51, y_pos-10 ), font,     0.65,     (65, 0, 10), 1, cv2.LINE_AA) # Links
+                    cv2.putText(combined, text_line, (txt_x2+55 - 50, y_pos-10  + 1), font, 0.65,     (65, 0, 10), 1, cv2.LINE_AA) # Unten
+                    cv2.putText(combined, text_line, (txt_x2+55 - 50, y_pos-10  - 1), font, 0.65,     (65, 0, 10), 1, cv2.LINE_AA) # Oben
+                    
+                    # 2. Der farbige Innentext exakt in der Mitte
+                    cv2.putText(combined, text_line, (txt_x2+55 - 50, y_pos-10), font, 0.65, color, 1, cv2.LINE_AA)
+        
+        ##WAS MACHT DAS HIER???
         if getattr(self.app, 'calib_mode_active', False) and hasattr(self.app, 'calib_points'):
             for pt in self.app.calib_points:
                 scaled_x = round(pt[0] * self.app.current_scale)
@@ -530,6 +596,39 @@ class LaborRenderer:
         self.app.tk_image = ImageTk.PhotoImage(img_pil)
         self.app.lbl_image.config(image=self.app.tk_image)
         
+    def _draw_candidate_vector(self, combined_img, base_pos, end_pos, target_pos, offset_x=0):
+        """Zeichnet den Vektor (Kante -> Rumpf -> Ziel) für Abrisskanten."""
+        if not base_pos or not end_pos or not target_pos: return
+        
+        bx, by = base_pos
+        ex, ey = end_pos
+        zx, zy = target_pos
+
+        # Skalieren und den horizontalen Offset für die gewünschte Bildhälfte addieren
+        scaled_bx = int(round(bx * self.app.current_scale)) + offset_x
+        scaled_by = int(round(by * self.app.current_scale))
+        
+        scaled_ex = int(round(ex * self.app.current_scale)) + offset_x
+        scaled_ey = int(round(ey * self.app.current_scale))
+        
+        scaled_zx = int(round(zx * self.app.current_scale)) + offset_x
+        scaled_zy = int(round(zy * self.app.current_scale))
+
+        kante_pt = (scaled_bx, scaled_by)
+        rumpf_pt = (scaled_ex, scaled_ey)
+        ziel_pt  = (scaled_zx, scaled_zy)
+
+        hellblau = (255, 200, 0) # BGR (Cyan)
+        gruen = (0, 255, 0)      # BGR (Grün)
+        
+        # Linie zeichnen
+        if kante_pt != ziel_pt:
+            cv2.line(combined_img, kante_pt, ziel_pt, gruen, 1, cv2.LINE_8) 
+
+        # Die 3 Markierungs-Punkte
+        cv2.circle(combined_img, kante_pt, 3, hellblau, -1, cv2.LINE_8) # Startpunkt
+        cv2.circle(combined_img, rumpf_pt, 3, hellblau, -1, cv2.LINE_8) # Rumpf 
+        cv2.circle(combined_img, ziel_pt, 3, hellblau, -1, cv2.LINE_8)  # Endpunkt
 
         
     #!!!!!!!!!!!!! EI-KORREKTUR !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

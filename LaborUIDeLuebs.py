@@ -470,6 +470,10 @@ class LaborUIBuilder:
         
         self.app.root.bind('<Left>', self.app.safe_prev_shot)
         self.app.root.bind('<Right>', self.app.safe_next_shot)
+        # ---> NEU: Tasten-Bindings für das Battle Royale VAR <---
+        self.app.root.bind('<Up>', lambda e: self.app.toggle_var_mode(1))#, e))
+        self.app.root.bind('<Down>', lambda e: self.app.toggle_var_mode(-1))#, e))
+
         for key_char in ['w', 'a', 's', 'd', 'W', 'A', 'S', 'D']:
             self.app.root.bind(f'<{key_char}>', self.app.nudge_center)
     
@@ -487,10 +491,17 @@ class LaborUIBuilder:
                 pass
                 
         self.app.root.bind_all('<Button-1>', release_focus, add="+")
-        # ---> DER FIX: Kombiniertes ESC-Binding (Fokus-Reset + Zoom-Abbruch) <---
+        # ---> DER FIX: Kombiniertes ESC-Binding <---
         def handle_escape(event):
             self.app.root.focus_set()
             self.app.abort_zoom_box(event)
+            
+            # ---> NEU: Beendet das Battle Royale Overlay <---
+            if hasattr(self.app, 'clear_var_mode'):
+                self.app.clear_var_mode()
+                
+            # ---> Bricht den Lila-Kreis sofort ab (falls man keine 5 Sek warten will) <---
+            self.app.clear_highlight()
             
         self.app.root.bind_all('<Escape>', handle_escape, add="+")
 
