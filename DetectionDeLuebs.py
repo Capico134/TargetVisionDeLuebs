@@ -33,13 +33,13 @@ class TargetDetector:
         self.min_hole_area = self.config.getint('Erkennung', 'min_hole_area')
         self.hit_tolerance = self.config.getint('Erkennung', 'hit_tolerance', fallback=25)
         self.erkennungs_methode = self.config.get('Erkennung', 'erkennungs_methode', fallback='C').upper()
-        self.hybrid_discard_faktor = self.config.getfloat('Erkennung', 'hybrid_discard_faktor', fallback=2.5)
+        self.discard_big_hits = self.config.getfloat('Erkennung', 'discard_big_hits', fallback=3.0)
         self.hough_min_faktor = self.config.getfloat('Erkennung', 'hough_min_faktor', fallback=0.85)
         self.hough_max_faktor = self.config.getfloat('Erkennung', 'hough_max_faktor', fallback=1.15)
         self.ausloeser_durch_erschuetterung = self.config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         self.max_image_change_percent = self.config.getfloat('Erkennung', 'max_image_change_percent', fallback=5.0)
         #self.debug_alle_bilder_speichern = self.config.getboolean('Erkennung', 'debug_alle_bilder_speichern', fallback=False)
-        self.debug_subpixel_export = self.config.getboolean('Erkennung', 'debug_subpixel_export', fallback=False) # <--- NEU
+        self.detail_export_aktiv = self.config.getboolean('Erkennung', 'detail_export_aktiv', fallback=False) # <--- NEU
         self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         self.ringwertung_nachkommastellen = self.config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1) # <--- HIER ERGÄNZEN
         self.hough_param1 = self.config.getint('Erkennung', 'hough_param1', fallback=25)
@@ -431,7 +431,7 @@ class TargetDetector:
                     kandidaten = []
                     
                     # --- HILFSFUNKTION FÜR DAS BATTLE ROYALE ---
-                    def add_candidate(name, c_x, c_y, min_coverage=0.0, bonus=0.0, base_pos=None, end_pos=None):
+                    def add_candidate(name, c_x, c_y, min_coverage=0.0, bonus=0.0, base_pos=None, end_pos=None, cand_radius=None):
                         score, cov_new, _ = self.calculate_hole_score(c_x, c_y, current_caliber_radius, thresh_new, thresh_raw)
                         final_score = score + bonus
                         valid = cov_new >= min_coverage
@@ -442,7 +442,8 @@ class TargetDetector:
                         kandidaten.append({
                             'name': name, 'cx': float(c_x), 'cy': float(c_y), 
                             'score': final_score, 'cov_new': cov_new, 'valid': valid,
-                            'base_pos': bp, 'end_pos': ep
+                            'base_pos': bp, 'end_pos': ep,
+                            'mec_radius': cand_radius # <--- NEU
                         })
                         
                         valid_str = "✅" if valid else f"❌ (Zu wenig Riss-Anteil: < {min_coverage}%)"
@@ -468,29 +469,29 @@ class TargetDetector:
                     # 1. BASELINE KANDIDATEN (MEC & CoG)
                     M = cv2.moments(cnt)
                     if M["m00"] != 0:
-                        cog_x, cog_y = M["m10"] / M["m00"], M["m01"] / M["m00"]
+                        # ---> DER FIX: +0.5 für die echte physikalische Mitte! <---
+                        cog_x, cog_y = (M["m10"] / M["m00"]) + 0.5, (M["m01"] / M["m00"]) + 0.5
                         base_pos = (int(cog_x), int(cog_y))
                         add_candidate("Schwerpunkt (CoG)", cog_x, cog_y)
-                        
-                        ##ALLE PIXEL AUSGEBEN!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                        ## ---> DEBUG-AUSGABE FÜR MICH <---
-                        #pixel_liste = cnt.reshape(-1, 2).tolist()
-                        #self.log(side, f"🔴 DEBUG KONTUR-PIXEL: {pixel_liste}")
-                        #self.log(side, f"🔴 DEBUG BERECHNET: CoG({cog_x:.2f}, {cog_y:.2f})")
-                        
                     else:
                         (circle_x, circle_y), _ = cv2.minEnclosingCircle(cnt)
                         base_pos = (int(circle_x), int(circle_y))
-                        cog_x, cog_y = float(circle_x), float(circle_y) # Fallback für dynamische Abrisskante
+                        cog_x, cog_y = float(circle_x) + 0.5, float(circle_y) + 0.5 # Fallback
                         
                     (circle_x, circle_y), radius = cv2.minEnclosingCircle(cnt)
-                    add_candidate("MinCircle (MEC)", circle_x, circle_y)
+                    # ---> DER FIX: Mittelpunkt und Radius auf die Pixel-Quadrate anpassen! <---
+                    circle_x += 0.5
+                    circle_y += 0.5
+                    radius += 0.5
+                    
+                    # ---> NEU: Radius an den Kandidaten übergeben <---
+                    add_candidate("MinCircle (MEC)", circle_x, circle_y, cand_radius=float(radius))
 
                     # Besten Base-Score für Limit-Checks ermitteln
                     best_base = max(kandidaten, key=lambda x: x['score'])
                     base_score = best_base['score']
                     
-                    limit_discard = current_caliber_radius * self.hybrid_discard_faktor
+                    limit_discard = current_caliber_radius * self.discard_big_hits
 
                     self.log(side, f"📊 Base-Leader: {best_base['name']} (Score: {base_score:.1f}) | Radius: {radius:.1f}px (Discard-Limit: {limit_discard:.1f}px)")
 
@@ -713,17 +714,34 @@ class TargetDetector:
                         # Fallback (Passiert nur, falls Base aus irgendeinem Grund rausfliegt)
                         valid_candidates = kandidaten
 
+                    ## =========================================================================
+                    ## ---> NEU: Die ELA Tie-Breaker Logik (Hierarchie bei Gleichstand) <---
+                    ## =========================================================================
+                    #def tie_breaker_key(cand):
+                    #    rounded_score = round(cand['score'], 1)
+                    #    name = cand['name']
+                    #    if name == "Schwerpunkt (CoG)": prio = 4
+                    #    elif name == "MinCircle (MEC)": prio = 3
+                    #    elif "Hough" in name: prio = 2
+                    #    else: prio = 1 
+                    #    return (rounded_score, prio)
+
                     # =========================================================================
                     # ---> NEU: Die ELA Tie-Breaker Logik (Hierarchie bei Gleichstand) <---
                     # =========================================================================
                     def tie_breaker_key(cand):
                         rounded_score = round(cand['score'], 1)
                         name = cand['name']
+                        # 4: CoG (König der sauberen Schüsse)
+                        # 3: Hough (Meister der Krümmungen, ignoriert Fasern)
+                        # 2: MEC (Solide, aber anfällig für abstehende Kanten)
+                        # 1: Abriss (Sollte nur gewinnen, wenn der Punkte-Bonus kickt)
                         if name == "Schwerpunkt (CoG)": prio = 4
-                        elif name == "MinCircle (MEC)": prio = 3
-                        elif "Hough" in name: prio = 2
+                        elif "Hough" in name: prio = 3
+                        elif name == "MinCircle (MEC)": prio = 2
                         else: prio = 1 
                         return (rounded_score, prio)
+
 
                     # ---> NEU: Gleichstand direkt in der Engine loggen! <---
                     highest_score = round(max(c['score'] for c in valid_candidates), 1)
@@ -751,18 +769,19 @@ class TargetDetector:
                 elif self.erkennungs_methode == 'B':
                     M = cv2.moments(cnt)
                     if M["m00"] != 0:
-                        cx = M["m10"] / M["m00"]
-                        cy = M["m01"] / M["m00"]
+                        # ---> DER FIX: +0.5 für den Schwerpunkt <---
+                        cx = (M["m10"] / M["m00"]) + 0.5
+                        cy = (M["m01"] / M["m00"]) + 0.5
                         final_shot_score, _, _ = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw)     
-                        winning_method = "Schwerpunkt (Mode B)" # <--- HIER EINFÜGEN
+                        winning_method = "Schwerpunkt (Mode B)"
                     else:
                         continue 
                 else:
                     (circle_x, circle_y), _ = cv2.minEnclosingCircle(cnt)
-                    cx, cy = float(circle_x), float(circle_y)
-                    # HIER FEHLTE DIE ZUWEISUNG:
+                    # ---> DER FIX: +0.5 für den MinCircle <---
+                    cx, cy = float(circle_x) + 0.5, float(circle_y) + 0.5
                     final_shot_score, _, _ = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw)
-                    winning_method = "MinCircle (Mode A)" # <--- UND HIER EINFÜGEN
+                    winning_method = "MinCircle (Mode A)"
                 
                 # --- FEHLALARM-FILTER: Score < 70 ---
                 if final_shot_score < self.min_score_valid: 
@@ -773,12 +792,13 @@ class TargetDetector:
                 # =========================================================================
                 # 🔬 QUICK & DIRTY: RÖNTGENBLICK FÜR DEN FINALAUSGEWÄHLTEN KANDIDATEN
                 # =========================================================================
-                if self.debug_subpixel_export:
+                if self.detail_export_aktiv:
                     _, _, _, export_details = self.calculate_hole_score(cx, cy, current_caliber_radius, thresh_new, thresh_raw, export_details=True)
                     
                     # ---> DEINE IDEE: Wir quetschen die Metadaten der Verlierer schlank mit rein! <---
                     if self.erkennungs_methode == 'C' and 'valid_candidates' in locals():
                         export_details['all_candidates'] = valid_candidates
+                        #print(f"valid_candidates: {valid_candidates}")
                     #print(f"export_details: {export_details}")
                 else:
                     export_details = None
@@ -814,6 +834,7 @@ class TargetDetector:
                                 
                                 # ---> DER FIX: MEC-Radius für den neuen Duell-Sieger berechnen und anhängen! <---
                                 _, new_mec_radius = cv2.minEnclosingCircle(cnt)
+                                new_mec_radius += 0.5 # <--- FIX
                                 
                                 # Überschreibe den Verlierer mit dem neuen, besseren Kandidaten inkl. Radius!
                                 new_shots_found_this_frame[i] = {
@@ -832,6 +853,7 @@ class TargetDetector:
 
                 if is_new:
                     _, mec_radius = cv2.minEnclosingCircle(cnt)
+                    mec_radius += 0.5 # <--- FIX
                     new_shots_found_this_frame.append({
                         'cx': winner['cx'], 'cy': winner['cy'], 'area': area, 'score': winner['score'],
                         'winner_method': winner['name'],

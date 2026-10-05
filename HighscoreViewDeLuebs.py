@@ -758,7 +758,7 @@ class HighscoreViewer:
                         
                     info_lines.extend([
                         f"Methode: {erk.get('erkennungs_methode', 'C')} | Hit-Tolerance: {erk.get('hit_tolerance', '?')} | Min-Area: {erk.get('min_hole_area', '?')} | Kaliber: {cal_str}",
-                        f"Hybrid-Sicheln: < {erk.get('hybrid_sichel_faktor', '?')}x | Hybrid-Risse: > {erk.get('hybrid_riss_faktor', '?')}x | Discard: > {erk.get('hybrid_discard_faktor', '?')}x",
+                        f"Hybrid-Sicheln: < {erk.get('hybrid_sichel_faktor', '?')}x | Hybrid-Risse: > {erk.get('hybrid_riss_faktor', '?')}x | Discard: > {erk.get('discard_big_hits', '?')}x",
                         f"Hough-Min: {erk.get('hough_min_faktor', '?')}x | Hough-Max: {erk.get('hough_max_faktor', '?')}x",
                         f"Morph-Kernel: {erk.get('morph_kernel_size', '?')} | Max-Aspect-Ratio: {erk.get('max_aspect_ratio', '?')}"
                     ])

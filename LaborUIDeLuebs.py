@@ -383,7 +383,7 @@ class LaborUIBuilder:
         self.make_slider(param_frame, "min_hole_area:", self.app.min_hole_area_var, 5, 500, key="min_hole_area")
         self.make_slider(param_frame, "caliber_durchmesser (mm):", self.app.caliber_durchmesser_var, 3.00, 10.00, res=0.01, key="caliber_durchmesser")
         tk.Label(param_frame, text="--- Hybrid & Hough Faktoren ---", fg="#3498db").pack(pady=(10, 5))
-        self.make_slider(param_frame, "hybrid_discard_faktor:", self.app.hybrid_discard_faktor_var, 1.5, 5.0, 0.1, key="hybrid_discard_faktor")
+        self.make_slider(param_frame, "discard_big_hits:", self.app.discard_big_hits_var, 1.5, 5.0, 0.1, key="discard_big_hits")
         self.make_slider(param_frame, "grenzwert_hough:", self.app.grenzwert_hough_var, 0.0, 20.0, 0.5, key="grenzwert_hough") 
         self.make_slider(param_frame, "hough_min_faktor:", self.app.hough_min_faktor_var, 0.5, 1.0, 0.01, key="hough_min_faktor")
         self.make_slider(param_frame, "hough_max_faktor:", self.app.hough_max_faktor_var, 1.0, 2.0, 0.01, key="hough_max_faktor")

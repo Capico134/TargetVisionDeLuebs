@@ -54,7 +54,7 @@ PARAMETER_LEXIKON = {
     "erkennungs_methode": "A = Umschließender Kreis, B = Schwerpunkt, C = Smart-Hybrid (Hough-Kreise + minEnclosingCircle). Methode C ist der stark empfohlene Standard.",
     #"hybrid_riss_faktor": "Smart-Hybrid: Ab diesem Vergrößerungsfaktor (bezogen auf den Kaliberradius) wird ein unsauberer Riss an den speziellen Hough-Filter übergeben, um das eigentliche Loch zu finden.",
     #"hybrid_sichel_faktor": "Smart-Hybrid: Löcher, die kleiner als dieser Faktor sind (Sichel-Risse am Rand bestehender Löcher), werden hart gegen echte Treffer aussortiert.",
-    "hybrid_discard_faktor": "Smart-Hybrid: Massive Risse (größer als dieser Faktor) werden als pure Papierzerstörung gewertet, maskiert und nicht als Treffer gezählt.",
+    "discard_big_hits": "Massive Risse (größer als dieser Faktor) werden als pure Papierzerstörung gewertet, maskiert und nicht als Treffer gezählt.",
     "hough_min_faktor": "Hough-Kreis-Begrenzung: Der kleinstmögliche Radius, nach dem der Algorithmus in einem unsauberen Riss sucht (Faktor bezogen auf caliber_radius).",
     "hough_max_faktor": "Hough-Kreis-Begrenzung: Der größtmögliche Radius, nach dem der Algorithmus sucht.",
     "hough_param1": "Kanten-Erkennung für unsaubere Löcher. Höhere Werte ignorieren weiche Schatten besser.",
@@ -87,6 +87,11 @@ PARAMETER_LEXIKON = {
     "farb_bonus_limit": "Farb-Toleranzbereich (Übergangsfaktor). Dies ist kein harter Grenzwert, sondern bestimmt die Weichheit des Filters. Er regelt, wie stark ein Pixel von der idealen Wandfarbe abweichen darf, bevor er gleitend auf null gedämpft wird. Größere Werte (z. B. 275) machen den Übergang sanfter, sodass auch beschattete, ausgefranste Risse noch anteilig als Treffer gewertet werden.",
     "farb_bonus_kurve": "Gradationskurve für den Farb-Bonus. Ein Exponent (z.B. 2.0). Bestimmt, wie 'aggressiv' sich der Farb-Bonus aufschaukelt, je näher ein Pixel an der reinen Wandfarbe ist.",
     "fischaugenkorrektur": "Gleicht die 'Tonnenverzerrung' der Kameralinse am Bildrand aus. Positive Werte (z. B. 0.002) stauchen das mathematische Raster leicht, damit äußere Ringe exakt auf die optisch gewölbte Papierscheibe im Kamerabild passen.",
+    # ---> NEUE TOOLTIPS FÜR EXPORT & ANZEIGE <---
+    "detail_export_aktiv": "Zeigt im Labor in Ansicht 2) die Subpixel-Ergebnisse an. Zudem können alle Battle-Royale-Kandidaten mit Pfeiltaste Up/Down angezeigt werden.\nHINWEIS: Im Live-System lieber ausgeschaltet lassen aus Performancegründen.",
+    "serien_gruppierung": "Fasst die Ringwertung im Live-Bild in Serien zusammen (z.B. '3' für 3er-Serien). Bei '0' ist das Feature deaktiviert und alle Schüsse werden fortlaufend nummeriert.",
+    "treffer_zoom": "Zoomfaktor bei der Treffererkennung (z.B. 3 = 3x-facher Zoom). Das System zoomt bei einem neuen Schuss automatisch auf das Loch heran, damit der Schütze den Treffer sofort im Detail sieht.",
+    "treffer_anzeigedauer": "Anzeigedauer in Sekunden. Bestimmt, wie lange der herangezoomte Treffer auf dem Monitor groß eingeblendet bleibt, bevor das System wieder in die Gesamtansicht der Zielscheibe wechselt.",
 }
 
 
@@ -115,7 +120,40 @@ Klickst du im Labor auf "Übernehmen", generiert es die "Live_Tuning_Handover.zi
 📂 testcases/
 Wenn du im Labor ein Match absolut perfektionierst und als "Golden Master" (Als Test-Case exportieren) abspeicherst, landet das fertige, unabhängige ZIP-Paket in diesem Ordner.
 """
+LABOR_TEXT = """🔬 Das Labor: Dein Werkzeugkasten & Deine Zeitmaschine
 
+Das Labor hat zwei verschiedene Betriebs-Modi:
+
+[ 1 ] Stand-Alone Modus (Der Schrauber)
+Startest du das Labor ohne ein Match, bearbeitest du direkt die globale config.ini. Alles, was du speicherst, gilt für zukünftige Matches am Schießstand.
+
+[ 2 ] ZIP-Paket laden (Die Sandbox)
+Lädst du ein historisches Match, siehst du die Parameter von damals. Du kannst gefahrlos testen ("Was wäre wenn...?"). Es geht nichts kaputt, da alles nur im RAM berechnet wird.
+Achtung: Wenn Du jetzt "Einstellungen Speichern" verwendest, dann  nimmst du die aktuell sichtbaren Einstellungen und überschreibst damit gnadenlos dein Live-System für die Zukunft!
+
+--- 🎮 STEUERUNG (Maus & Tastatur) ---
+• Mausrad: Rein- und Rauszoomen
+• L-Klick + Ziehen: Das Bild verschieben (Panning)
+• Strg + L-Klick + Ziehen: Rahmen-Zoom aufziehen
+• R-Klick (oder M-Klick): Zoom zurücksetzen & Zentrieren
+• W, A, S, D: Zielscheiben-Zentrum manuell Pixel für Pixel verschieben
+• ESC: Bricht Röntgenblick, VAR-Modus und Rahmen-Zoom ab
+
+--- 🎯 SCHUSS-ANALYSE & RÖNTGENBLICK ---
+• L-Klick auf einen Schuss: Aktiviert den Röntgen-Scan (Zeigt Frame-Nummer und berechnete Kreise).
+• Strg + L-Klick auf einen Schuss: 🚀 Zeitreise! Springt direkt zu dem Bild, in dem dieser Schuss gefallen ist.
+
+--- 👑 BATTLE ROYALE (VAR-Modus) ---
+⚠️ WICHTIG: Funktioniert nur, wenn unter "Erweiterte Einstellungen" der Parameter "detail_export_aktiv" eingeschaltet ist!
+• Drücke [Pfeil Rauf] oder [Pfeil Runter]: Blättert live durch alle verworfenen und siegreichen Kandidaten (Hough, Schwerpunkt, Abrisskante) eines Schusses.
+
+--- 👁️ DIE 5 ANSICHTEN (Rechtes Bild) ---
+1) Diff-Bild: Das frisch isolierte Loch (ohne alte Treffer).
+2) Diff-Gesamt: Die "Schweizer Käse" Maske (Alle Löcher übereinander).
+3) Überlagerung: Kamerabild gemixt mit der Maske.
+4) Raw-Diff: Die ungeschminkte Wahrheit VOR der Filterung.
+5) Rohes Bild: Das reine Kamerabild aus dem ZIP.
+"""
 
 # =========================================================================
 # GUI: DAS HILFE-FENSTER
@@ -132,14 +170,17 @@ class HelpWindow:
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         self.tab_erste_schritte = ttk.Frame(self.notebook)
+        self.tab_labor = ttk.Frame(self.notebook) # <--- NEU
         self.tab_lexikon = ttk.Frame(self.notebook)
         self.tab_datenstruktur = ttk.Frame(self.notebook) # <--- NEU
         
         self.notebook.add(self.tab_erste_schritte, text=" 📖 Erste Schritte ")
+        self.notebook.add(self.tab_labor, text=" 🔬 Das Labor ") # <--- NEU
         self.notebook.add(self.tab_lexikon, text=" ⚙️ Parameter-Lexikon ")
         self.notebook.add(self.tab_datenstruktur, text=" 📁 Dateien & Ordner ")
         
         self.build_erste_schritte()
+        self.build_labor() # <--- NEU
         self.build_lexikon()
         self.build_datenstruktur()
         
@@ -157,7 +198,21 @@ class HelpWindow:
         
         txt.insert(tk.END, ERSTE_SCHRITTE_TEXT)
         txt.config(state=tk.DISABLED) # Nur lesen!
+    
+    def build_labor(self):
+        frame = tk.Frame(self.tab_labor)
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
+        scrollbar = ttk.Scrollbar(frame, orient="vertical")
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        txt = tk.Text(frame, wrap=tk.WORD, font=("Arial", 11), padx=15, pady=15, bg="#f9f9f9", yscrollcommand=scrollbar.set)
+        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=txt.yview)
+        
+        txt.insert(tk.END, LABOR_TEXT)
+        txt.config(state=tk.DISABLED)
+    
     def build_lexikon(self):
         # Scrollbarer Bereich für das Lexikon
         canvas = tk.Canvas(self.tab_lexikon, borderwidth=0, highlightthickness=0)

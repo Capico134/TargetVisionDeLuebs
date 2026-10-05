@@ -265,7 +265,7 @@ erkennungs_methode = C
 # nicht mehr als "Normal" gilt und den Hough-Algorithmus auslöst. (Standard: 1.5)
 # hybrid_riss_faktor = 1.175
 # hybrid_sichel_faktor = 1.05
-hybrid_discard_faktor = 2.5
+discard_big_hits = 3.0
 # Für Methode C: Begrenzungen für den Hough-Algorithmus (Faktor bezogen auf caliber_radius)
 hough_min_faktor = 0.85
 hough_max_faktor = 1.15
@@ -302,6 +302,7 @@ farb_bonus_kurve = 2.0
 grenzwert_hough = 7.0
 abriss_min_hebel = 0.0
 blur_kernel_size = 7
+detail_export_aktiv = no
 
 [Timing]
 # Bildwiederholrate/Haupttakt in Millisekunden (33 ms entspricht ca. 30 FPS).
@@ -355,6 +356,19 @@ treffer_anzeigedauer = 5
         # ---> NEU: Initialisierung des Spions (AuditedConfigParser) <---
         config = AuditedConfigParser(log_callback=self.write_log)
         config.read(self.CONFIG_FILE, encoding='utf-8')
+    
+        # 1. Sofort das Legacy-Mapping im RAM anwenden!
+        config.apply_legacy_mapping()
+        # 2. Wenn etwas übersetzt wurde, updaten wir die physische config.ini direkt (Erhält Kommentare!)
+        if config.migrated_parameters:
+            updates = {}
+            for sec, old_k, new_k, val in config.migrated_parameters:
+                if sec not in updates: updates[sec] = {}
+                updates[sec][new_k] = val
+                self.remove_ini_value(sec, old_k) # Alten Key physisch löschen
+            self.update_ini_file_bulk(updates) # Neuen Key physisch schreiben
+            # Neu einlesen, damit alles zu 100% synchron ist
+            config.read(self.CONFIG_FILE, encoding='utf-8')
 
         # --- AUTO-PATCH / MIGRATION ---
         needs_reload = False
@@ -622,6 +636,7 @@ treffer_anzeigedauer = 5
                         parser = AuditedConfigParser(log_callback=self.write_log) # <--- Der smarte Spion!
                         parser.optionxform = str
                         parser.read_file(io.StringIO(config_str))
+                        parser.apply_legacy_mapping()# ---> NEU: RAM-Übersetzung für alte ZIPs (Dateien bleiben unangetastet!) <---
                         result['config'] = parser
                     elif filename.lower().endswith(('.png', '.jpg', '.jpeg')):
                         file_bytes = np.frombuffer(zf.read(filename), np.uint8)

@@ -105,7 +105,7 @@ class LaborApp:
         #self.caliber_radius_var = tk.IntVar(value=11)
         #self.hybrid_riss_faktor_var = tk.DoubleVar(value=1.175)
         #self.hybrid_sichel_faktor_var = tk.DoubleVar(value=1.05)
-        self.hybrid_discard_faktor_var = tk.DoubleVar(value=2.5)
+        self.discard_big_hits_var = tk.DoubleVar(value=2.5)
         self.hough_min_faktor_var = tk.DoubleVar(value=0.85)
         self.hough_max_faktor_var = tk.DoubleVar(value=1.15)
         self.hough_param1_var = tk.IntVar(value=25)
@@ -126,7 +126,7 @@ class LaborApp:
         self.clipping_factor_current_var = tk.DoubleVar(value=0.95)
         # ---> NEU: Variable für den Filter <---
         self.max_treffer_je_frame_var = tk.IntVar(value=0)
-        #self.debug_subpixel_export_var = tk.BooleanVar(value=False) # <--- NEU
+        #self.detail_export_aktiv_var = tk.BooleanVar(value=False) # <--- NEU
         # ---> NEU: Farb-Bonus System <---
         self.farb_bonus_aktiv_var = tk.BooleanVar(value=False)
         self.farb_bonus_limit_var = tk.DoubleVar(value=150.0)
@@ -305,9 +305,9 @@ class LaborApp:
                 self.migrated_keys.append('ringwertung_nachkommastellen')
             if not parser.has_section('Erkennung'):
                 parser.add_section('Erkennung')
-            if not parser.has_option('Erkennung', 'debug_subpixel_export'):
-                parser.set('Erkennung', 'debug_subpixel_export', 'no')
-                self.migrated_keys.append('debug_subpixel_export')
+            if not parser.has_option('Erkennung', 'detail_export_aktiv'):
+                parser.set('Erkennung', 'detail_export_aktiv', 'no')
+                self.migrated_keys.append('detail_export_aktiv')
             # =========================================================================
             
             # d_config = self.package_data['config']

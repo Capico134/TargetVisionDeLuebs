@@ -511,6 +511,16 @@ class LaborRenderer:
                 scaled_x2_sub = int(round((hx * self.app.current_scale + self.app.current_img_w) * mult))
                 scaled_r2_sub = int(round(echter_score_radius_px * self.app.current_scale * mult))
                 
+                # =====================================================================
+                # ---> NEU: MEC-Kreis für den MinCircle-Kandidaten (RECHTE SEITE) <---
+                # =====================================================================
+                cand_mec = cand.get('mec_radius')
+                if cand_mec is not None and cand_mec > 0:
+                    scaled_mec_r = int(round(cand_mec * self.app.current_scale * mult))
+                    mec_color = (0, 0, 150) # Dunkelrot
+                    #mec_color = (0, 200, 200) # Gelb
+                    cv2.circle(combined, (scaled_x2_sub, scaled_y_sub), scaled_mec_r, mec_color, 1, cv2.LINE_AA, shift=shift)
+                
                 # Linienstärke auf 1px reduziert
                 cv2.circle(combined, (scaled_x2_sub, scaled_y_sub), scaled_r2_sub, color, 1, cv2.LINE_AA, shift=shift)
                 cv2.circle(combined, (scaled_x2_sub, scaled_y_sub), 4 * mult, (0, 0, 0), -1, cv2.LINE_AA, shift=shift)
