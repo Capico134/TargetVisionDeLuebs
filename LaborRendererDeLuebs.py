@@ -532,25 +532,33 @@ class LaborRenderer:
                 txt_y = int(round(hy * self.app.current_scale))                             
                 r2_px  = int(round(echter_score_radius_px * self.app.current_scale))
                 
+                # =====================================================================
+                # ---> DER FIX: Text dynamisch über den GRÖSSTEN Kreis schieben! <---
+                # =====================================================================
+                text_offset_r = r2_px
+                if cand_mec is not None and cand_mec > 0:
+                    mec_r_px = int(round(cand_mec * self.app.current_scale))
+                    text_offset_r = max(r2_px, mec_r_px) # Nimmt automatisch den größeren Radius
+                
                 # Drei Textzeilen bauen
                 line1 = f"S{shot_idx+1}: {cand['score']:.1f} [{safe_idx+1}/{len(candidates)}]"
                 line2 = f"{cand['name']}"
                 line3 = f"Status: {status_text}"
                 
-                # Startposition (knapp über dem Kreis)
-                start_y = txt_y - r2_px - 40
+                # Startposition (knapp über dem größten Kreis)
+                start_y = txt_y - text_offset_r - 10
                 font = cv2.FONT_HERSHEY_SIMPLEX
                 
                 # =====================================================================
                 # ---> DER FIX: Gleiche Linienstärke (thickness=1) verhindert das Auseinanderdriften! <---
                 # =====================================================================
                 for i, text_line in enumerate([line1, line2, line3]):
-                    y_pos = start_y + (i * 15)-15
+                    y_pos = start_y + (i * 15) - 15
+                    
                     background = (65, 0, 10)
                     if cand_mec is not None and cand_mec > 0:
-                        background = (255, 150, 150)
+                        background = (255, 150, 150) # Hellblaue Outline für den MEC
                         
-                    
                     # 1. Der perfekte 1px-Umriss (4x in alle Himmelsrichtungen, IMMER Dicke 1)
                     cv2.putText(combined, text_line, (txt_x2+55 - 49, y_pos-10 ), font,     0.65,     background, 1, cv2.LINE_AA) # Rechts
                     cv2.putText(combined, text_line, (txt_x2+55 - 51, y_pos-10 ), font,     0.65,     background, 1, cv2.LINE_AA) # Links
