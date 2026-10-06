@@ -239,23 +239,28 @@ class StateManager:
                 
         return score, raw_score
 
-    def add_shot(self, side, cx, cy, area, cv_score=0.0, base_pos=None, end_pos=None):
+    def add_shot(self, side, cx, cy, cv_data=None):
         """Speichert einen neuen Schuss und berechnet die Ring-Zehntelwertung!"""
         score, raw_score = self.calculate_score(side, cx, cy)
         
         shot_data = {
             'side': side,
             'pos': (cx, cy),
-            'area': area,
             'score': score,
             'raw_score': raw_score,
-            'cv_score': cv_score,
-            'base_pos': base_pos if base_pos is not None else (float(cx), float(cy)),
-            'end_pos': end_pos if end_pos is not None else (float(cx), float(cy)),
             'timestamp': time.time(),
             't_mono': time.monotonic() - getattr(self, 'match_start_mono', time.monotonic()), 
             'is_new': True
         }
+        
+        # ELA: Wir hängen alle Computer-Vision-Metadaten (Fläche, Methode, Vektoren) 
+        # dynamisch und allgemein an den Schuss an, ohne sie einzeln benennen zu müssen!
+        if cv_data:
+            # Benennt 'score' aus CV um, um Kollisionen mit dem Ring-Score zu vermeiden
+            if 'score' in cv_data:
+                cv_data['cv_score'] = cv_data.pop('score')
+            shot_data.update(cv_data)
+            
         self.shots.append(shot_data)
         return shot_data
 

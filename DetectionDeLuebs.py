@@ -905,29 +905,23 @@ class TargetDetector:
                     if s['side'] == side:
                         s['is_new'] = False
 
+                # Vor der Schleife: Config einmal auslesen (Performance)
+                seite_de = "links" if side == 'left' else "rechts"
+                px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_de}')
+                px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_de}')
+                avg_px_pro_mm = (px_x + px_y) / 2.0
+                decimals = self.ringwertung_nachkommastellen
+                
                 for sd in new_shots_found_this_frame:
-                    # ---> HIER MUSS base_pos EXPLIZIT MIT ÜBERGEBEN WERDEN! <---
-                    shot = self.sm.add_shot(side, sd['cx'], sd['cy'], sd['area'], cv_score=sd.get('score', 0.0), base_pos=sd.get('base_pos'), end_pos=sd.get('end_pos'))
-                    shot['winner_method'] = sd.get('winner_method', 'Unbekannt') 
-                    # =========================================================================
-                    # ---> DER FIX: Die Export-Details dauerhaft an den Schuss heften! <---
-                    # =========================================================================
-                    shot['score_export_details'] = sd.get('score_export_details')
                     
+                    # 1. Schuss komplett und sauber übergeben (Einfach & Allgemein)
+                    shot = self.sm.add_shot(side, sd['cx'], sd['cy'], cv_data=sd)
+                    
+                    # 2. Werte für den Log-Ausdruck berechnen (Lesbar)
                     shot_num = sum(1 for s in self.sm.shots if s['side'] == side)
+                    durchmesser_mm = (shot.get('mec_radius', 0.0) * 2) / avg_px_pro_mm if avg_px_pro_mm > 0 else 0
                     
-                    seite_de = "links" if side == 'left' else "rechts"
-                    px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_de}')
-                    px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_de}')
-                    avg_px_pro_mm = (px_x + px_y) / 2.0
-                    
-                    mec_radius = sd.get('mec_radius', 0.0)
-                    durchmesser_mm = (mec_radius * 2) / avg_px_pro_mm if avg_px_pro_mm > 0 else 0
-                    
-                    # ---> DER FIX: Dynamische Nachkommastellen für die Logausgabe (aus dem RAM) <---
-                    decimals = self.ringwertung_nachkommastellen
-                    
-                    self.log(side, f"█ 💥 SCHUSS #{shot_num} 💥 █ Pos X:{sd['cx']:.2f}, Y:{sd['cy']:.2f} | {shot['score']:.{decimals}f} Ringe (Roh: {shot.get('raw_score', 0.0):.3f}) | CV-Score: {sd.get('score', 0.0):.1f} | Fläche: {sd.get('area', 0.0):.1f}px | MEC-Ø: {durchmesser_mm:.2f}mm")
+                    self.log(side, f"█ 💥 SCHUSS #{shot_num} 💥 █ Pos X:{shot['cx']:.2f}, Y:{shot['cy']:.2f} | {shot['score']:.{decimals}f} Ringe (Roh: {shot.get('raw_score', 0.0):.3f}) | CV-Score: {shot.get('cv_score', 0.0):.1f} | Fläche: {shot.get('area', 0.0):.1f}px | MEC-Ø: {durchmesser_mm:.2f}mm")
                     
                 self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!", True)
             

@@ -153,6 +153,66 @@ Achtung: Wenn Du jetzt "Einstellungen Speichern" verwendest, dann  nimmst du die
 3) Überlagerung: Kamerabild gemixt mit der Maske.
 4) Raw-Diff: Die ungeschminkte Wahrheit VOR der Filterung.
 5) Rohes Bild: Das reine Kamerabild aus dem ZIP.
+
+--- ⌛def process_and_display(self): ---
+Haupt-Pipeline des Labors für den Bildwechsel (Zeitreise) und die Analyse.
+
+Diese Funktion orchestriert den gesamten Labor-Ablauf, wenn der Nutzer
+im UI einen neuen Frame (Bild-Index) auswählt oder die Kamera wechselt.
+Sie simuliert den Zustand der Zielscheibe bis zum gewählten Frame ("Time-Travel")
+und bereitet alle Bildschichten (Layers) für den Renderer auf.
+
+Ablauf im Detail:
+-----------------
+1. Aufräumen & Setup:
+   - Stoppt den VAR-Modus (Subpixel-Analyse), falls aktiv.
+   - Synchronisiert die aktive Kamera (Links/Rechts) und leert alte Geister-Treffer.
+   - Berechnet einmalig den offiziellen Wettkampf-Radius in Pixeln (official_radius_px) 
+     aus der Config, um CPU-Zyklen beim Rendern zu sparen.
+     
+2. Sonderfall Frame 0 (Referenzbild):
+   - Ist der Index 0, wird keine Treffererkennung gestartet.
+   - Es werden lediglich die sauberen Referenzbilder und (falls vorhanden) 
+     eine kumulierte Startmaske (fortgesetztes Match) geladen.
+   - Die Anzeige der Treffer in der GUI wird auf "- keine -" gesetzt.
+   - Die Renderer-Pipeline wird direkt aufgerufen und die Funktion beendet.
+     
+3. Initialisierung der Analyse-Engine (Index > 0):
+   - Dummy-Instanzen für DateiManager und StateManager werden erzeugt.
+     Diese Dummy-Klassen fangen die Dateisystem-Aufrufe der Engine ab 
+     und lenken sie in den Arbeitsspeicher (RAM) um.
+   - Die echte 'TargetDetector'-Instanz wird gestartet und mit den Dummys gefüttert.
+   - Das Kalibrierungszentrum aus den Original-Metadaten wird wiederhergestellt.
+     
+4. Time-Travel Simulation (Zeitreise):
+   - Die Engine verarbeitet unsichtbar alle Bilder in chronologischer Reihenfolge
+     (Frame 1 bis Ziel-Frame), um die Schuss-Historie (kumulative Maske) korrekt 
+     aufzubauen.
+   - Für das aktuell sichtbare Ziel-Frame werden saubere Log-Ausgaben erzeugt
+     und alle gefundenen Treffer ('shots') mit der aktuellen Frame-Nummer gestempelt.
+     
+5. Visualisierung & GUI-Update:
+   - Die Scores der im Ziel-Frame neu erkannten Treffer werden formatiert 
+     und in die grüne Score-Box der GUI geschrieben.
+   - Diff-Bilder und Masken werden aus den Dummys extrahiert.
+   - Die Bild-Elemente werden für den Renderer vorbereitet (Layering):
+     * Layer 1 (Grün): Alte, bereits im Frame vorhandene Treffer.
+     * Layer 2 (Gelb): Original-Treffer aus der JSON (zur optischen Kontrolle, falls aktiv).
+     * Layer 3 (Rot): Der brandneu erkannte Treffer in diesem Frame (Fokus).
+     
+6. Matrix-Simulation & Farb-Bonus (Ansicht 4):
+   - Um Ansicht 4 (Raw-Filter) korrekt darstellen zu können, simuliert das Labor 
+     den Subtraktions- und Thresholding-Prozess der Engine nach.
+   - Falls der Farb-Bonus aktiviert ist, wird die euklidische Distanz 
+     im normalisierten RGB-Raum (Chrominanz) berechnet und der Multiplikator 
+     für das Rausch-Plateau angewendet.
+   - Die berechneten Matrizen ('raw_diff', 'thresh_raw', 'history_mask') werden
+     als 'last_'-Attribute gespeichert, damit der Renderer oder das Maus-Fadenkreuz 
+     (für Echtzeit-Werte) jederzeit darauf zugreifen können.
+     
+7. Abschluss:
+   - Aufruf von 'self.renderer.update_image_display()', um alle gesammelten
+     und vorbereiteten Daten auf das Canvas zu zeichnen.
 """
 
 # =========================================================================
