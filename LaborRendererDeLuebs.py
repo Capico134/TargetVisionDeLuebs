@@ -517,8 +517,9 @@ class LaborRenderer:
                 cand_mec = cand.get('mec_radius')
                 if cand_mec is not None and cand_mec > 0:
                     scaled_mec_r = int(round(cand_mec * self.app.current_scale * mult))
-                    mec_color = (0, 0, 150) # Dunkelrot
+                    #mec_color = (0, 0, 150) # Dunkelrot
                     #mec_color = (0, 200, 200) # Gelb
+                    mec_color = (255, 100, 100) # Hellblau
                     cv2.circle(combined, (scaled_x2_sub, scaled_y_sub), scaled_mec_r, mec_color, 1, cv2.LINE_AA, shift=shift)
                 
                 # Linienstärke auf 1px reduziert
@@ -544,13 +545,17 @@ class LaborRenderer:
                 # ---> DER FIX: Gleiche Linienstärke (thickness=1) verhindert das Auseinanderdriften! <---
                 # =====================================================================
                 for i, text_line in enumerate([line1, line2, line3]):
-                    y_pos = start_y + (i * 18)
+                    y_pos = start_y + (i * 15)-15
+                    background = (65, 0, 10)
+                    if cand_mec is not None and cand_mec > 0:
+                        background = (255, 150, 150)
+                        
                     
                     # 1. Der perfekte 1px-Umriss (4x in alle Himmelsrichtungen, IMMER Dicke 1)
-                    cv2.putText(combined, text_line, (txt_x2+55 - 49, y_pos-10 ), font,     0.65,     (65, 0, 10), 1, cv2.LINE_AA) # Rechts
-                    cv2.putText(combined, text_line, (txt_x2+55 - 51, y_pos-10 ), font,     0.65,     (65, 0, 10), 1, cv2.LINE_AA) # Links
-                    cv2.putText(combined, text_line, (txt_x2+55 - 50, y_pos-10  + 1), font, 0.65,     (65, 0, 10), 1, cv2.LINE_AA) # Unten
-                    cv2.putText(combined, text_line, (txt_x2+55 - 50, y_pos-10  - 1), font, 0.65,     (65, 0, 10), 1, cv2.LINE_AA) # Oben
+                    cv2.putText(combined, text_line, (txt_x2+55 - 49, y_pos-10 ), font,     0.65,     background, 1, cv2.LINE_AA) # Rechts
+                    cv2.putText(combined, text_line, (txt_x2+55 - 51, y_pos-10 ), font,     0.65,     background, 1, cv2.LINE_AA) # Links
+                    cv2.putText(combined, text_line, (txt_x2+55 - 50, y_pos-10  + 1), font, 0.65,     background, 1, cv2.LINE_AA) # Unten
+                    cv2.putText(combined, text_line, (txt_x2+55 - 50, y_pos-10  - 1), font, 0.65,     background, 1, cv2.LINE_AA) # Oben
                     
                     # 2. Der farbige Innentext exakt in der Mitte
                     cv2.putText(combined, text_line, (txt_x2+55 - 50, y_pos-10), font, 0.65, color, 1, cv2.LINE_AA)

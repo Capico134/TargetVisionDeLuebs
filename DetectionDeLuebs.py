@@ -482,7 +482,7 @@ class TargetDetector:
                     # ---> DER FIX: Mittelpunkt und Radius auf die Pixel-Quadrate anpassen! <---
                     circle_x += 0.5
                     circle_y += 0.5
-                    radius += 0.5
+                    radius += 0.5+0.2071# !!FIXXX!!
                     
                     # ---> NEU: Radius an den Kandidaten übergeben <---
                     add_candidate("MinCircle (MEC)", circle_x, circle_y, cand_radius=float(radius))
@@ -828,13 +828,28 @@ class TargetDetector:
                         dist = np.hypot(existing_shot['cx'] - cx, existing_shot['cy'] - cy)
                         if dist < current_caliber_radius * clipping_factor_current:
                             
-                            # ---> NEU: Das Sichel-Duell! Wer hat den höheren Weißanteil? <---
+                            # =========================================================================
+                            # ---> NEU: VAR-SMUGGLER (Verlierer-Kandidaten ins Labor retten!) <---
+                            # =========================================================================
+                            if self.detail_export_aktiv and export_details and existing_shot.get('score_export_details'):
+                                if final_shot_score > existing_shot['score']:
+                                    # Das ALTE Fragment verliert -> Rette seine Kandidaten ins neue Fragment
+                                    loser_cands = existing_shot['score_export_details'].get('all_candidates', [])
+                                    rescued = [dict(lc, name="👻 [Sichel-Verlierer] " + lc['name']) for lc in loser_cands]
+                                    export_details['all_candidates'].extend(rescued)
+                                else:
+                                    # Das NEUE Fragment verliert -> Rette seine Kandidaten ins alte Fragment
+                                    loser_cands = export_details.get('all_candidates', [])
+                                    rescued = [dict(lc, name="[Sichel-Verlierer] " + lc['name']) for lc in loser_cands]
+                                    existing_shot['score_export_details']['all_candidates'].extend(rescued)
+
+                            # ---> Das eigentliche Sichel-Duell <---
                             if final_shot_score > existing_shot['score']:
                                 self.log(side, f"🔄 Sichel-Duell: Neues Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) schlägt altes Fragment ({existing_shot['score']:.1f}).")
                                 
                                 # ---> DER FIX: MEC-Radius für den neuen Duell-Sieger berechnen und anhängen! <---
                                 _, new_mec_radius = cv2.minEnclosingCircle(cnt)
-                                new_mec_radius += 0.5 # <--- FIX
+                                new_mec_radius += 0.5 + 0.2071 # <--- FIX !!FIXXX!!
                                 
                                 # Überschreibe den Verlierer mit dem neuen, besseren Kandidaten inkl. Radius!
                                 new_shots_found_this_frame[i] = {
@@ -853,7 +868,7 @@ class TargetDetector:
 
                 if is_new:
                     _, mec_radius = cv2.minEnclosingCircle(cnt)
-                    mec_radius += 0.5 # <--- FIX
+                    mec_radius += 0.5+0.2071 # <--- FIX !!FIXXX!!
                     new_shots_found_this_frame.append({
                         'cx': winner['cx'], 'cy': winner['cy'], 'area': area, 'score': winner['score'],
                         'winner_method': winner['name'],
