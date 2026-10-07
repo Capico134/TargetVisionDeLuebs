@@ -226,6 +226,47 @@ class TargetDetector:
         return total_score, coverage_new, coverage_raw
             
         return total_score, coverage_new, coverage_raw
+
+    def resolve_tie_breaker(self, candidates, anker_x, anker_y):
+        """
+        ELA-Zentrum für Gleichstände: Findet den Sieger aus einer Liste von Kandidaten.
+        1. Höchster Score gewinnt.
+        2. Bei Gleichstand (auf 1 Nachkommastelle): Nächster zum Anker gewinnt.
+        
+        Gibt den Sieger-Kandidaten sowie eine Liste aller "Tied"-Kandidaten (fürs Log) zurück.
+        """
+        best_score = -1.0
+        best_cand = None
+        best_dist = float('inf')
+        tied_candidates = []
+
+        for cand in candidates:
+            # Toleranz: Wir runden auf 1 Nachkommastelle für den Gleichstands-Check
+            cand_score_rounded = round(cand['score'], 1)
+            best_score_rounded = round(best_score, 1)
+            dist_to_anker = np.hypot(cand['cx'] - anker_x, cand['cy'] - anker_y)
+            
+            # Wichtig: Distanz für späteres Logging sichern
+            cand['_dist'] = dist_to_anker
+
+            # 1. Höherer Score gewinnt IMMER
+            if cand_score_rounded > best_score_rounded:
+                best_score = cand['score']
+                best_cand = cand
+                best_dist = dist_to_anker
+                tied_candidates = [cand] # Alte Verlierer wegschmeißen
+                
+            # 2. Bei GLEICHSTAND: Kandidat vermerken
+            elif cand_score_rounded == best_score_rounded:
+                tied_candidates.append(cand)
+                
+                # Wenn er näher am Anker ist, übernimmt er intern die Krone
+                if dist_to_anker < best_dist:
+                    best_score = cand['score']
+                    best_cand = cand
+                    best_dist = dist_to_anker
+                    
+        return best_cand, tied_candidates
         
     def ninja_kalibrierungs_check(self, ref_bgr, side):
         """Findet den Nullpunkt mit dem unbestechlichen 'Weißen-Punkt-Sniper'."""
@@ -486,7 +527,7 @@ class TargetDetector:
                             'mec_radius': cand_radius # <--- NEU
                         })
                         
-                        valid_str = "✅" if valid else f"❌ (Zu wenig Riss-Anteil: < {min_coverage}%)"
+                        valid_str = "✅" if valid else f"❌ (Zu wenig Flächen-Ratio: < {min_coverage}%)"
                         bonus_str = f" (inkl. +{bonus:.2f} Bonus)" if bonus > 0 else ""
                         
                         # =====================================================================
@@ -494,14 +535,15 @@ class TargetDetector:
                         # =====================================================================
                         if "Abriss" in name:
                             # Zeigt den genauen Weg: Start (Kante) -> Anker (CoG/MEC) -> Endpunkt (Zentrum)
-                            pos_str = f"Kante ({bp[0]:.2f}, {bp[1]:.2f}) ➔ Rumpf ({ep[0]:.2f}, {ep[1]:.2f}) ➔ Ziel ({c_x:.2f}, {c_y:.2f})"
+                            pos_str = f"Kante ({bp[0]:.2f}, {bp[1]:.2f}) -> Rumpf ({ep[0]:.2f}, {ep[1]:.2f}) -> Ziel ({c_x:.2f}, {c_y:.2f})"
                         else:
                             pos_str = f"Ziel X:{c_x:.2f} Y:{c_y:.2f}"
                             
+                        # ---> DER FIX: Den KOMPLETTEN Text inkl. Namen auf 115 Zeichen auffüllen! <---
                         prefix = f"Kandidat [{name}]: {pos_str} "
-                        padded_prefix = f"{prefix:-<85}>" # Etwas mehr Platz für den langen String
+                        padded_prefix = f"{prefix:-<109}>" 
                         
-                        self.log(side, f"   -> {padded_prefix} Score: {final_score:5.1f}{bonus_str} | Riss-Anteil: {cov_new:5.1f}% {valid_str}")
+                        self.log(side, f"--> {padded_prefix} Score: {final_score:5.1f}{bonus_str} | Flächen-Ratio: {cov_new:5.1f}% {valid_str}")
                         return final_score
 
                     self.log(side, "🔍 Sammle Kandidaten für das Battle Royale...")
@@ -535,6 +577,21 @@ class TargetDetector:
 
                     self.log(side, f"📊 Base-Leader: {best_base['name']} (Score: {base_score:.1f}) | Radius: {radius:.1f}px (Discard-Limit: {limit_discard:.1f}px)")
 
+                    # =====================================================================
+                    # ---> DER FIX: Den dynamischen Tie-Breaker Anker HIER definieren! <---
+                    # =====================================================================
+                    expected_area = np.pi * (current_caliber_radius ** 2)
+                    raw_area_ratio = area / expected_area if expected_area > 0 else 1.0
+                    
+                    if raw_area_ratio >= 0.80:
+                        anker_x, anker_y = cog_x, cog_y
+                        anker_name = "CoG"
+                    else:
+                        anker_x, anker_y = circle_x, circle_y
+                        anker_name = "MEC"
+                        
+                    self.log(side, f"⚓ Tie-Breaker Anker gesetzt auf: {anker_name} (Flächen-Ratio: {raw_area_ratio*100:.1f}%)")
+
                     # 2. DISCARD CHECK (Mega-Störungen sofort abwürgen)
                     if radius > limit_discard:
                         self.log(side, f"🚫 Störung ignoriert (Radius {radius:.1f}px > Limit {limit_discard:.1f}px). Wird maskiert!")
@@ -551,59 +608,27 @@ class TargetDetector:
                     mask_blurred = cv2.GaussianBlur(mask_for_deep, (9, 9), 0)
                     min_r = max(2, int(current_caliber_radius * self.hough_min_faktor))
                     max_r = int(current_caliber_radius * self.hough_max_faktor)
-                    
                     circles = cv2.HoughCircles(mask_blurred, cv2.HOUGH_GRADIENT, dp=1, minDist=2,
                                                param1=self.hough_param1, param2=self.hough_param2, 
                                                minRadius=min_r, maxRadius=max_r)
-                                               
                     if circles is not None:
                         found_circles = circles[0, :]
                         self.log(side, f"🔎 Hough hat {len(found_circles)} Kandidaten gefunden. Evaluiere den Besten...")
-                        
-                        best_hough_score = -1.0
-                        best_h_cx, best_h_cy = 0.0, 0.0
-                        best_hough_dist_to_cog = float('inf')
-                        
-                        # ---> NEU: Eine Liste für alle Kandidaten, die sich Platz 1 teilen
-                        tied_hough_candidates = [] 
-
+                        # 1. Alle gefundenen Hough-Kreise in das einheitliche Kandidaten-Format pressen
+                        hough_cands = []
                         for (hx, hy, hr) in found_circles:
                             h_score, _, _ = self.calculate_hole_score(hx, hy, current_caliber_radius, thresh_new, thresh_raw)
-                            
-                            dist_to_cog = np.hypot(hx - cog_x, hy - cog_y)
-                            h_score_rounded = round(h_score, 1)
-                            best_hough_score_rounded = round(best_hough_score, 1)
-
-                            # 1. Höherer Score gewinnt IMMER
-                            if h_score_rounded > best_hough_score_rounded:
-                                best_hough_score = h_score
-                                best_h_cx, best_h_cy = float(hx), float(hy)
-                                best_hough_dist_to_cog = dist_to_cog
-                                
-                                # ---> NEU: Alte Verlierer wegschmeißen, neuen Rekordhalter eintragen
-                                tied_hough_candidates = [{'cx': float(hx), 'cy': float(hy), 'dist': dist_to_cog}]
-                                
-                            # 2. Bei GLEICHSTAND (auf 1 Nachkommastelle): Kandidat wird vermerkt!
-                            elif h_score_rounded == best_hough_score_rounded:
-                                tied_hough_candidates.append({'cx': float(hx), 'cy': float(hy), 'dist': dist_to_cog})
-                                
-                                # Wenn er näher am CoG ist, übernimmt er intern die Krone
-                                if dist_to_cog < best_hough_dist_to_cog:
-                                    best_hough_score = h_score
-                                    best_h_cx, best_h_cy = float(hx), float(hy)
-                                    best_hough_dist_to_cog = dist_to_cog
-                        
-                        # ---> NEU: Detaillierte und aufgeräumte Log-Ausgabe für den Labor-Blick <---
-                        if len(tied_hough_candidates) > 1:
-                            self.log(side, f"   📏 Hough-Tie-Breaker: {len(tied_hough_candidates)} Kreise mit Top-Score ({round(best_hough_score, 1)}).")
-                            for i, cand in enumerate(tied_hough_candidates):
-                                # Den Gewinner optisch hervorheben
-                                is_winner = (cand['cx'] == best_h_cx and cand['cy'] == best_h_cy)
+                            hough_cands.append({'cx': float(hx), 'cy': float(hy), 'score': h_score})
+                        # 2. Die neue Tie-Breaker-Jury rufen!
+                        best_hough, tied_hough = self.resolve_tie_breaker(hough_cands, anker_x, anker_y)
+                        # 3. Logging
+                        if len(tied_hough) > 1:
+                            self.log(side, f"   📏 Hough-Tie-Breaker: {len(tied_hough)} Kreise mit Top-Score ({round(best_hough['score'], 1)}).")
+                            for i, cand in enumerate(tied_hough):
+                                is_winner = (cand['cx'] == best_hough['cx'] and cand['cy'] == best_hough['cy'])
                                 marker = "👑 SIEGER" if is_winner else "❌"
-                                
-                                self.log(side, f"      -> Opt {i+1}: X:{cand['cx']:.2f} Y:{cand['cy']:.2f} | Distanz zu CoG: {cand['dist']:.2f}px {marker}")
-                        
-                        add_candidate("Hough-Sieger", best_h_cx, best_h_cy, min_coverage=self.grenzwert_hough)
+                                self.log(side, f"      -> Opt {i+1}: X:{cand['cx']:.2f} Y:{cand['cy']:.2f} | Distanz zum Anker ({anker_name}): {cand['_dist']:.2f}px {marker}")
+                        add_candidate("Hough-Sieger", best_hough['cx'], best_hough['cy'], min_coverage=self.grenzwert_hough)
 
                     # --- ABRISSKANTEN KANDIDATEN ---
                     if state.cumulative_mask is not None and cv2.countNonZero(state.cumulative_mask) > 0:
@@ -789,51 +814,37 @@ class TargetDetector:
                         valid_candidates = kandidaten
 
                     # =========================================================================
-                    # ---> NEU: Die erweiterte ELA Tie-Breaker Logik (inkl. Distanz-Check) <---
+                    # ---> NEU: Die erweiterte ELA Tie-Breaker Logik (inkl. Dynamischem Anker) <---
                     # =========================================================================
                     def tie_breaker_key(cand):
                         rounded_score = round(cand['score'], 1)
                         name = cand['name']
-                        
-                        # 1: CoG (König der sauberen Schüsse)
-                        # 2: Hough (Meister der Krümmungen)
-                        # 3: MEC (Solide, aber anfällig)
-                        # 4: Abriss (Nur bei Bonus)
                         if name == "Schwerpunkt (CoG)": prio = 1
                         elif "Hough" in name: prio = 2
                         elif name == "MinCircle (MEC)": prio = 3
                         else: prio = 4 
-                        
-                        dist_to_cog = np.hypot(cand['cx'] - cog_x, cand['cy'] - cog_y)
-                        
+                        # Wir nutzen den dynamisch festgelegten Anker (CoG oder MEC)
+                        dist_to_anker = np.hypot(cand['cx'] - anker_x, cand['cy'] - anker_y)
                         cand['_prio'] = prio
-                        cand['_dist'] = dist_to_cog
-                        
-                        # Das Minus vor prio macht Platz 1 zur mathematisch größten Zahl!
-                        # (-1 ist größer als -4)
-                        return (rounded_score, -prio, -dist_to_cog)
-
+                        cand['_dist'] = dist_to_anker
+                        return (rounded_score, -prio, -dist_to_anker)
                     # Den Sieger ermitteln
                     winner = max(valid_candidates, key=tie_breaker_key)
-                    
+                    # Den Sieger ermitteln
+                    winner = max(valid_candidates, key=tie_breaker_key)
                     # ---> NEU: Detaillierte Liste bei Battle-Royale Gleichständen <---
                     highest_score = round(winner['score'], 1)
                     tied_candidates = [c for c in valid_candidates if round(c['score'], 1) == highest_score]
-                    
                     if len(tied_candidates) > 1:
                         self.log(side, f"⚖️ BATTLE ROYALE TIE-BREAKER: {len(tied_candidates)} Kandidaten mit Top-Score ({highest_score:.1f}).")
-                        
                         # Für eine schöne Liste absteigend nach der Tie-Breaker-Stärke sortieren
                         sorted_ties = sorted(tied_candidates, key=tie_breaker_key, reverse=True)
-                        
                         for i, cand in enumerate(sorted_ties):
                             is_winner = (cand['name'] == winner['name'])
                             marker = "👑 SIEGER" if is_winner else "❌"
-                            
                             # Namen für die Log-Ausgabe auf eine feste Breite (z.B. 25 Zeichen) auffüllen
                             name_padded = f"{cand['name']:<28}"
                             self.log(side, f"      -> {name_padded} | Prio: {cand['_prio']} | Distanz: {cand['_dist']:5.2f}px | X:{cand['cx']:.2f} Y:{cand['cy']:.2f} {marker}")
-                        
                         # Kurze Info, falls die Distanz (und nicht die Prio-Klasse) entscheiden musste
                         same_prio_contenders = [c for c in tied_candidates if c['_prio'] == winner['_prio']]
                         if len(same_prio_contenders) > 1:
@@ -962,7 +973,7 @@ class TargetDetector:
                         'end_pos': winner.get('end_pos', (winner['cx'], winner['cy'])), # <--- Zielpunkt sichern
                         'score_export_details': export_details # <--- Sicheres Variablen-Mapping
                     })
-                    self.log(side, f"---> NEUES LOCH BESTÄTIGT: Pos ({cx:.2f}, {cy:.2f}) | Fläche: {area:.1f}px | Score: {final_shot_score:.1f} | Riss-Anteil: {winner['cov_new']:.1f}%")
+                    self.log(side, f"---> NEUES LOCH BESTÄTIGT: Pos ({cx:.2f}, {cy:.2f}) | Fläche: {area:.1f}px | Score: {final_shot_score:.1f} | Flächen-Ratio: {winner['cov_new']:.1f}%")
                     self.log(side, "------------------------------------------------------------")
                     
         # =========================================================================

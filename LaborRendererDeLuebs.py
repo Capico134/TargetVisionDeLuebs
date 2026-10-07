@@ -160,9 +160,9 @@ class LaborRenderer:
                     self._draw_candidate_vector(combined, shot.get('base_pos'), shot.get('end_pos'), shot['pos'], offset_x=self.app.current_img_w)
             
             # =========================================================================
-            # ---> NEU: High-Res Subpixel-Röntgenblick für Modus 2 <---
+            # ---> NEU: High-Res Subpixel-Röntgenblick für Modus 1 und 2 <---
             # =========================================================================
-            if mode == 2 and hasattr(self.app, 'current_engine_shots'):
+            if (mode == 1 or mode == 2) and hasattr(self.app, 'current_engine_shots'):
                 side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
                 current_frame_num = self.app.current_index
 

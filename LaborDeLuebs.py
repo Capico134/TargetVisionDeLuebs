@@ -268,10 +268,10 @@ class LaborApp:
         return sorted([f for f in self.orig_files if side in f])
 
 
-    # ---> NEU: Parameter 'show_gui' hinzugefügt, damit das Programm nicht crasht <---
     def print_log(self, side, msg, show_gui=False):
         """Simuliert den Log-Output der Engine in der GUI"""
-        self.log_text.insert(tk.END, f"[{side.upper()}] {msg}\n")
+        # ---> DER FIX: Wir hängen das "mono" Tag an jeden eingefügten Text <---
+        self.log_text.insert(tk.END, f"[{side.upper()}] {msg}\n", "mono")
         self.log_text.see(tk.END)
 
     def apply_config_to_ui(self, parser):
@@ -1765,6 +1765,11 @@ class LaborApp:
                     history_mask = temp_state.cumulative_mask.copy()
                 else:
                     history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+            # =====================================================================
+            # ---> NEU: Kompakte Trennlinie für alle historischen Frames <---
+            # =====================================================================
+            else:
+                self.log_text.insert(tk.END, f"\n--- BILD #{i+1} ".ljust(61, "-") + "\n", "mono")
                     
             # ---> NEU: Zähle die Schüsse VOR der Erkennung <---
             shots_before = len(d_sm.shots)

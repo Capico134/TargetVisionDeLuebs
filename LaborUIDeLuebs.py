@@ -267,6 +267,13 @@ class LaborUIBuilder:
         self.app.lbl_image.bind('<Button-2>', self.app.center_on_last_shot)
         
         self.app.log_text = tk.Text(self.app.paned_window, height=12, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
+        # =====================================================================
+        # ---> DER FIX: Monospace-Schriftart erzwingen (für saubere Tabellen) <---
+        # =====================================================================
+        # Fallback auf Courier, falls Consolas auf dem System nicht existiert
+        self.app.log_text.configure(font=("Consolas", 10, "normal"))
+        # Ein Tag definieren, das wir für alles verwenden, um sicherzugehen
+        self.app.log_text.tag_configure("mono", font=("Consolas", 10, "normal"))
         
         # =====================================================================
         # ---> NEU: STRG+A zum schnellen Markieren des gesamten Logs <---
