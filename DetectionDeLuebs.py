@@ -752,7 +752,7 @@ class TargetDetector:
                                     # Das Log zeigt dir exakt, warum ein Bonus vergeben oder verweigert wurde
                                     pct_str = int(max_edge_percent * 100)
                                     if gets_bonus:
-                                        bonus_log = f" (+{bonus:.1f} Bonus [Faktor {area_ratio:.2f}], L={edge_len:.1f}px < {pct_str}% Limit)"
+                                        bonus_log = f" (+{bonus:.2f} Bonus [Faktor {area_ratio:.2f}], L={edge_len:.1f}px < {pct_str}% Limit)"
                                     elif is_closed_ring:
                                         bonus_log = f" (Kein Bonus, Vollkreis! Area={edge_area:.0f}px)"
                                     elif not is_single_edge:
@@ -851,9 +851,9 @@ class TargetDetector:
                             self.log(side, f"   📏 Härtefall! Prio-Klasse {winner['_prio']} war mehrfach vertreten. Distanz-Jury entschied!")
 
                     # ---> NEU: Formatierter Sieger <---
-                    win_prefix = f"BATTLE ROYALE SIEGER: {winner['name']} "
-                    padded_win = f"{win_prefix:-<45}>"
-                    self.log(side, f"🏆 {padded_win} Score: {winner['score']:5.1f}")
+                    win_prefix = f"BATTLE ROYALE SIEGER:------------------------------------------------------------------------------------> WINNER!"
+                    #padded_win = f"{win_prefix:-<45}>"
+                    self.log(side, f"{win_prefix} Score: {winner['score']:5.1f} | {winner['name']}")
                     
                     cx, cy = winner['cx'], winner['cy']
                     final_shot_score = winner['score']
