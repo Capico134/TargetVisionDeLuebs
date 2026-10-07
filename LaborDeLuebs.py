@@ -683,6 +683,8 @@ class LaborApp:
 
     def on_zoom_box_start(self, event):
         """Startet den Rahmen-Zoom (Strg / Shift)"""
+        self.root.focus_set() # <--- ELA FIX: Fokus sanft holen, bevor der Rahmen gezeichnet wird!
+        
         if getattr(self, 'color_picker_active', False):
             return "break"
             
@@ -801,6 +803,7 @@ class LaborApp:
 
     def on_drag_start(self, event):
         """Normaler Linksklick (Verschieben, Kalibrieren, Pipette)"""
+        self.root.focus_set() # <--- ELA FIX: Fokus sanft holen, bevor das Ziehen beginnt!
         if getattr(self, 'calib_mode_active', False):
             if event.widget == self.lbl_image:
                  self.handle_calibration_click(event)
@@ -2250,6 +2253,32 @@ class LaborApp:
         if not save_path:
             return 
             
+        # =========================================================================
+        # ---> NEU: DER DETAIL-EXPORT TÜRSTEHER <---
+        # =========================================================================
+        d_config = self.package_data['config']
+        if d_config.getboolean('Erkennung', 'detail_export_aktiv', fallback=False):
+            # messagebox.askyesno gibt True zurück, wenn "Ja" geklickt wird
+            disable_export = messagebox.askyesno(
+                "Performance Warnung",
+                "⚠️ Der Parameter 'detail_export_aktiv' ist aktuell EINGESCHALTET.\n\n"
+                "Dies verlangsamt die Live-Engine und bläht den Testcase unnötig auf. "
+                "Für einen regulären Golden Master sollte dieser Wert 'no' sein.\n\n"
+                "Möchtest du den Parameter für diesen Export automatisch deaktivieren?"
+            )
+            if disable_export:
+                # Schaltet den Parameter im RAM ab (und passt den Slider im Labor an)
+                d_config.set('Erkennung', 'detail_export_aktiv', 'no')
+                # Wenn wir schon eine Checkbox/Variable in den Slidern registriert haben, updaten wir sie!
+                # (Da der Parameter aus Legacy-Gründen evtl. keinen eigenen Slider mehr hat, ist das in try/except sicher verpackt)
+                try:
+                    for key, tk_var in self.registered_sliders.items():
+                        if key == 'detail_export_aktiv':
+                            tk_var.set(False)
+                except Exception:
+                    pass
+                self.print_log("SYSTEM", "ℹ️ 'detail_export_aktiv' wurde für den Export deaktiviert.")
+            
         try:
             # =========================================================================
             # NEU: 4. SILENT MATCH RECALCULATION (Die perfekten Schüsse generieren!)
@@ -2418,8 +2447,29 @@ class LaborApp:
         if not antwort:
             return
             
+        # =========================================================================
+        # ---> NEU: DER DETAIL-EXPORT TÜRSTEHER (FÜR DIE LIVE-ANLAGE) <---
+        # =========================================================================
+        d_config = self.package_data['config']
+        if d_config.getboolean('Erkennung', 'detail_export_aktiv', fallback=False):
+            disable_export = messagebox.askyesno(
+                "Performance Warnung",
+                "⚠️ Der Parameter 'detail_export_aktiv' ist aktuell EINGESCHALTET.\n\n"
+                "Dies verlangsamt die Maschine am echten Schießstand erheblich!\n\n"
+                "Möchtest du den Parameter vor dem Speichern automatisch deaktivieren?"
+            )
+            if disable_export:
+                d_config.set('Erkennung', 'detail_export_aktiv', 'no')
+                try:
+                    for key, tk_var in self.registered_sliders.items():
+                        if key == 'detail_export_aktiv':
+                            tk_var.set(False)
+                except Exception:
+                    pass
+                self.print_log("SYSTEM", "ℹ️ 'detail_export_aktiv' wurde für das Live-System deaktiviert.")
             
         try:
+            current_path = getattr(self, 'current_zip_path', '')
             current_path = getattr(self, 'current_zip_path', '')
             export_dir = os.path.join(os.getcwd(), "labor_export")
             os.makedirs(export_dir, exist_ok=True)

@@ -139,13 +139,19 @@ def run_all_tests():
                         # 'gesamt_anteil_am_200score': '0.6',
                     }
                 }
-                
                 for section, keys in GLOBAL_OVERRIDES.items():
                     if not config.has_section(section):
                         config.add_section(section)
                     for key, val in keys.items():
                         config.set(section, key, val)
                 # =======================================================
+                
+                # =======================================================
+                # ---> NEU: CHECK FÜR AKTIVEN DETAIL-EXPORT <---
+                # =======================================================
+                if config.getboolean('Erkennung', 'detail_export_aktiv', fallback=False):
+                    log(f"{C_YELLOW}⚠️ WARNUNG:{C_END} 'detail_export_aktiv' ist in {zip_file} EINGESCHALTET!")
+
 
                 # 2. Golden Master match.json laden
                 match_json_name = next((f for f in all_files if "match.json" in f), None)

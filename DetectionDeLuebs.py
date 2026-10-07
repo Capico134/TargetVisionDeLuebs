@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import time
 from datetime import datetime
+import math
 
 class TargetDetector:
     """
@@ -123,36 +124,75 @@ class TargetDetector:
         # 3. Hartes Hochskalieren (NEAREST bewahrt die pixeligen, harten Treppenstufen!)
         roi_new_highres = cv2.resize(roi_new, (roi_w * scale, roi_h * scale), interpolation=cv2.INTER_NEAREST)
         roi_raw_highres = cv2.resize(roi_raw, (roi_w * scale, roi_h * scale), interpolation=cv2.INTER_NEAREST)
-        
         # 4. Hochauflösende Kreis-Maske erstellen
         circle_mask_highres = np.zeros((roi_h * scale, roi_w * scale), dtype=np.uint8)
         
-        scaled_cx = int(round(local_cx * scale))
-        scaled_cy = int(round(local_cy * scale))
-        #scaled_cx = int(round((local_cx + 0.5) * scale - 0.5))
-        #scaled_cy = int(round((local_cy + 0.5) * scale - 0.5))		  
-        scaled_r = int(round(radius * scale))
         
-															  
-        cv2.circle(circle_mask_highres, (scaled_cx, scaled_cy), scaled_r, 255, -1, cv2.LINE_8)
+        # Variante G: Der OpenCV Subpixel-Shift (Perfekt symmetrisch) + Geometric Offset
+        shift_bits = 4               
+        multiplier = 1 << shift_bits # = 16
+        # Der 0.5 Offset ist zwingend nötig, um den cv2.circle auf das 
+        # INTER_NEAREST Raster (welches links-oben verankert ist) zu zentrieren!
+        offset = 0.5
+        sub_cx = int(round((local_cx * scale - offset) * multiplier))
+        sub_cy = int(round((local_cy * scale - offset) * multiplier))
+        # Der Radius braucht keinen Offset, da er eine reine Längenangabe ist
+        #sub_r  = int(round(radius * scale * multiplier))
+        sub_r = int(round(((radius * scale- 0.707/2)) * multiplier))
+        cv2.circle(circle_mask_highres, (sub_cx, sub_cy), sub_r, 255, -1, cv2.LINE_8, shift=shift_bits)
         
-        pixels_in_circle = cv2.countNonZero(circle_mask_highres)
-        if pixels_in_circle == 0: 
-            if export_details: return 0.0, 0.0, 0.0, None
-            return 0.0, 0.0, 0.0
-            
+
+        ##A)
+        ##scaled_cx = int(round(local_cx * scale))
+        ##scaled_cy = int(round(local_cy * scale))
+        ##B)
+        ##scaled_cx = int(round((local_cx + 0.5) * scale - 0.5))
+        ##scaled_cy = int(round((local_cy + 0.5) * scale - 0.5))		  
+        ##C)
+        ##scaled_cx = int(round((local_cx ) * scale - 0.5))
+        ##scaled_cy = int(round((local_cy ) * scale - 0.5))	
+        ##D)
+        ##scaled_cx = int(round((local_cx ) * scale - 0.7071))
+        ##scaled_cy = int(round((local_cy ) * scale - 0.7071))	        
+        ##F)
+        #scaled_cx = int(round((local_cx ) * scale - 0.501))
+        #scaled_cy = int(round((local_cy ) * scale - 0.501))
+        #scaled_r = int(round(radius * scale))
+        #cv2.circle(circle_mask_highres, (scaled_cx, scaled_cy), scaled_r, 255, -1, cv2.LINE_8)
+        
+        #pixels_in_circle = cv2.countNonZero(circle_mask_highres)
+        #if pixels_in_circle == 0: 
+        #    if export_details: return 0.0, 0.0, 0.0, None
+        #    return 0.0, 0.0, 0.0
+        ## 5. Echte, binäre Schnittmengen bilden (0 oder 255)
+        #intersection_new = cv2.bitwise_and(circle_mask_highres, roi_new_highres)
+        #intersection_raw = cv2.bitwise_and(circle_mask_highres, roi_raw_highres)
+        #pixels_in_new = cv2.countNonZero(intersection_new)
+        #pixels_in_raw = cv2.countNonZero(intersection_raw)
+        #coverage_new = (pixels_in_new / pixels_in_circle) * 100.0
+        #coverage_raw = (pixels_in_raw / pixels_in_circle) * 100.0
+        #weight_new = 1.0 - self.gesamt_anteil_am_200score
+        #total_score = 2.0 * ((coverage_new * weight_new) + (coverage_raw * self.gesamt_anteil_am_200score))
+        
+       
         # 5. Echte, binäre Schnittmengen bilden (0 oder 255)
         intersection_new = cv2.bitwise_and(circle_mask_highres, roi_new_highres)
         intersection_raw = cv2.bitwise_and(circle_mask_highres, roi_raw_highres)
-        
         pixels_in_new = cv2.countNonZero(intersection_new)
         pixels_in_raw = cv2.countNonZero(intersection_raw)
-        
-        coverage_new = (pixels_in_new / pixels_in_circle) * 100.0
-        coverage_raw = (pixels_in_raw / pixels_in_circle) * 100.0
-        
+        # ---> DER FIX: Wir nutzen die exakte mathematische Fläche statt zitternder Raster-Pixel! <---
+        # Da wir 'scale' verwendet haben, müssen wir den Radius für die Flächenformel ebenfalls skalieren.
+        ideal_pixels_in_circle = math.pi * (radius * scale) ** 2
+        if ideal_pixels_in_circle == 0: 
+            if export_details: return 0.0, 0.0, 0.0, None
+            return 0.0, 0.0, 0.0
+        # min(100.0, ...) stellt sicher, dass wir durch Rasterungs-Rundungen 
+        # niemals astronomische Werte über 100% erhalten können.
+        coverage_new = min(100.0, (pixels_in_new / ideal_pixels_in_circle) * 100.0)
+        coverage_raw = min(100.0, (pixels_in_raw / ideal_pixels_in_circle) * 100.0)
         weight_new = 1.0 - self.gesamt_anteil_am_200score
         total_score = 2.0 * ((coverage_new * weight_new) + (coverage_raw * self.gesamt_anteil_am_200score))
+        
         
         # =========================================================================
         # ---> NEU: DER SUBPIXEL-DATEN-EXPORT FÜR DAS LABOR <---
@@ -517,18 +557,52 @@ class TargetDetector:
                                                minRadius=min_r, maxRadius=max_r)
                                                
                     if circles is not None:
-                        # ---> WIEDER BEFREIT: Keine Integer-Rundung mehr! <---
                         found_circles = circles[0, :]
                         self.log(side, f"🔎 Hough hat {len(found_circles)} Kandidaten gefunden. Evaluiere den Besten...")
                         
                         best_hough_score = -1.0
                         best_h_cx, best_h_cy = 0.0, 0.0
+                        best_hough_dist_to_cog = float('inf')
+                        
+                        # ---> NEU: Eine Liste für alle Kandidaten, die sich Platz 1 teilen
+                        tied_hough_candidates = [] 
+
                         for (hx, hy, hr) in found_circles:
                             h_score, _, _ = self.calculate_hole_score(hx, hy, current_caliber_radius, thresh_new, thresh_raw)
-                            if h_score > best_hough_score:
-                                best_hough_score, best_h_cx, best_h_cy = h_score, float(hx), float(hy)
+                            
+                            dist_to_cog = np.hypot(hx - cog_x, hy - cog_y)
+                            h_score_rounded = round(h_score, 1)
+                            best_hough_score_rounded = round(best_hough_score, 1)
+
+                            # 1. Höherer Score gewinnt IMMER
+                            if h_score_rounded > best_hough_score_rounded:
+                                best_hough_score = h_score
+                                best_h_cx, best_h_cy = float(hx), float(hy)
+                                best_hough_dist_to_cog = dist_to_cog
                                 
-                        #grenzwert_hough = 7.0 
+                                # ---> NEU: Alte Verlierer wegschmeißen, neuen Rekordhalter eintragen
+                                tied_hough_candidates = [{'cx': float(hx), 'cy': float(hy), 'dist': dist_to_cog}]
+                                
+                            # 2. Bei GLEICHSTAND (auf 1 Nachkommastelle): Kandidat wird vermerkt!
+                            elif h_score_rounded == best_hough_score_rounded:
+                                tied_hough_candidates.append({'cx': float(hx), 'cy': float(hy), 'dist': dist_to_cog})
+                                
+                                # Wenn er näher am CoG ist, übernimmt er intern die Krone
+                                if dist_to_cog < best_hough_dist_to_cog:
+                                    best_hough_score = h_score
+                                    best_h_cx, best_h_cy = float(hx), float(hy)
+                                    best_hough_dist_to_cog = dist_to_cog
+                        
+                        # ---> NEU: Detaillierte und aufgeräumte Log-Ausgabe für den Labor-Blick <---
+                        if len(tied_hough_candidates) > 1:
+                            self.log(side, f"   📏 Hough-Tie-Breaker: {len(tied_hough_candidates)} Kreise mit Top-Score ({round(best_hough_score, 1)}).")
+                            for i, cand in enumerate(tied_hough_candidates):
+                                # Den Gewinner optisch hervorheben
+                                is_winner = (cand['cx'] == best_h_cx and cand['cy'] == best_h_cy)
+                                marker = "👑 SIEGER" if is_winner else "❌"
+                                
+                                self.log(side, f"      -> Opt {i+1}: X:{cand['cx']:.2f} Y:{cand['cy']:.2f} | Distanz zu CoG: {cand['dist']:.2f}px {marker}")
+                        
                         add_candidate("Hough-Sieger", best_h_cx, best_h_cy, min_coverage=self.grenzwert_hough)
 
                     # --- ABRISSKANTEN KANDIDATEN ---
@@ -714,45 +788,57 @@ class TargetDetector:
                         # Fallback (Passiert nur, falls Base aus irgendeinem Grund rausfliegt)
                         valid_candidates = kandidaten
 
-                    ## =========================================================================
-                    ## ---> NEU: Die ELA Tie-Breaker Logik (Hierarchie bei Gleichstand) <---
-                    ## =========================================================================
-                    #def tie_breaker_key(cand):
-                    #    rounded_score = round(cand['score'], 1)
-                    #    name = cand['name']
-                    #    if name == "Schwerpunkt (CoG)": prio = 4
-                    #    elif name == "MinCircle (MEC)": prio = 3
-                    #    elif "Hough" in name: prio = 2
-                    #    else: prio = 1 
-                    #    return (rounded_score, prio)
-
                     # =========================================================================
-                    # ---> NEU: Die ELA Tie-Breaker Logik (Hierarchie bei Gleichstand) <---
+                    # ---> NEU: Die erweiterte ELA Tie-Breaker Logik (inkl. Distanz-Check) <---
                     # =========================================================================
                     def tie_breaker_key(cand):
                         rounded_score = round(cand['score'], 1)
                         name = cand['name']
-                        # 4: CoG (König der sauberen Schüsse)
-                        # 3: Hough (Meister der Krümmungen, ignoriert Fasern)
-                        # 2: MEC (Solide, aber anfällig für abstehende Kanten)
-                        # 1: Abriss (Sollte nur gewinnen, wenn der Punkte-Bonus kickt)
-                        if name == "Schwerpunkt (CoG)": prio = 4
-                        elif "Hough" in name: prio = 3
-                        elif name == "MinCircle (MEC)": prio = 2
-                        else: prio = 1 
-                        return (rounded_score, prio)
+                        
+                        # 1: CoG (König der sauberen Schüsse)
+                        # 2: Hough (Meister der Krümmungen)
+                        # 3: MEC (Solide, aber anfällig)
+                        # 4: Abriss (Nur bei Bonus)
+                        if name == "Schwerpunkt (CoG)": prio = 1
+                        elif "Hough" in name: prio = 2
+                        elif name == "MinCircle (MEC)": prio = 3
+                        else: prio = 4 
+                        
+                        dist_to_cog = np.hypot(cand['cx'] - cog_x, cand['cy'] - cog_y)
+                        
+                        cand['_prio'] = prio
+                        cand['_dist'] = dist_to_cog
+                        
+                        # Das Minus vor prio macht Platz 1 zur mathematisch größten Zahl!
+                        # (-1 ist größer als -4)
+                        return (rounded_score, -prio, -dist_to_cog)
 
-
-                    # ---> NEU: Gleichstand direkt in der Engine loggen! <---
-                    highest_score = round(max(c['score'] for c in valid_candidates), 1)
+                    # Den Sieger ermitteln
+                    winner = max(valid_candidates, key=tie_breaker_key)
+                    
+                    # ---> NEU: Detaillierte Liste bei Battle-Royale Gleichständen <---
+                    highest_score = round(winner['score'], 1)
                     tied_candidates = [c for c in valid_candidates if round(c['score'], 1) == highest_score]
                     
                     if len(tied_candidates) > 1:
-                        names = [c['name'] for c in tied_candidates]
-                        self.log(side, f"⚖️ GLEICHSTAND: {len(tied_candidates)} Kandidaten mit Score {highest_score:.1f} -> Tie-Breaker entscheidet zwischen {', '.join(names)}!")
+                        self.log(side, f"⚖️ BATTLE ROYALE TIE-BREAKER: {len(tied_candidates)} Kandidaten mit Top-Score ({highest_score:.1f}).")
+                        
+                        # Für eine schöne Liste absteigend nach der Tie-Breaker-Stärke sortieren
+                        sorted_ties = sorted(tied_candidates, key=tie_breaker_key, reverse=True)
+                        
+                        for i, cand in enumerate(sorted_ties):
+                            is_winner = (cand['name'] == winner['name'])
+                            marker = "👑 SIEGER" if is_winner else "❌"
+                            
+                            # Namen für die Log-Ausgabe auf eine feste Breite (z.B. 25 Zeichen) auffüllen
+                            name_padded = f"{cand['name']:<28}"
+                            self.log(side, f"      -> {name_padded} | Prio: {cand['_prio']} | Distanz: {cand['_dist']:5.2f}px | X:{cand['cx']:.2f} Y:{cand['cy']:.2f} {marker}")
+                        
+                        # Kurze Info, falls die Distanz (und nicht die Prio-Klasse) entscheiden musste
+                        same_prio_contenders = [c for c in tied_candidates if c['_prio'] == winner['_prio']]
+                        if len(same_prio_contenders) > 1:
+                            self.log(side, f"   📏 Härtefall! Prio-Klasse {winner['_prio']} war mehrfach vertreten. Distanz-Jury entschied!")
 
-                    winner = max(valid_candidates, key=tie_breaker_key)
-                    
                     # ---> NEU: Formatierter Sieger <---
                     win_prefix = f"BATTLE ROYALE SIEGER: {winner['name']} "
                     padded_win = f"{win_prefix:-<45}>"
@@ -760,9 +846,8 @@ class TargetDetector:
                     
                     cx, cy = winner['cx'], winner['cy']
                     final_shot_score = winner['score']
-                    winning_method = winner['name'] # <--- NEU
+                    winning_method = winner['name']
 
-                    # ---> NEU: Kante nur auf die Leinwand malen, wenn sie das Duell gewinnt! <---
                     if "Abriss" in winner['name'] and current_outer_edge is not None:
                         frame_abrisskanten = cv2.bitwise_or(frame_abrisskanten, current_outer_edge)
                                 

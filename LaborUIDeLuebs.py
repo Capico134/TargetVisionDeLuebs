@@ -268,6 +268,16 @@ class LaborUIBuilder:
         
         self.app.log_text = tk.Text(self.app.paned_window, height=12, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
         
+        # =====================================================================
+        # ---> NEU: STRG+A zum schnellen Markieren des gesamten Logs <---
+        # =====================================================================
+        def select_all_log(event):
+            event.widget.tag_add(tk.SEL, "1.0", tk.END)
+            event.widget.mark_set(tk.INSERT, "1.0")
+            event.widget.see(tk.INSERT)
+            return "break" # Blockiert das sture Standard-Verhalten von Tkinter
+        self.app.log_text.bind("<Control-a>", select_all_log)
+        self.app.log_text.bind("<Control-A>", select_all_log)
         self.app.paned_window.add(self.app.img_container, stretch="always")
         self.app.paned_window.add(self.app.log_text, stretch="never")
         
@@ -486,11 +496,14 @@ class LaborUIBuilder:
             try:
                 valid_classes = ('Entry', 'TCombobox', 'Text', 'Listbox', 'Scrollbar', 'TScrollbar')
                 if event.widget.winfo_class() not in valid_classes:
-                    self.app.root.focus_set()
+                    # ---> DER FIX: Wir ignorieren das Hauptbild! Es kümmert sich selbst um seinen Fokus, 
+                    # damit die Drag-and-Drop / Zoom-Mechanik nicht abgewürgt wird. <---
+                    if event.widget != self.app.lbl_image:
+                        self.app.root.focus_set()
             except AttributeError:
                 pass
-                
         self.app.root.bind_all('<Button-1>', release_focus, add="+")
+
         # ---> DER FIX: Kombiniertes ESC-Binding <---
         def handle_escape(event):
             self.app.root.focus_set()
