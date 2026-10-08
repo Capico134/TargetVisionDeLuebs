@@ -133,6 +133,7 @@ class LaborUIBuilder:
             try:
                 val = int(float(entry.get())) if isinstance(tk_var, tk.IntVar) else float(entry.get())
                 if odd_only and isinstance(tk_var, tk.IntVar):
+                    #print(f"apply_entry_val: {val}")
                     if val > 0 and val % 2 == 0:
                         val += 1 
                 if val != tk_var.get():
@@ -141,6 +142,7 @@ class LaborUIBuilder:
                         tk_var._last_val = val
                     self.app.on_param_change(force=True)
             except ValueError:
+                print("apply_entry_val ERROR")
                 pass 
                 
             entry.delete(0, tk.END)

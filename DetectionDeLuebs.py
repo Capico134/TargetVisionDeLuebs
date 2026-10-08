@@ -531,17 +531,27 @@ class TargetDetector:
                         bonus_str = f" (inkl. +{bonus:.2f} Bonus)" if bonus > 0 else ""
                         
                         # =====================================================================
-                        # ---> NEU: Dynamische und glasklare Log-Ausgabe für Vektoren <---
+                        # ---> NEU: Perfekt ausgerichtete, tabellarische Log-Mauer <---
                         # =====================================================================
+                        name_part = f"Kandidat [{name}]:"
+                        
                         if "Abriss" in name:
-                            # Zeigt den genauen Weg: Start (Kante) -> Anker (CoG/MEC) -> Endpunkt (Zentrum)
-                            pos_str = f"Kante ({bp[0]:.2f}, {bp[1]:.2f}) -> Rumpf ({ep[0]:.2f}, {ep[1]:.2f}) -> Ziel ({c_x:.2f}, {c_y:.2f})"
+                            # Feste Breite für die Koordinaten (je >6.2f), damit die Spalten exakt stehen!
+                            bp_str = f"{bp[0]:>6.2f}, {bp[1]:>6.2f}"
+                            ep_str = f"{ep[0]:>6.2f}, {ep[1]:>6.2f}"
+                            path_part = f"Kante ({bp_str}) -> Rumpf ({ep_str})"
                         else:
-                            pos_str = f"Ziel X:{c_x:.2f} Y:{c_y:.2f}"
+                            # Exakt 53 Leerzeichen, um die Lücke für die Nicht-Abriss-Kandidaten zu füllen
+                            path_part = "-" * 48 
                             
-                        # ---> DER FIX: Den KOMPLETTEN Text inkl. Namen auf 115 Zeichen auffüllen! <---
-                        prefix = f"Kandidat [{name}]: {pos_str} "
-                        padded_prefix = f"{prefix:-<109}>" 
+                        # Einheitliches Ziel-Format für ALLE Kandidaten
+                        ziel_part = f" - Ziel X:{c_x:>6.2f} Y:{c_y:>6.2f} "
+                        
+                        # Zusammenbauen: Name (auf 34 Zeichen fixiert) + Path (53 Zeichen) + Ziel
+                        full_prefix = f"{name_part:<34} {path_part}{ziel_part}"
+                        
+                        # Rest mit Bindestrichen bis zur rechtsbündigen Score-Mauer auffüllen
+                        padded_prefix = f"{full_prefix:-<110}>"
                         
                         self.log(side, f"--> {padded_prefix} Score: {final_score:5.1f}{bonus_str} | Flächen-Ratio: {cov_new:5.1f}% {valid_str}")
                         return final_score
@@ -621,9 +631,12 @@ class TargetDetector:
                             hough_cands.append({'cx': float(hx), 'cy': float(hy), 'score': h_score})
                         # 2. Die neue Tie-Breaker-Jury rufen!
                         best_hough, tied_hough = self.resolve_tie_breaker(hough_cands, anker_x, anker_y)
+                        # 2. Die neue Tie-Breaker-Jury rufen!
+                        best_hough, tied_hough = self.resolve_tie_breaker(hough_cands, anker_x, anker_y)
                         # 3. Logging
                         if len(tied_hough) > 1:
-                            self.log(side, f"   📏 Hough-Tie-Breaker: {len(tied_hough)} Kreise mit Top-Score ({round(best_hough['score'], 1)}).")
+                            # ---> DER FIX: Wieder "GLEICHSTAND" nennen! <---
+                            self.log(side, f"   ⚖️ GLEICHSTAND (Hough): {len(tied_hough)} Kreise mit Top-Score ({round(best_hough['score'], 1)}).")
                             for i, cand in enumerate(tied_hough):
                                 is_winner = (cand['cx'] == best_hough['cx'] and cand['cy'] == best_hough['cy'])
                                 marker = "👑 SIEGER" if is_winner else "❌"
@@ -772,33 +785,60 @@ class TargetDetector:
                                     # ---> KANDIDAT 1: CoG (Classic - Riss-Mitte) <---
                                     d_cog_center = np.hypot(cog_x - cx_edge_center, cog_y - cy_edge_center)
                                     if d_cog_center > min_hebel:
-                                        tcx = cx_edge_center + ((cog_x - cx_edge_center)/d_cog_center) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
-                                        tcy = cy_edge_center + ((cog_y - cy_edge_center)/d_cog_center) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
+                                        tcx = cx_edge_center + ((cog_x - cx_edge_center)/d_cog_center) * (current_caliber_radius+0.25)
+                                        tcy = cy_edge_center + ((cog_y - cy_edge_center)/d_cog_center) * (current_caliber_radius+0.25)
                                         add_candidate(f"Abriss-{e_idx+1}-CoG (Classic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_center, cy_edge_center), end_pos=(cog_x, cog_y))
+                                    else:
+                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-CoG (Classic) ignoriert: Hebel zu kurz ({d_cog_center:.2f}px < {min_hebel}px).")
                                         
                                     # ---> KANDIDAT 2: MEC (Classic - Riss-Mitte) <---
                                     d_mec_center = np.hypot(circle_x - cx_edge_center, circle_y - cy_edge_center)
                                     if d_mec_center > min_hebel:
-                                        tcx = cx_edge_center + ((circle_x - cx_edge_center)/d_mec_center) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
-                                        tcy = cy_edge_center + ((circle_y - cy_edge_center)/d_mec_center) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
+                                        tcx = cx_edge_center + ((circle_x - cx_edge_center)/d_mec_center) * (current_caliber_radius+0.25)
+                                        tcy = cy_edge_center + ((circle_y - cy_edge_center)/d_mec_center) * (current_caliber_radius+0.25)
                                         add_candidate(f"Abriss-{e_idx+1}-MEC (Classic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_center, cy_edge_center), end_pos=(circle_x, circle_y))
+                                    else:
+                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-MEC (Classic) ignoriert: Hebel zu kurz ({d_mec_center:.2f}px < {min_hebel}px).")
 
                                     # ---> KANDIDAT 3: CoG (Dynamic - Kürzester Weg) <---
                                     d_cog_dyn = np.hypot(cog_x - cx_edge_cog, cog_y - cy_edge_cog)
                                     if d_cog_dyn > min_hebel:
-                                        tcx = cx_edge_cog + ((cog_x - cx_edge_cog)/d_cog_dyn) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
-                                        tcy = cy_edge_cog + ((cog_y - cy_edge_cog)/d_cog_dyn) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
+                                        tcx = cx_edge_cog + ((cog_x - cx_edge_cog)/d_cog_dyn) * (current_caliber_radius+0.25)
+                                        tcy = cy_edge_cog + ((cog_y - cy_edge_cog)/d_cog_dyn) * (current_caliber_radius+0.25)
                                         add_candidate(f"Abriss-{e_idx+1}-CoG (Dynamic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_cog, cy_edge_cog), end_pos=(cog_x, cog_y))
+                                    else:
+                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-CoG (Dynamic) ignoriert: Hebel zu kurz ({d_cog_dyn:.2f}px < {min_hebel}px).")
 
                                     # ---> KANDIDAT 4: MEC (Dynamic - Kürzester Weg) <---
                                     d_mec_dyn = np.hypot(circle_x - cx_edge_mec, circle_y - cy_edge_mec)
                                     if d_mec_dyn > min_hebel:
-                                        #print(f"Kandadiat 4: {current_caliber_radius}")
-                                        tcx = cx_edge_mec + ((circle_x - cx_edge_mec)/d_mec_dyn) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
-                                        tcy = cy_edge_mec + ((circle_y - cy_edge_mec)/d_mec_dyn) * (current_caliber_radius+0.25) ##############ACHTUNG!!!!!!!!!!!!!!!HIER+0.5!!!######################
+                                        tcx = cx_edge_mec + ((circle_x - cx_edge_mec)/d_mec_dyn) * (current_caliber_radius+0.25)
+                                        tcy = cy_edge_mec + ((circle_y - cy_edge_mec)/d_mec_dyn) * (current_caliber_radius+0.25)
                                         add_candidate(f"Abriss-{e_idx+1}-MEC (Dynamic)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_mec, cy_edge_mec), end_pos=(circle_x, circle_y))
                                     else:
-                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-MEC (Dynamic) ignoriert: Hebel zu kurz ({d_mec_dyn:.2f}px < {min_hebel}px). Peilung unsicher!")
+                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-MEC (Dynamic) ignoriert: Hebel zu kurz ({d_mec_dyn:.2f}px < {min_hebel}px).")
+
+                                    # =====================================================================
+                                    # ---> KANDIDAT 5: CROSS 1 (Start: CoG-Rand ➔ Peilung: MEC) <---
+                                    # =====================================================================
+                                    d_cross1 = np.hypot(circle_x - cx_edge_cog, circle_y - cy_edge_cog)
+                                    if d_cross1 > min_hebel:
+                                        tcx = cx_edge_cog + ((circle_x - cx_edge_cog)/d_cross1) * (current_caliber_radius+0.25)
+                                        tcy = cy_edge_cog + ((circle_y - cy_edge_cog)/d_cross1) * (current_caliber_radius+0.25)
+                                        add_candidate(f"Abriss-{e_idx+1}-X (CoG->MEC)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_cog, cy_edge_cog), end_pos=(circle_x, circle_y))
+                                    else:
+                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-X (CoG->MEC) ignoriert: Hebel zu kurz ({d_cross1:.2f}px < {min_hebel}px).")
+
+                                    # =====================================================================
+                                    # ---> KANDIDAT 6: CROSS 2 (Start: MEC-Rand ➔ Peilung: CoG) <---
+                                    # =====================================================================
+                                    d_cross2 = np.hypot(cog_x - cx_edge_mec, cog_y - cy_edge_mec)
+                                    if d_cross2 > min_hebel:
+                                        tcx = cx_edge_mec + ((cog_x - cx_edge_mec)/d_cross2) * (current_caliber_radius+0.25)
+                                        tcy = cy_edge_mec + ((cog_y - cy_edge_mec)/d_cross2) * (current_caliber_radius+0.25)
+                                        add_candidate(f"Abriss-{e_idx+1}-X (MEC->CoG)", tcx, tcy, min_coverage=grenzwert_abriss, bonus=bonus, base_pos=(cx_edge_mec, cy_edge_mec), end_pos=(cog_x, cog_y))
+                                    else:
+                                        self.log(side, f"⚠️ Abriss-{e_idx+1}-X (MEC->CoG) ignoriert: Hebel zu kurz ({d_cross2:.2f}px < {min_hebel}px).")
                         else:
                             self.log(side, "⚠️ Abrisskante gescheitert: Berührt kein intaktes Papier.")
                             
@@ -836,7 +876,8 @@ class TargetDetector:
                     highest_score = round(winner['score'], 1)
                     tied_candidates = [c for c in valid_candidates if round(c['score'], 1) == highest_score]
                     if len(tied_candidates) > 1:
-                        self.log(side, f"⚖️ BATTLE ROYALE TIE-BREAKER: {len(tied_candidates)} Kandidaten mit Top-Score ({highest_score:.1f}).")
+                        # ---> DER FIX: Wieder "GLEICHSTAND" nennen! <---
+                        self.log(side, f"⚖️ GLEICHSTAND (Battle-Royale): {len(tied_candidates)} Kandidaten mit Top-Score ({highest_score:.1f}).")
                         # Für eine schöne Liste absteigend nach der Tie-Breaker-Stärke sortieren
                         sorted_ties = sorted(tied_candidates, key=tie_breaker_key, reverse=True)
                         for i, cand in enumerate(sorted_ties):
@@ -850,10 +891,20 @@ class TargetDetector:
                         if len(same_prio_contenders) > 1:
                             self.log(side, f"   📏 Härtefall! Prio-Klasse {winner['_prio']} war mehrfach vertreten. Distanz-Jury entschied!")
 
-                    # ---> NEU: Formatierter Sieger <---
-                    win_prefix = f"BATTLE ROYALE SIEGER:------------------------------------------------------------------------------------> WINNER!"
-                    #padded_win = f"{win_prefix:-<45}>"
-                    self.log(side, f"{win_prefix} Score: {winner['score']:5.1f} | {winner['name']}")
+                    # ---> NEU: Formatierter Sieger (Ziel UND Score perfekt im Raster!) <---
+                    win_prefix = "BATTLE ROYALE SIEGER:"
+                    
+                    # 1. Wir füllen den Prefix mit Bindestrichen bis exakt Zeichen 87 auf
+                    win_prefix_padded = f"{win_prefix:-<87}" 
+                    
+                    # 2. Das Ziel hat wie bei den Kandidaten exakt 25 Zeichen (87 + 25 = 112)
+                    win_ziel = f" - Ziel X:{winner['cx']:>6.2f} Y:{winner['cy']:>6.2f} "
+                    
+                    # 3. Wir hängen "-->" an, um auf exakt 115 Zeichen vor dem " Score:" zu kommen
+                    win_final_prefix = f"{win_prefix_padded}{win_ziel}->"
+                    
+                    # 4. Ausgabe: Exakt im Raster, der Siegername steht stolz ganz hinten!
+                    self.log(side, f"{win_final_prefix} Score: {winner['score']:5.1f} | {winner['name']}")
                     
                     cx, cy = winner['cx'], winner['cy']
                     final_shot_score = winner['score']
