@@ -248,6 +248,9 @@ px_pro_mm_x_links = 5.0
 px_pro_mm_y_links = 5.0
 px_pro_mm_x_rechts = 5.0
 px_pro_mm_y_rechts = 5.0
+# Belichtungseinstellung (Standard, Auto oder manuelle Werte von -1 bis -10)
+belichtung_links = Standard
+belichtung_rechts = Standard
 
 [Erkennung]
 max_aspect_ratio = 3.5
@@ -564,6 +567,16 @@ treffer_anzeigedauer = 5
             print("🔧 Führe Auto-Patch aus: Entferne obsoleten Parameter 'debug_alle_bilder_speichern'...")
             self.remove_ini_value('Erkennung', 'debug_alle_bilder_speichern')
             needs_reload = True
+            
+        # --- AUTO-PATCH: Neue Kamera-Belichtungsparameter (ab v1.9.5) ---
+        if not config.has_option('Kameras', 'belichtung_links'):
+            print("🔧 Führe Auto-Patch aus: Füge 'belichtung_links = Standard' hinzu...")
+            self.update_ini_value('Kameras', 'belichtung_links', 'Standard')
+            needs_reload = True
+        if not config.has_option('Kameras', 'belichtung_rechts'):
+            print("🔧 Führe Auto-Patch aus: Füge 'belichtung_rechts = Standard' hinzu...")
+            self.update_ini_value('Kameras', 'belichtung_rechts', 'Standard')
+            needs_reload = True   
         
         if needs_reload:
             config.read(self.CONFIG_FILE, encoding='utf-8')

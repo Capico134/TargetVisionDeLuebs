@@ -573,6 +573,16 @@ class LaborUIBuilder:
 
         targets = list(self.app.dm.load_targets().keys()) if self.app.dm.load_targets() else ["Luftgewehr_10m"]
 
+        # =========================================================================
+        # ---> DER FIX: Scrollrad-Hijacking HIER GLOBAL für alle Dropdowns definieren <---
+        # =========================================================================
+        def block_cb_scroll(event):
+            if event.num == 4 or getattr(event, 'delta', 0) > 0:
+                canvas.yview_scroll(-1, "units")
+            elif event.num == 5 or getattr(event, 'delta', 0) < 0:
+                canvas.yview_scroll(1, "units")
+            return "break" 
+
         for section in parser.sections():
             visible_keys = [k for k in parser.options(section) if k not in ignore_keys]
             if not visible_keys:
@@ -619,21 +629,23 @@ class LaborUIBuilder:
                     cb.var_ref = var 
                     var.trace_add("write", make_trace_cmd(section, key, var))
                     
-                    # =========================================================================
-                    # ---> DER FIX: Scrollrad-Hijacking der Combobox verhindern! <---
-                    # =========================================================================
-                    def block_cb_scroll(event):
-                        # 1. Wir leiten den Scroll-Befehl manuell an das Haupt-Canvas weiter
-                        if event.num == 4 or getattr(event, 'delta', 0) > 0:
-                            canvas.yview_scroll(-1, "units")
-                        elif event.num == 5 or getattr(event, 'delta', 0) < 0:
-                            canvas.yview_scroll(1, "units")
-                        # 2. "break" blockiert die interne Werte-Änderung der Combobox
-                        return "break" 
-                        
                     cb.bind("<MouseWheel>", block_cb_scroll)
                     cb.bind("<Button-4>", block_cb_scroll) # Für Linux
                     cb.bind("<Button-5>", block_cb_scroll) # Für Linux
+
+                elif key in ['belichtung_links', 'belichtung_rechts']:
+                    var = tk.StringVar(value=val_str)
+                    # Die feste Auswahl für das Dropdown
+                    belichtungs_werte = ["Standard", "Auto", "-1", "-2", "-3", "-4", "-5", "-6", "-7", "-8", "-9", "-10"]
+                    cb = ttk.Combobox(row, textvariable=var, values=belichtungs_werte, state="readonly", width=20)
+                    cb.pack(side=tk.RIGHT)
+                    cb.var_ref = var 
+                    var.trace_add("write", make_trace_cmd(section, key, var))
+                    
+                    # Das Scrollrad-Hijacking binden
+                    cb.bind("<MouseWheel>", block_cb_scroll)
+                    cb.bind("<Button-4>", block_cb_scroll) 
+                    cb.bind("<Button-5>", block_cb_scroll)
 
                 elif val_str.lower() in ['yes', 'no', 'true', 'false', 'on', 'off']:
                     is_true = val_str.lower() in ['yes', 'true', 'on']

@@ -27,7 +27,9 @@ class TargetTracker:
         print(f"🎯 TargetVision DeLübs     [v{self.version}]")
         self.window_name = f"TargetVision DeLuebs - v{self.version}"
         
-        is_windows = platform.system() == 'Windows'
+        # ---> NEU: Als Instanz-Variable speichern! <---
+        self.is_windows = platform.system() == 'Windows'
+        
         self.nutze_kamera_links = config.getboolean('Kameras', 'nutze_kamera_links')
         self.nutze_kamera_rechts = config.getboolean('Kameras', 'nutze_kamera_rechts')
         
@@ -39,21 +41,32 @@ class TargetTracker:
         width_r = config.getint('Kameras', 'cam_width_rechts', fallback=1280)
         height_r = config.getint('Kameras', 'cam_height_rechts', fallback=720)        
         
-        if is_windows:
+        # ---> NEU: self.is_windows nutzen <---
+        if self.is_windows:
             self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_DSHOW) if self.nutze_kamera_links else None
             self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_DSHOW) if self.nutze_kamera_rechts else None
         else:
             self.cap_left = cv2.VideoCapture(cam_left_idx) if self.nutze_kamera_links else None
             self.cap_right = cv2.VideoCapture(cam_right_idx) if self.nutze_kamera_rechts else None
         
+        # =====================================================================
+        # ---> SETUP KAMERA LINKS
+        # =====================================================================
         if self.nutze_kamera_links and self.cap_left:
             self.cap_left.set(cv2.CAP_PROP_FRAME_WIDTH, width_l)
             self.cap_left.set(cv2.CAP_PROP_FRAME_HEIGHT, height_l)
-            
+            belichtung_l = config.get('Kameras', 'belichtung_links', fallback='Standard')
+            self._set_camera_exposure(self.cap_left, belichtung_l)
+
+        # =====================================================================
+        # ---> SETUP KAMERA RECHTS
+        # =====================================================================
         if self.nutze_kamera_rechts and self.cap_right:
             self.cap_right.set(cv2.CAP_PROP_FRAME_WIDTH, width_r)
             self.cap_right.set(cv2.CAP_PROP_FRAME_HEIGHT, height_r)
-        
+            belichtung_r = config.get('Kameras', 'belichtung_rechts', fallback='Standard')
+            self._set_camera_exposure(self.cap_right, belichtung_r)
+            
         # --- GUI-Variablen einmalig initialisieren ---
         self.refresh_gui_settings_from_config()
         
@@ -218,22 +231,108 @@ class TargetTracker:
             if self.nutze_kamera_links and self.cap_left: self.cap_left.read()
             if self.nutze_kamera_rechts and self.cap_right: self.cap_right.read()
     
+    def _set_camera_exposure(self, cap, belichtung_str):
+        """Erzwingt zuverlässig das Setzen der Belichtung bei UVC-Kameras (Cross-Platform)."""
+        if not cap or not cap.isOpened() or belichtung_str == 'Standard':
+            return
+            
+        # ==========================================================
+        # Betriebssystem-spezifische Werte für OpenCV
+        # Windows (DSHOW): Auto = 1, Manuell = 0
+        # Linux / V4L2:    Auto = 3, Manuell = 1
+        # ==========================================================
+        auto_mode_val = 1 if self.is_windows else 3
+        manual_mode_val = 0 if self.is_windows else 1
+            
+        if belichtung_str == 'Auto':
+            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, auto_mode_val)
+        else:
+            try:
+                exp_val = int(belichtung_str)
+                # Zwingend den Auto-Mode VORHER abschalten, sonst wird der Wert ignoriert!
+                cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, manual_mode_val)
+                
+                # Ein winziger Moment Zeit für den Treiber, das umzuschalten
+                time.sleep(0.05)
+                
+                cap.set(cv2.CAP_PROP_EXPOSURE, exp_val)
+            except ValueError:
+                pass
+
     def apply_handover(self, zip_path):
         package = self.dm.import_match_package(zip_path)
         if not package: return
         
-        self.config.read(self.dm.CONFIG_FILE, encoding='utf-8')
+        # 1. Wir laden den NEUEN Parser aus dem Labor-Paket
+        new_parser = package['config']
         
-        neu_links = self.config.getboolean('Kameras', 'nutze_kamera_links', fallback=True)
-        neu_rechts = self.config.getboolean('Kameras', 'nutze_kamera_rechts', fallback=True)
+        # 2. Wir definieren alle "tiefen" Systemeinstellungen, die einen Neustart erzwingen
+        reboot_required = False
+        reboot_triggers = []
         
-        if neu_links != self.nutze_kamera_links or neu_rechts != self.nutze_kamera_rechts:
-            self.log("SYSTEM", "⚠️ Kamera-Änderung erkannt. Neustart erforderlich!", True)
+        check_keys = [
+            ('Kameras', 'nutze_kamera_links'),
+            ('Kameras', 'nutze_kamera_rechts'),
+            ('Kameras', 'cam_left_index'),
+            ('Kameras', 'cam_right_index'),
+            ('Kameras', 'cam_width_links'),
+            ('Kameras', 'cam_height_links'),
+            ('Kameras', 'cam_width_rechts'),
+            ('Kameras', 'cam_height_rechts'),
+            ('Anzeige', 'vollbild')
+            #('Crop_Links', 'cut_top'), ('Crop_Links', 'cut_bottom'), ('Crop_Links', 'cut_left'), ('Crop_Links', 'cut_right'),
+            #('Crop_Rechts', 'cut_top'), ('Crop_Rechts', 'cut_bottom'), ('Crop_Rechts', 'cut_left'), ('Crop_Rechts', 'cut_right')
+        ]
+        
+        # 3. Wir vergleichen die NEUEN Werte mit den ALTEN Werten, die aktuell im System ticken
+        for section, key in check_keys:
+            # Sicherheitscheck: Falls eine Sektion in der alten Config fehlen sollte
+            if not self.config.has_section(section):
+                self.config.add_section(section)
+            if not new_parser.has_section(section):
+                new_parser.add_section(section)
+                
+            old_val = self.config.get(section, key, fallback=None)
+            new_val = new_parser.get(section, key, fallback=None)
+            
+            if str(old_val).strip() != str(new_val).strip():
+                reboot_required = True
+                reboot_triggers.append(f"[{section}] {key}")
+        
+        # 4. Wenn eine Kern-Einstellung geändert wurde -> Notbremse!
+        if reboot_required:
+            trigger_list = "\n".join([f"• {t}" for t in reboot_triggers])
+            self.log("SYSTEM", f"⚠️ Tiefe System-Änderungen erkannt. Neustart erforderlich!", True)
             self.dm.flush_image_queue()
-            messagebox.showinfo("Neustart erforderlich", "Du hast die Kamera-Aktivierung in den Einstellungen geändert.\n\nDas System wird nun sicher beendet, um die Hardware-Verbindung neu aufzubauen.\nBitte starte TargetVision danach einfach neu!")
+            
+            msg = (
+                "Du hast im Labor tiefe Systemeinstellungen geändert:\n\n"
+                f"{trigger_list}\n\n"
+                "Das System wird nun sicher beendet, um die Hardware-Verbindung "
+                "und die Bild-Puffer sauber neu aufzubauen.\n"
+                "Bitte starte TargetVision danach einfach neu!"
+            )
+            messagebox.showinfo("Neustart erforderlich", msg)
             self.trigger_exit = True
             return
             
+        # 5. Ab hier: Es wurden nur weiche Parameter (Filter, Toleranzen) ODER Live-Hardware-Befehle geändert!
+        # Wir laden die neue Config nun offiziell in das Hauptsystem.
+        self.config.read(self.dm.CONFIG_FILE, encoding='utf-8')
+
+        # =====================================================================
+        # ---> NEU: Belichtung live auf die laufenden Kameras anwenden! <---
+        # =====================================================================
+        if self.nutze_kamera_links and self.cap_left:
+            belichtung_l = self.config.get('Kameras', 'belichtung_links', fallback='Standard')
+            self._set_camera_exposure(self.cap_left, belichtung_l)
+                
+        if self.nutze_kamera_rechts and self.cap_right:
+            belichtung_r = self.config.get('Kameras', 'belichtung_rechts', fallback='Standard')
+            self._set_camera_exposure(self.cap_right, belichtung_r)
+        # =====================================================================
+        
+        # Weiche Variablen im laufenden Betrieb updaten
         self.refresh_gui_settings_from_config()
         self.detector.refresh_settings_from_config()
 
