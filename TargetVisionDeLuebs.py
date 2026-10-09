@@ -53,8 +53,13 @@ class TargetTracker:
         # ---> SETUP KAMERA LINKS
         # =====================================================================
         if self.nutze_kamera_links and self.cap_left:
+            # Wir bitten höflich um x (verhindert USB-Staus bei 1080p).
+            # Unterstützt die Kamera das nicht, ignoriert OpenCV den Befehl einfach.
+            self.cap_left.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            
             self.cap_left.set(cv2.CAP_PROP_FRAME_WIDTH, width_l)
             self.cap_left.set(cv2.CAP_PROP_FRAME_HEIGHT, height_l)
+            
             belichtung_l = config.get('Kameras', 'belichtung_links', fallback='Standard')
             self._set_camera_exposure(self.cap_left, belichtung_l)
 
@@ -62,8 +67,11 @@ class TargetTracker:
         # ---> SETUP KAMERA RECHTS
         # =====================================================================
         if self.nutze_kamera_rechts and self.cap_right:
+            self.cap_right.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            
             self.cap_right.set(cv2.CAP_PROP_FRAME_WIDTH, width_r)
             self.cap_right.set(cv2.CAP_PROP_FRAME_HEIGHT, height_r)
+            
             belichtung_r = config.get('Kameras', 'belichtung_rechts', fallback='Standard')
             self._set_camera_exposure(self.cap_right, belichtung_r)
             
