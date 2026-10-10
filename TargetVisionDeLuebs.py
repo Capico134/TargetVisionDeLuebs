@@ -49,34 +49,41 @@ class TargetTracker:
         #    self.cap_left = cv2.VideoCapture(cam_left_idx) if self.nutze_kamera_links else None
         #    self.cap_right = cv2.VideoCapture(cam_right_idx) if self.nutze_kamera_rechts else None
         
+        #print("\n--- START KAMERA INITIALISIERUNG ---")
+        #t_start = time.time()
         # ---> SETUP KAMERAS (Vollautomatik für maximalen FPS-Durchsatz) <---
         self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_ANY) if self.nutze_kamera_links else None
         self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_ANY) if self.nutze_kamera_rechts else None
+        # ---> SETUP KAMERAS (Direkt Media Foundation für schnelleren Start) <---
+        #self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_MSMF) if self.nutze_kamera_links else None
+        #self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_MSMF) if self.nutze_kamera_rechts else None
+        #print(f"1. Verbindungsaufbau: {time.time() - t_start:.2f} Sekunden")
+        #t_set = time.time()
         
         # =====================================================================
         # ---> SETUP KAMERA LINKS
         # =====================================================================
         if self.nutze_kamera_links and self.cap_left:
-            self.cap_left.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-            self.cap_left.set(cv2.CAP_PROP_FRAME_WIDTH, width_l)
-            self.cap_left.set(cv2.CAP_PROP_FRAME_HEIGHT, height_l)
+            mjpg_fcc = cv2.VideoWriter_fourcc(*'MJPG')
+            self._smart_set(self.cap_left, cv2.CAP_PROP_FOURCC, mjpg_fcc)
+            self._smart_set(self.cap_left, cv2.CAP_PROP_FRAME_WIDTH, width_l)
             
-            # ---> NEU: Wir fordern explizit 30 Bilder pro Sekunde vom Treiber an <---
-            self.cap_left.set(cv2.CAP_PROP_FPS, 30)
+            self._smart_set(self.cap_left, cv2.CAP_PROP_FRAME_HEIGHT, height_l)
+            self._smart_set(self.cap_left, cv2.CAP_PROP_FPS, 30)
             
             belichtung_l = config.get('Kameras', 'belichtung_links', fallback='Standard')
             self._set_camera_exposure(self.cap_left, belichtung_l)
+            #print(f"2. Eigenschaften setzen LINKS: {time.time() - t_set:.2f} Sekunden")
 
         # =====================================================================
         # ---> SETUP KAMERA RECHTS
         # =====================================================================
         if self.nutze_kamera_rechts and self.cap_right:
-            self.cap_right.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-            self.cap_right.set(cv2.CAP_PROP_FRAME_WIDTH, width_r)
-            self.cap_right.set(cv2.CAP_PROP_FRAME_HEIGHT, height_r)
-            
-            # ---> NEU: FPS auch rechts erzwingen <---
-            self.cap_right.set(cv2.CAP_PROP_FPS, 30)
+            mjpg_fcc = cv2.VideoWriter_fourcc(*'MJPG')
+            self._smart_set(self.cap_right, cv2.CAP_PROP_FOURCC, mjpg_fcc)
+            self._smart_set(self.cap_right, cv2.CAP_PROP_FRAME_WIDTH, width_r)
+            self._smart_set(self.cap_right, cv2.CAP_PROP_FRAME_HEIGHT, height_r)
+            self._smart_set(self.cap_right, cv2.CAP_PROP_FPS, 30)
             
             belichtung_r = config.get('Kameras', 'belichtung_rechts', fallback='Standard')
             self._set_camera_exposure(self.cap_right, belichtung_r)
@@ -248,32 +255,31 @@ class TargetTracker:
         for _ in range(frames_to_drop):
             if self.nutze_kamera_links and self.cap_left: self.cap_left.read()
             if self.nutze_kamera_rechts and self.cap_right: self.cap_right.read()
+
+    def _smart_set(self, cap, prop, target_value):
+        """Setzt einen OpenCV-Parameter nur, wenn er abweicht, um irrelevante USB-Neustarts zu verhindern."""
+        if cap.get(prop) != target_value:
+            cap.set(prop, target_value)
     
     def _set_camera_exposure(self, cap, belichtung_str):
-        """Erzwingt zuverlässig das Setzen der Belichtung bei UVC-Kameras (Cross-Platform)."""
+        """Erzwingt zuverlässig das Setzen der Belichtung (mit Smart-Check)."""
         if not cap or not cap.isOpened() or belichtung_str == 'Standard':
             return
             
-        # ==========================================================
-        # Betriebssystem-spezifische Werte für OpenCV
-        # Windows (DSHOW): Auto = 1, Manuell = 0
-        # Linux / V4L2:    Auto = 3, Manuell = 1
-        # ==========================================================
         auto_mode_val = 1 if self.is_windows else 3
         manual_mode_val = 0 if self.is_windows else 1
             
         if belichtung_str == 'Auto':
-            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, auto_mode_val)
+            self._smart_set(cap, cv2.CAP_PROP_AUTO_EXPOSURE, auto_mode_val)
         else:
             try:
                 exp_val = int(belichtung_str)
-                # Zwingend den Auto-Mode VORHER abschalten, sonst wird der Wert ignoriert!
-                cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, manual_mode_val)
+                # Nur in den manuellen Modus zwingen, falls sie noch auf Auto steht
+                if cap.get(cv2.CAP_PROP_AUTO_EXPOSURE) != manual_mode_val:
+                    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, manual_mode_val)
+                    time.sleep(0.05)
                 
-                # Ein winziger Moment Zeit für den Treiber, das umzuschalten
-                time.sleep(0.05)
-                
-                cap.set(cv2.CAP_PROP_EXPOSURE, exp_val)
+                self._smart_set(cap, cv2.CAP_PROP_EXPOSURE, exp_val)
             except ValueError:
                 pass
 
