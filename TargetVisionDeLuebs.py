@@ -73,10 +73,15 @@ class TargetTracker:
         """Hier passiert die harte, blockierende Hardware-Arbeit im Hintergrund."""
         cam_left_idx = self.config.getint('Kameras', 'cam_left_index')
         cam_right_idx = self.config.getint('Kameras', 'cam_right_index')
+        
         width_l = self.config.getint('Kameras', 'cam_width_links', fallback=1280)
         height_l = self.config.getint('Kameras', 'cam_height_links', fallback=720)
+        width_r = self.config.getint('Kameras', 'cam_width_rechts', fallback=1280)
+        height_r = self.config.getint('Kameras', 'cam_height_rechts', fallback=720)
         
+        # ---> FEHLENDE ZEILE: Beide Kameras initialisieren! <---
         self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_ANY) if self.nutze_kamera_links else None
+        self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_ANY) if self.nutze_kamera_rechts else None
         
         if self.nutze_kamera_links and self.cap_left:
             mjpg_fcc = cv2.VideoWriter_fourcc(*'MJPG')
@@ -93,7 +98,7 @@ class TargetTracker:
             self._smart_set(self.cap_right, cv2.CAP_PROP_FRAME_WIDTH, width_r)
             self._smart_set(self.cap_right, cv2.CAP_PROP_FRAME_HEIGHT, height_r)
             self._smart_set(self.cap_right, cv2.CAP_PROP_FPS, 30)
-            belichtung_r = config.get('Kameras', 'belichtung_rechts', fallback='Standard')
+            belichtung_r = self.config.get('Kameras', 'belichtung_rechts', fallback='Standard')
             self._set_camera_exposure(self.cap_right, belichtung_r)
             
         # Signal an die Animation: Wir sind fertig!
