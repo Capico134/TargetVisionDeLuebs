@@ -41,24 +41,28 @@ class TargetTracker:
         width_r = config.getint('Kameras', 'cam_width_rechts', fallback=1280)
         height_r = config.getint('Kameras', 'cam_height_rechts', fallback=720)        
         
-        # ---> NEU: self.is_windows nutzen <---
-        if self.is_windows:
-            self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_DSHOW) if self.nutze_kamera_links else None
-            self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_DSHOW) if self.nutze_kamera_rechts else None
-        else:
-            self.cap_left = cv2.VideoCapture(cam_left_idx) if self.nutze_kamera_links else None
-            self.cap_right = cv2.VideoCapture(cam_right_idx) if self.nutze_kamera_rechts else None
+        ## ---> NEU: self.is_windows nutzen <---
+        #if self.is_windows:
+        #    self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_DSHOW) if self.nutze_kamera_links else None
+        #    self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_DSHOW) if self.nutze_kamera_rechts else None
+        #else:
+        #    self.cap_left = cv2.VideoCapture(cam_left_idx) if self.nutze_kamera_links else None
+        #    self.cap_right = cv2.VideoCapture(cam_right_idx) if self.nutze_kamera_rechts else None
+        
+        # ---> SETUP KAMERAS (Vollautomatik für maximalen FPS-Durchsatz) <---
+        self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_ANY) if self.nutze_kamera_links else None
+        self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_ANY) if self.nutze_kamera_rechts else None
         
         # =====================================================================
         # ---> SETUP KAMERA LINKS
         # =====================================================================
         if self.nutze_kamera_links and self.cap_left:
-            # Wir bitten höflich um x (verhindert USB-Staus bei 1080p).
-            # Unterstützt die Kamera das nicht, ignoriert OpenCV den Befehl einfach.
             self.cap_left.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-            
             self.cap_left.set(cv2.CAP_PROP_FRAME_WIDTH, width_l)
             self.cap_left.set(cv2.CAP_PROP_FRAME_HEIGHT, height_l)
+            
+            # ---> NEU: Wir fordern explizit 30 Bilder pro Sekunde vom Treiber an <---
+            self.cap_left.set(cv2.CAP_PROP_FPS, 30)
             
             belichtung_l = config.get('Kameras', 'belichtung_links', fallback='Standard')
             self._set_camera_exposure(self.cap_left, belichtung_l)
@@ -68,9 +72,11 @@ class TargetTracker:
         # =====================================================================
         if self.nutze_kamera_rechts and self.cap_right:
             self.cap_right.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-            
             self.cap_right.set(cv2.CAP_PROP_FRAME_WIDTH, width_r)
             self.cap_right.set(cv2.CAP_PROP_FRAME_HEIGHT, height_r)
+            
+            # ---> NEU: FPS auch rechts erzwingen <---
+            self.cap_right.set(cv2.CAP_PROP_FPS, 30)
             
             belichtung_r = config.get('Kameras', 'belichtung_rechts', fallback='Standard')
             self._set_camera_exposure(self.cap_right, belichtung_r)
@@ -106,7 +112,11 @@ class TargetTracker:
         self.nutze_kamera_links = self.config.getboolean('Kameras', 'nutze_kamera_links', fallback=True)
         self.nutze_kamera_rechts = self.config.getboolean('Kameras', 'nutze_kamera_rechts', fallback=False)
         self.ausloeser_durch_erschuetterung = self.config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
-        self.poll_ms = self.config.getint('Timing', 'poll_ms', fallback=33)
+        
+        # ---> NEU: fps_limit statt poll_ms <---
+        self.fps_limit = self.config.getint('Timing', 'fps_limit', fallback=30)
+        #self.poll_ms = self.config.getint('Timing', 'poll_ms', fallback=33)
+        
         self.vollbild = self.config.getboolean('Anzeige', 'vollbild', fallback=False)
         
         # Dem Renderer Bescheid geben, falls er schon existiert
@@ -419,11 +429,17 @@ class TargetTracker:
         cv2.waitKey(100)
 
     def check_keys(self, frame_start_time):
-        elapsed_ms = (time.perf_counter() - frame_start_time) * 1000.0
-        wait_ms = max(1, int(self.poll_ms - elapsed_ms))
-        
-        raw_key = cv2.waitKeyEx(wait_ms)
+        # OpenCV bekommt rigoros nur 1 Millisekunde, um das GUI zu updaten und Keys abzufangen!
+        raw_key = cv2.waitKeyEx(1)
         key = raw_key & 0xFF
+        
+        # ---> NEU: Der sanfte FPS-Limiter (falls die Kamera unendlich schnell liefert)
+        if self.fps_limit > 0:
+            target_duration = 1.0 / self.fps_limit
+            elapsed = time.perf_counter() - frame_start_time
+            if elapsed < target_duration:
+                # time.sleep verbrät keine CPU-Last, bremst aber virtuelle Kameras sauber ein
+                time.sleep(target_duration - elapsed)
         
         if self.trigger_exit:
             return True
@@ -1037,13 +1053,13 @@ class TargetTracker:
             
             if self.nutze_kamera_links: self.process_camera(frame_l, self.sm.state_left)
             if self.nutze_kamera_rechts: self.process_camera(frame_r, self.sm.state_right)
-
+            
             if time.time() - blink_timer > 0.3:
                 blink_state = not blink_state
                 blink_timer = time.time()
-
+            
             self.renderer.update_gui(frame_l, frame_r, blink_state)
-
+            
             if self.check_keys(frame_start_time):
                 break
 

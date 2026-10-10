@@ -309,7 +309,10 @@ detail_export_aktiv = no
 
 [Timing]
 # Bildwiederholrate/Haupttakt in Millisekunden (33 ms entspricht ca. 30 FPS).
-poll_ms = 33
+# poll_ms = 33
+# Maximale Bildwiederholrate (Limitiert die CPU-Last bei sehr schnellen Quellen wie OBS).
+# Bei echten Webcams gibt die Hardware ohnehin den echten Takt (z.B. 30 FPS) vor.
+fps_limit = 30
 # Wie viele Frames am Stück absolute Ruhe herrschen muss, damit das Bild als "stabil" gilt.
 stillness_frames = 20
 
@@ -577,6 +580,16 @@ treffer_anzeigedauer = 5
             print("🔧 Führe Auto-Patch aus: Füge 'belichtung_rechts = Standard' hinzu...")
             self.update_ini_value('Kameras', 'belichtung_rechts', 'Standard')
             needs_reload = True   
+            
+        #fps_limit verwenden!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        if not config.has_option('Timing', 'fps_limit'):
+            print("🔧 Führe Auto-Patch aus: Füge 'fps_limit = 30' hinzu...")
+            self.update_ini_value('Timing', 'fps_limit', '30')
+            needs_reload = True  
+        if config.has_option('Timing', 'poll_ms'):
+            print("🔧 Führe Auto-Patch aus: Entferne obsoleten Parameter 'poll_ms'...")
+            self.remove_ini_value('Timing', 'poll_ms')
+            needs_reload = True
         
         if needs_reload:
             config.read(self.CONFIG_FILE, encoding='utf-8')
