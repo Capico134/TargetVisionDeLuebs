@@ -247,6 +247,19 @@ class TargetVisionRenderer:
             zoom_params['right'] = (zr, oxr, oyr)
             frames_to_stack.append(disp_r if disp_r is not None else create_dummy_frame("RECHTS"))
 
+
+#        if self.tracker.nutze_kamera_links:
+#            # Wir nehmen für den Test einfach direkt das nackte Live-Bild!
+#            disp_l = disp_l_live 
+#            frames_to_stack.append(disp_l if disp_l is not None else create_dummy_frame("LINKS"))
+#        if self.tracker.nutze_kamera_rechts:
+#            # Wir nehmen für den Test einfach direkt das nackte Live-Bild!
+#            disp_r = disp_r_live
+#            frames_to_stack.append(disp_r if disp_r is not None else create_dummy_frame("RECHTS"))
+
+
+
+
         if not frames_to_stack: return
 
         max_h = max([f.shape[0] for f in frames_to_stack])
@@ -275,15 +288,28 @@ class TargetVisionRenderer:
                 new_w = int(orig_w * scale)
                 new_h = int(orig_h * scale)
                 
-                resized_view = cv2.resize(combined_view, (new_w, new_h))
-                canvas = np.full((win_h, win_w, 3), (35, 35, 35), dtype=np.uint8)
+                #resized_view = cv2.resize(combined_view, (new_w, new_h))
+                #canvas = np.full((win_h, win_w, 3), (35, 35, 35), dtype=np.uint8)
+                #x_offset = (win_w - new_w) // 2
+                #y_offset = (win_h - new_h) // 2
+                #canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized_view
+                #combined_view = canvas
+                #self.scale_x = scale
+                #self.scale_y = scale
+                #self.pad_x = x_offset 
+                #self.pad_y = y_offset
                 
+                resized_view = cv2.resize(combined_view, (new_w, new_h))
                 x_offset = (win_w - new_w) // 2
                 y_offset = (win_h - new_h) // 2
-                
-                canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized_view
-                
-                combined_view = canvas
+                # --- NEU: Rasend schnelles C++ Padding statt np.full ---
+                pad_bottom = win_h - new_h - y_offset
+                pad_right = win_w - new_w - x_offset
+                combined_view = cv2.copyMakeBorder(
+                    resized_view, 
+                    y_offset, pad_bottom, x_offset, pad_right, 
+                    cv2.BORDER_CONSTANT, value=(35, 35, 35)
+                )
                 self.scale_x = scale
                 self.scale_y = scale
                 self.pad_x = x_offset 
@@ -536,9 +562,23 @@ class TargetVisionRenderer:
                     
                 box_h = (len(display_shots_rev) + 2) * line_h
                 
-                hud_overlay = combined_view.copy()
-                cv2.rectangle(hud_overlay, (box_x - 10, start_y_hud - 25), (box_x + box_w, start_y_hud + box_h), (20, 20, 20), -1)
-                cv2.addWeighted(hud_overlay, 0.4, combined_view, 0.6, 0, combined_view)
+                #hud_overlay = combined_view.copy()
+                #cv2.rectangle(hud_overlay, (box_x - 10, start_y_hud - 25), (box_x + box_w, start_y_hud + box_h), (20, 20, 20), -1)
+                #cv2.addWeighted(hud_overlay, 0.4, combined_view, 0.6, 0, combined_view)
+                
+                # 1. Koordinaten der Box bestimmen
+                x1, y1 = box_x - 10, start_y_hud - 25
+                x2, y2 = box_x + box_w, start_y_hud + box_h
+                # 2. Sicherstellen, dass wir nicht über den Bildschirmrand malen
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(combined_view.shape[1], x2), min(combined_view.shape[0], y2)
+                if x2 > x1 and y2 > y1:
+                    # 3. Nur den winzigen Ausschnitt (ROI) aus dem großen Bild nehmen
+                    roi = combined_view[y1:y2, x1:x2]
+                    # 4. Eine dunkelgraue Box in exakt derselben kleinen Größe erstellen
+                    dark_box = np.full(roi.shape, (20, 20, 20), dtype=np.uint8)
+                    # 5. Transparenz NUR auf diesen winzigen Bereich anwenden!
+                    cv2.addWeighted(roi, 0.6, dark_box, 0.4, 0, roi)
                 
                 titel = "Treffer (L)" if side == 'left' else "Treffer (R)"
                 cv2.putText(combined_view, titel, (box_x - 5, start_y_hud - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
@@ -585,8 +625,6 @@ class TargetVisionRenderer:
             scaled_h = int(orig_h * self.scale_y)
             footer_y = getattr(self, 'pad_y', 0) + scaled_h - 65
             
-            overlay = combined_view.copy()
-            
             for side in ['left', 'right']:
                 if side == 'left' and not self.tracker.nutze_kamera_links: continue
                 if side == 'right' and not self.tracker.nutze_kamera_rechts: continue
@@ -614,9 +652,14 @@ class TargetVisionRenderer:
                 box_y1 = footer_y - 25
                 box_y2 = footer_y + 10
                 
-                cv2.rectangle(overlay, (box_x1, box_y1), (box_x2, box_y2), (20, 20, 20), -1)
-                
-            cv2.addWeighted(overlay, 0.4, combined_view, 0.6, 0, combined_view)
+                # ---> NEU: ROI Blending für den Footer (ohne overlay-Variable) <---
+                bx1, by1 = max(0, box_x1), max(0, box_y1)
+                bx2, by2 = min(combined_view.shape[1], box_x2), min(combined_view.shape[0], box_y2)
+                if bx2 > bx1 and by2 > by1:
+                    roi = combined_view[by1:by2, bx1:bx2]
+                    dark_box = np.full(roi.shape, (20, 20, 20), dtype=np.uint8)
+                    cv2.addWeighted(roi, 0.6, dark_box, 0.4, 0, roi)
+
 
             for side in ['left', 'right']:
                 if side == 'left' and not self.tracker.nutze_kamera_links: continue

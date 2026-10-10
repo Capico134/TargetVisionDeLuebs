@@ -8,6 +8,8 @@ import sys
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox
+import threading #loading
+import math      #loading
 
 # --- NEU: Unsere sauberen Manager-Importe ---
 from DateiManagerDeLuebs import DateiManager
@@ -32,62 +34,15 @@ class TargetTracker:
         
         self.nutze_kamera_links = config.getboolean('Kameras', 'nutze_kamera_links')
         self.nutze_kamera_rechts = config.getboolean('Kameras', 'nutze_kamera_rechts')
-        
-        cam_left_idx = config.getint('Kameras', 'cam_left_index')
-        cam_right_idx = config.getint('Kameras', 'cam_right_index')
 
-        width_l = config.getint('Kameras', 'cam_width_links', fallback=1280)
-        height_l = config.getint('Kameras', 'cam_height_links', fallback=720)
-        width_r = config.getint('Kameras', 'cam_width_rechts', fallback=1280)
-        height_r = config.getint('Kameras', 'cam_height_rechts', fallback=720)        
+        print("\n--- START KAMERA INITIALISIERUNG (ASYNCHRON) ---")
+        self.kameras_bereit = False
+        # 1. Den Hintergrundarbeiter losschicken
+        init_thread = threading.Thread(target=self._background_camera_init, daemon=True)
+        init_thread.start()
+        # 2. Während der Arbeiter schwitzt, bespaßen wir den Nutzer mit der Animation
+        self._play_splash_screen()
         
-        ## ---> NEU: self.is_windows nutzen <---
-        #if self.is_windows:
-        #    self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_DSHOW) if self.nutze_kamera_links else None
-        #    self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_DSHOW) if self.nutze_kamera_rechts else None
-        #else:
-        #    self.cap_left = cv2.VideoCapture(cam_left_idx) if self.nutze_kamera_links else None
-        #    self.cap_right = cv2.VideoCapture(cam_right_idx) if self.nutze_kamera_rechts else None
-        
-        #print("\n--- START KAMERA INITIALISIERUNG ---")
-        #t_start = time.time()
-        # ---> SETUP KAMERAS (Vollautomatik für maximalen FPS-Durchsatz) <---
-        self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_ANY) if self.nutze_kamera_links else None
-        self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_ANY) if self.nutze_kamera_rechts else None
-        # ---> SETUP KAMERAS (Direkt Media Foundation für schnelleren Start) <---
-        #self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_MSMF) if self.nutze_kamera_links else None
-        #self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_MSMF) if self.nutze_kamera_rechts else None
-        #print(f"1. Verbindungsaufbau: {time.time() - t_start:.2f} Sekunden")
-        #t_set = time.time()
-        
-        # =====================================================================
-        # ---> SETUP KAMERA LINKS
-        # =====================================================================
-        if self.nutze_kamera_links and self.cap_left:
-            mjpg_fcc = cv2.VideoWriter_fourcc(*'MJPG')
-            self._smart_set(self.cap_left, cv2.CAP_PROP_FOURCC, mjpg_fcc)
-            self._smart_set(self.cap_left, cv2.CAP_PROP_FRAME_WIDTH, width_l)
-            
-            self._smart_set(self.cap_left, cv2.CAP_PROP_FRAME_HEIGHT, height_l)
-            self._smart_set(self.cap_left, cv2.CAP_PROP_FPS, 30)
-            
-            belichtung_l = config.get('Kameras', 'belichtung_links', fallback='Standard')
-            self._set_camera_exposure(self.cap_left, belichtung_l)
-            #print(f"2. Eigenschaften setzen LINKS: {time.time() - t_set:.2f} Sekunden")
-
-        # =====================================================================
-        # ---> SETUP KAMERA RECHTS
-        # =====================================================================
-        if self.nutze_kamera_rechts and self.cap_right:
-            mjpg_fcc = cv2.VideoWriter_fourcc(*'MJPG')
-            self._smart_set(self.cap_right, cv2.CAP_PROP_FOURCC, mjpg_fcc)
-            self._smart_set(self.cap_right, cv2.CAP_PROP_FRAME_WIDTH, width_r)
-            self._smart_set(self.cap_right, cv2.CAP_PROP_FRAME_HEIGHT, height_r)
-            self._smart_set(self.cap_right, cv2.CAP_PROP_FPS, 30)
-            
-            belichtung_r = config.get('Kameras', 'belichtung_rechts', fallback='Standard')
-            self._set_camera_exposure(self.cap_right, belichtung_r)
-            
         # --- GUI-Variablen einmalig initialisieren ---
         self.refresh_gui_settings_from_config()
         
@@ -113,6 +68,104 @@ class TargetTracker:
         
         if hasattr(self.config, 'healed_parameters') and self.config.healed_parameters:
             self.show_config_alert()
+
+    def _background_camera_init(self):
+        """Hier passiert die harte, blockierende Hardware-Arbeit im Hintergrund."""
+        cam_left_idx = self.config.getint('Kameras', 'cam_left_index')
+        cam_right_idx = self.config.getint('Kameras', 'cam_right_index')
+        width_l = self.config.getint('Kameras', 'cam_width_links', fallback=1280)
+        height_l = self.config.getint('Kameras', 'cam_height_links', fallback=720)
+        
+        self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_ANY) if self.nutze_kamera_links else None
+        
+        if self.nutze_kamera_links and self.cap_left:
+            mjpg_fcc = cv2.VideoWriter_fourcc(*'MJPG')
+            self._smart_set(self.cap_left, cv2.CAP_PROP_FOURCC, mjpg_fcc)
+            self._smart_set(self.cap_left, cv2.CAP_PROP_FRAME_WIDTH, width_l)
+            self._smart_set(self.cap_left, cv2.CAP_PROP_FRAME_HEIGHT, height_l)
+            self._smart_set(self.cap_left, cv2.CAP_PROP_FPS, 30)
+            belichtung_l = self.config.get('Kameras', 'belichtung_links', fallback='Standard')
+            self._set_camera_exposure(self.cap_left, belichtung_l)
+            
+        if self.nutze_kamera_rechts and self.cap_right:
+            mjpg_fcc = cv2.VideoWriter_fourcc(*'MJPG')
+            self._smart_set(self.cap_right, cv2.CAP_PROP_FOURCC, mjpg_fcc)
+            self._smart_set(self.cap_right, cv2.CAP_PROP_FRAME_WIDTH, width_r)
+            self._smart_set(self.cap_right, cv2.CAP_PROP_FRAME_HEIGHT, height_r)
+            self._smart_set(self.cap_right, cv2.CAP_PROP_FPS, 30)
+            belichtung_r = config.get('Kameras', 'belichtung_rechts', fallback='Standard')
+            self._set_camera_exposure(self.cap_right, belichtung_r)
+            
+        # Signal an die Animation: Wir sind fertig!
+        self.kameras_bereit = True
+
+    def _play_splash_screen(self):
+        """Zeichnet eine flüssige Animation (Pulsierend), bis die Kameras bereit sind."""
+        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+        if getattr(self, 'vollbild', False):
+            cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        else:
+            cv2.resizeWindow(self.window_name, 1280, 720)
+            
+        # 1. Versuchen, das existierende PNG-Logo für den Splash-Screen zu laden
+        logo_img = None
+        logo_alpha = None
+        new_h, new_w = 0, 0
+        
+        logo_path = os.path.join(getattr(self.dm, 'BASE_DIR', ''), "logo.png")
+        if os.path.exists(logo_path):
+            raw_logo = cv2.imread(logo_path, cv2.IMREAD_UNCHANGED)
+            if raw_logo is not None and raw_logo.shape[2] == 4:
+                # Das Logo schön groß für den Startbildschirm skalieren (z.B. 1.2x Original)
+                h, w = raw_logo.shape[:2]
+                scale = 1.2
+                new_w, new_h = int(w * scale), int(h * scale)
+                raw_logo = cv2.resize(raw_logo, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                
+                logo_alpha = (raw_logo[:, :, 3] / 255.0).astype(np.float32)
+                logo_img = raw_logo[:, :, :3].astype(np.float32)
+                
+        winkel = 0
+        start_time = time.time()
+        
+        while not getattr(self, 'kameras_bereit', False):
+            # Dunkelgraue Leinwand
+            #splash = np.full((720, 1280, 3), (35, 35, 35), dtype=np.uint8)
+            splash = np.full((720, 1280, 3), (235, 35, 35), dtype=np.uint8)
+            elapsed = time.time() - start_time
+            
+            # --- Logo pulsieren lassen (Sinuswelle) ---
+            if logo_img is not None:
+                # math.sin pendelt zwischen -1.0 und 1.0. 
+                # Multipliziert mit 3.0 steuern wir die Geschwindigkeit des Pulsierens.
+                # Mit 0.75 + (0.25 * sin) pendelt der Wert sauber zwischen 0.5 (halbtransparent) und 1.0 (voll sichtbar).
+                pulse_factor = 0.75 + (0.25 * math.sin(elapsed * 3.0))
+                
+                current_alpha = logo_alpha * pulse_factor
+                inv_alpha = 1.0 - current_alpha
+                
+                # Exakt in der Mitte platzieren
+                c_y = (720 - new_h) // 2
+                c_x = (1280 - new_w) // 2
+                
+                roi = splash[c_y:c_y+new_h, c_x:c_x+new_w].astype(np.float32)
+                # Alpha-Blending
+                blended = (roi * np.dstack([inv_alpha]*3)) + (logo_img * np.dstack([current_alpha]*3))
+                splash[c_y:c_y+new_h, c_x:c_x+new_w] = blended.astype(np.uint8)
+            else:
+                # Fallback, falls kein Logo da ist (Text pulsiert nicht, bleibt statisch)
+                cv2.putText(splash, "TargetVision DeLuebs", (380, 350), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3, cv2.LINE_AA)
+            
+            # --- Lade-Text und rotierender Cyber-Kreis unten rechts ---
+            cv2.putText(splash, "Lade Hardware...", (1000, 685), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1, cv2.LINE_AA)
+            cv2.ellipse(splash, (1200, 680), (12, 12), winkel, 0, 280, (50, 200, 255), 2, cv2.LINE_AA)
+            
+            cv2.imshow(self.window_name, splash)
+            cv2.waitKey(33) # 33ms Wait = Saubere ~30 FPS für die Animation
+            winkel = (winkel + 15) % 360
+
 
     def refresh_gui_settings_from_config(self):
         """Aktualisiert alle GUI-spezifischen Attribute live aus dem Config-Objekt im RAM."""
