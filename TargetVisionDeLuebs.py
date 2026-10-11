@@ -79,13 +79,16 @@ class TargetTracker:
         width_r = self.config.getint('Kameras', 'cam_width_rechts', fallback=1280)
         height_r = self.config.getint('Kameras', 'cam_height_rechts', fallback=720)
         
-        # ---> FEHLENDE ZEILE: Beide Kameras initialisieren! <---
-        self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_ANY) if self.nutze_kamera_links else None
-        self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_ANY) if self.nutze_kamera_rechts else None
+        # ---> NEU: Zurück zu DSHOW! Holt sich die Kontrolle über Industrie-Kameras zurück <---
+        self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_DSHOW) if self.nutze_kamera_links else None
+        self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_DSHOW) if self.nutze_kamera_rechts else None
         
         if self.nutze_kamera_links and self.cap_left:
             mjpg_fcc = cv2.VideoWriter_fourcc(*'MJPG')
-            self._smart_set(self.cap_left, cv2.CAP_PROP_FOURCC, mjpg_fcc)
+            
+            # ---> NEU: Holzhammer-Methode für FOURCC (Kein _smart_set verwenden!) <---
+            self.cap_left.set(cv2.CAP_PROP_FOURCC, mjpg_fcc)
+            
             self._smart_set(self.cap_left, cv2.CAP_PROP_FRAME_WIDTH, width_l)
             self._smart_set(self.cap_left, cv2.CAP_PROP_FRAME_HEIGHT, height_l)
             self._smart_set(self.cap_left, cv2.CAP_PROP_FPS, 30)
@@ -94,7 +97,10 @@ class TargetTracker:
             
         if self.nutze_kamera_rechts and self.cap_right:
             mjpg_fcc = cv2.VideoWriter_fourcc(*'MJPG')
-            self._smart_set(self.cap_right, cv2.CAP_PROP_FOURCC, mjpg_fcc)
+            
+            # ---> NEU: Holzhammer-Methode für FOURCC <---
+            self.cap_right.set(cv2.CAP_PROP_FOURCC, mjpg_fcc)
+            
             self._smart_set(self.cap_right, cv2.CAP_PROP_FRAME_WIDTH, width_r)
             self._smart_set(self.cap_right, cv2.CAP_PROP_FRAME_HEIGHT, height_r)
             self._smart_set(self.cap_right, cv2.CAP_PROP_FPS, 30)
@@ -110,7 +116,7 @@ class TargetTracker:
         if getattr(self, 'vollbild', False):
             cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         else:
-            cv2.resizeWindow(self.window_name, 1280, 720)
+            cv2.resizeWindow(self.window_name, 852, 480)
             
         # 1. Versuchen, das existierende PNG-Logo für den Splash-Screen zu laden
         logo_img = None
@@ -123,7 +129,7 @@ class TargetTracker:
             if raw_logo is not None and raw_logo.shape[2] == 4:
                 # Das Logo schön groß für den Startbildschirm skalieren (z.B. 1.2x Original)
                 h, w = raw_logo.shape[:2]
-                scale = 1.2
+                scale = 1.8
                 new_w, new_h = int(w * scale), int(h * scale)
                 raw_logo = cv2.resize(raw_logo, (new_w, new_h), interpolation=cv2.INTER_AREA)
                 
@@ -144,7 +150,7 @@ class TargetTracker:
                 # math.sin pendelt zwischen -1.0 und 1.0. 
                 # Multipliziert mit 3.0 steuern wir die Geschwindigkeit des Pulsierens.
                 # Mit 0.75 + (0.25 * sin) pendelt der Wert sauber zwischen 0.5 (halbtransparent) und 1.0 (voll sichtbar).
-                pulse_factor = 0.75 + (0.25 * math.sin(elapsed * 3.0))
+                pulse_factor = 0.5 + (0.5 * math.sin(elapsed * 3.0))
                 
                 current_alpha = logo_alpha * pulse_factor
                 inv_alpha = 1.0 - current_alpha
@@ -164,8 +170,8 @@ class TargetTracker:
             
             # --- Lade-Text und rotierender Cyber-Kreis unten rechts ---
             cv2.putText(splash, "Lade Hardware...", (1000, 685), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1, cv2.LINE_AA)
-            cv2.ellipse(splash, (1200, 680), (12, 12), winkel, 0, 280, (50, 200, 255), 2, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (200, 200, 200), 1, cv2.LINE_AA)
+            cv2.ellipse(splash, (1200, 680), (24, 24), winkel, 0, 280, (50, 200, 255), 2, cv2.LINE_AA)
             
             cv2.imshow(self.window_name, splash)
             cv2.waitKey(33) # 33ms Wait = Saubere ~30 FPS für die Animation
