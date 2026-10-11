@@ -391,21 +391,48 @@ class LaborRenderer:
         zoom_p = (1.0, self.app.current_img_w / self.app.current_scale, 0.0)
         current_frame_num = self.app.current_index
 
+        ## ---> RENDER-HELFER: Blinkender Live-Treffer <---
+        #if getattr(self.app, 'blink_state', True) and hasattr(self.app, 'current_engine_shots'):
+        #    for shot in self.app.current_engine_shots:
+        #        if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
+        #            hx, hy = shot['pos']
+        #            Helfer.draw_smart_ellipse(
+        #                img=combined, center_x=hx, center_y=hy, radius_mm=kaliber_mm/2.0,
+        #                #color=(0, 165, 255), px_x=px_x, px_y=px_y, korrektur=korrektur,
+        #                color=(133, 83, 255), px_x=px_x, px_y=px_y, korrektur=korrektur,  #Neon-Koralle
+        #                feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=False, is_hit=True,
+        #                zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True
+        #            )
         # ---> RENDER-HELFER: Blinkender Live-Treffer <---
-        if getattr(self.app, 'blink_state', True) and hasattr(self.app, 'current_engine_shots'):
-            for shot in self.app.current_engine_shots:
-                if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
-                    hx, hy = shot['pos']
-                    Helfer.draw_smart_ellipse(
-                        img=combined, center_x=hx, center_y=hy, radius_mm=kaliber_mm/2.0,
-                        #color=(0, 165, 255), px_x=px_x, px_y=px_y, korrektur=korrektur,
-                        color=(133, 83, 255), px_x=px_x, px_y=px_y, korrektur=korrektur,  #Neon-Koralle
-                        feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=False, is_hit=True,
-                        zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True
-                    )
 
         # Linker Kreis: Der Erkennungs-Durchmesser (config.ini), der auch fürs Fadenkreuz gilt
         base_r = getattr(self.app, 'current_radius_px', 15)
+
+        if hasattr(self.app, 'current_engine_shots'):
+            blink_on = getattr(self.app, 'blink_state', True)
+            # Farben definieren
+            color_left = (0, 0, 255) if blink_on else (255, 0, 0) # Wechselt Rot / Blau (BGR)
+            color_right = (133, 83, 255) # Neon-Koralle
+            for shot in self.app.current_engine_shots:
+                if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
+                    hx, hy = shot['pos']
+                     # 1. LINKE SEITE (Wechselt Rot/Blau synchron, gezeichnet mit scharfen Subpixeln)
+                    shift = 4
+                    mult = 2 ** shift
+                    scaled_hx_l = int(round(hx * self.app.current_scale * mult))
+                    scaled_hy_l = int(round(hy * self.app.current_scale * mult))
+                    scaled_r_l  = int(round(base_r * self.app.current_scale * mult))
+                    cv2.circle(combined, (scaled_hx_l, scaled_hy_l), scaled_r_l, color_left, 2, cv2.LINE_AA, shift=shift)
+                    # 2. RECHTE SEITE (Blinkt An/Aus)
+                    if blink_on:
+                        Helfer.draw_smart_ellipse(
+                            img=combined, center_x=hx, center_y=hy, radius_mm=kaliber_mm/2.0,
+                            color=color_right, px_x=px_x, px_y=px_y, korrektur=korrektur,
+                            feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=False, is_hit=True,
+                            zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True
+                        )
+
+
 
         # ---> RENDER-HELFER: Angeklickter / Hervorgehobener Treffer <---
         hl = getattr(self.app, 'highlighted_shot', None)
@@ -588,17 +615,17 @@ class LaborRenderer:
             self.app.tk_image = ImageTk.PhotoImage(img_pil)
             self.app.lbl_image.config(image=self.app.tk_image, text="")
 
-        # # ---> DIAGNOSE: Stoppuhr auswerten <---
-        # t_end = time.perf_counter()
-        # dauer_ms = (t_end - t_start) * 1000
-        
-        # # Zeige nur an, wenn der Renderer spürbar arbeiten muss (> 50ms)
-        # #if dauer_ms > 50:
-        # if dauer_ms >   5:
-        #     modus = "FULL-REBUILD" if full_rebuild else "QUICK-UPDATE"
-        #     # ---> DER FIX: Erst definieren, dann drucken! <---
-        #     gui_upload = "+ GUI" if push_to_gui else "(RAM ONLY)"
-        #     print(f"🐌 Render-Zyklus [{modus} {gui_upload}]: {dauer_ms:.1f} ms  -  t_end: {t_end}")		
+        ## ---> DIAGNOSE: Stoppuhr auswerten <---
+        #t_end = time.perf_counter()
+        #dauer_ms = (t_end - t_start) * 1000
+        #
+        ## Zeige nur an, wenn der Renderer spürbar arbeiten muss (> 50ms)
+        ##if dauer_ms > 50:
+        #if dauer_ms >   5:
+        #    modus = "FULL-REBUILD" if full_rebuild else "QUICK-UPDATE"
+        #    # ---> DER FIX: Erst definieren, dann drucken! <---
+        #    gui_upload = "+ GUI" if push_to_gui else "(RAM ONLY)"
+        #    print(f"🐌 Render-Zyklus [{modus} {gui_upload}]: {dauer_ms:.1f} ms  -  t_end: {t_end}")		
 
     def draw_crosshair(self, x, y):
         if getattr(self.app, 'base_combined_img_rgb', None) is None or not hasattr(self.app, 'current_scale'):

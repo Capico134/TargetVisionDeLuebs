@@ -1857,11 +1857,11 @@ class LaborApp:
                 cv2.circle(live_img, (hx, hy), r_offiziell, (0, 255, 255), 1)
                 cv2.circle(live_img, (hx, hy), 1, (0, 255, 255), 0)
         
-        # --- LAYER 3: Neue Treffer (Rot - Immer ganz oben!) ---
-        for shot in d_sm.shots:
-            if shot['side'] == side and shot.get('is_new', False):
-                draw_pos = (int(round(shot['pos'][0])), int(round(shot['pos'][1])))
-                cv2.circle(live_img, draw_pos, r_erkennung, (0, 0, 255), 1)
+        ## --- LAYER 3: Neue Treffer (Rot - Immer ganz oben!) ---
+        #for shot in d_sm.shots:
+        #    if shot['side'] == side and shot.get('is_new', False):
+        #        draw_pos = (int(round(shot['pos'][0])), int(round(shot['pos'][1])))
+        #        cv2.circle(live_img, draw_pos, r_erkennung, (0, 0, 255), 1)
         
         
         # ====================================================================

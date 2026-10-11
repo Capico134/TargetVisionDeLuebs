@@ -427,8 +427,8 @@ class TargetDetector:
 
         _, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY)
         
-        # ---> NEU: Leere Leinwand für die siegreichen Abrisskanten dieses Frames <---
-        frame_abrisskanten = np.zeros_like(thresh_raw)
+        ## ---> NEU: Leere Leinwand für die siegreichen Abrisskanten dieses Frames <---
+        #frame_abrisskanten = np.zeros_like(thresh_raw)
 
         # 1. ERST die alten Treffer abziehen (Stanzt den Riss aus)
         if state.cumulative_mask is not None:
@@ -910,8 +910,8 @@ class TargetDetector:
                     final_shot_score = winner['score']
                     winning_method = winner['name']
 
-                    if "Abriss" in winner['name'] and current_outer_edge is not None:
-                        frame_abrisskanten = cv2.bitwise_or(frame_abrisskanten, current_outer_edge)
+                    #if "Abriss" in winner['name'] and current_outer_edge is not None:
+                    #    frame_abrisskanten = cv2.bitwise_or(frame_abrisskanten, current_outer_edge)
                                 
                 elif self.erkennungs_methode == 'B':
                     M = cv2.moments(cnt)
@@ -1005,7 +1005,8 @@ class TargetDetector:
                                     'mec_radius': new_mec_radius,
                                     'base_pos': winner.get('base_pos', (cx, cy)),
                                     'end_pos': winner.get('end_pos', (cx, cy)),
-                                    'score_export_details': export_details # <--- Sicheres Variablen-Mapping
+                                    'score_export_details': export_details, # <--- Sicheres Variablen-Mapping
+                                    'outer_edge': current_outer_edge # <--- NEU: Die grüne Kante retten
                                 }
                             else:
                                 self.log(side, f"⚠️ Treffer ignoriert: Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) verliert Sichel-Duell gegen besseres Fragment ({existing_shot['score']:.1f})!")
@@ -1022,7 +1023,8 @@ class TargetDetector:
                         'mec_radius': mec_radius,
                         'base_pos': winner['base_pos'],
                         'end_pos': winner.get('end_pos', (winner['cx'], winner['cy'])), # <--- Zielpunkt sichern
-                        'score_export_details': export_details # <--- Sicheres Variablen-Mapping
+                        'score_export_details': export_details, # <--- Sicheres Variablen-Mapping
+                        'outer_edge': current_outer_edge # <--- NEU: Die grüne Kante retten
                     })
                     self.log(side, f"---> NEUES LOCH BESTÄTIGT: Pos ({cx:.2f}, {cy:.2f}) | Fläche: {area:.1f}px | Score: {final_shot_score:.1f} | Flächen-Ratio: {winner['cov_new']:.1f}%")
                     self.log(side, "------------------------------------------------------------")
@@ -1097,7 +1099,12 @@ class TargetDetector:
             self.save_debug_image(f"diff_letzter_treffer_{side}", thresh_new)
             self.save_debug_image(f"letzte_aufnahme_{side}", frame)
             
-            # Die gesammelten Sieger-Kanten für das Labor bereitstellen
+            # ---> NEU: Hier ganz am Schluss, NACH allen Sichel-Duellen, malen wir die wahren Sieger!
+            frame_abrisskanten = np.zeros_like(thresh_raw)
+            for sd in new_shots_found_this_frame:
+                if "Abriss" in sd['winner_method'] and sd.get('outer_edge') is not None:
+                    frame_abrisskanten = cv2.bitwise_or(frame_abrisskanten, sd['outer_edge'])
+                    
             self.save_debug_image(f"letzte_abrisskante_{side}", frame_abrisskanten)
             # ---> NEU: Das normalisierte Bild für Paint-Analysen speichern! <--- AUSKOMMENTIERT ABER BITTE NICHT LÖSCHEN!
             #self.save_debug_image(f"letzte_aufnahme_normalized_{side}", current_normalized)
