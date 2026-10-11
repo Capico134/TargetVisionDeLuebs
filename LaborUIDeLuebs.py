@@ -546,7 +546,7 @@ class LaborUIBuilder:
         dialog.title("Erweiterte Einstellungen (Live Data-Binding)")
         
         sf = self.app.root.winfo_fpixels('1i') / 96.0
-        w, h = int(550 * sf), int(800 * sf)
+        w, h = int(550 * sf), int(700 * sf)
         dialog.geometry(f"{w}x{h}")
         
         dialog.transient(self.app.root)  
@@ -555,7 +555,7 @@ class LaborUIBuilder:
         info_frame = tk.Frame(dialog, bg="#fff3cd", bd=1, relief=tk.SOLID)
         info_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
         info_lbl = tk.Label(info_frame, 
-                            text="⚠️ WICHTIGER HINWEIS:\nTiefe Systemeinstellungen (wie Kameras, Bild-Zuschnitte/Crops oder Vollbild)\nwerden erst nach einem Neustart von TargetVision aktiv.\nAlle Erkennungs-Parameter (Filter, Toleranzen) greifen sofort!",
+                            text="⚠️ WICHTIGER HINWEIS:\nTiefe Systemeinstellungen (wie Kameraänderungen oder Vollbild)\nwerden erst nach einem Neustart von TargetVision aktiv!",
                             bg="#fff3cd", fg="#856404", font=("Arial", 9), justify=tk.CENTER)
         info_lbl.pack(padx=5, pady=5)
 

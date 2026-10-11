@@ -65,7 +65,7 @@ class TargetVisionRenderer:
     def _init_logo(self):
         """Lädt und skaliert das Logo einmalig beim Start"""
         logo_pfad = "logo.png"
-        logo_skalierung = 0.65 
+        logo_skalierung = 0.45 
         if os.path.exists(logo_pfad):
             logo_img = cv2.imread(logo_pfad, cv2.IMREAD_UNCHANGED)
             if logo_img is not None and logo_img.shape[2] == 4:

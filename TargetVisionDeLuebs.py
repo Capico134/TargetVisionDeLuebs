@@ -79,31 +79,27 @@ class TargetTracker:
         width_r = self.config.getint('Kameras', 'cam_width_rechts', fallback=1280)
         height_r = self.config.getint('Kameras', 'cam_height_rechts', fallback=720)
         
-        # ---> NEU: Zurück zu DSHOW! Holt sich die Kontrolle über Industrie-Kameras zurück <---
-        self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_DSHOW) if self.nutze_kamera_links else None
-        self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_DSHOW) if self.nutze_kamera_rechts else None
+        # ---> ZURÜCK ZU CAP_ANY (Media Foundation)! DSHOW bremst moderne Hardware aus. <---
+        self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_ANY) if self.nutze_kamera_links else None
+        self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_ANY) if self.nutze_kamera_rechts else None
         
         if self.nutze_kamera_links and self.cap_left:
-            mjpg_fcc = cv2.VideoWriter_fourcc(*'MJPG')
+            # MJPEG erzwingen, DANN erst Breite und Höhe (Ohne Nachfragen!)
+            self.cap_left.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            self.cap_left.set(cv2.CAP_PROP_FRAME_WIDTH, width_l)
+            self.cap_left.set(cv2.CAP_PROP_FRAME_HEIGHT, height_l)
+            self.cap_left.set(cv2.CAP_PROP_FPS, 30)
             
-            # ---> NEU: Holzhammer-Methode für FOURCC (Kein _smart_set verwenden!) <---
-            self.cap_left.set(cv2.CAP_PROP_FOURCC, mjpg_fcc)
-            
-            self._smart_set(self.cap_left, cv2.CAP_PROP_FRAME_WIDTH, width_l)
-            self._smart_set(self.cap_left, cv2.CAP_PROP_FRAME_HEIGHT, height_l)
-            self._smart_set(self.cap_left, cv2.CAP_PROP_FPS, 30)
             belichtung_l = self.config.get('Kameras', 'belichtung_links', fallback='Standard')
             self._set_camera_exposure(self.cap_left, belichtung_l)
             
         if self.nutze_kamera_rechts and self.cap_right:
-            mjpg_fcc = cv2.VideoWriter_fourcc(*'MJPG')
+            # MJPEG erzwingen
+            self.cap_right.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            self.cap_right.set(cv2.CAP_PROP_FRAME_WIDTH, width_r)
+            self.cap_right.set(cv2.CAP_PROP_FRAME_HEIGHT, height_r)
+            self.cap_right.set(cv2.CAP_PROP_FPS, 30)
             
-            # ---> NEU: Holzhammer-Methode für FOURCC <---
-            self.cap_right.set(cv2.CAP_PROP_FOURCC, mjpg_fcc)
-            
-            self._smart_set(self.cap_right, cv2.CAP_PROP_FRAME_WIDTH, width_r)
-            self._smart_set(self.cap_right, cv2.CAP_PROP_FRAME_HEIGHT, height_r)
-            self._smart_set(self.cap_right, cv2.CAP_PROP_FPS, 30)
             belichtung_r = self.config.get('Kameras', 'belichtung_rechts', fallback='Standard')
             self._set_camera_exposure(self.cap_right, belichtung_r)
             
@@ -118,7 +114,7 @@ class TargetTracker:
         else:
             cv2.resizeWindow(self.window_name, 852, 480)
             
-        # 1. Versuchen, das existierende PNG-Logo für den Splash-Screen zu laden
+        # 1. Logo laden – 0.8 auf 480p entspricht exakt den 1.2 aus ALT.py auf 720p
         logo_img = None
         logo_alpha = None
         new_h, new_w = 0, 0
@@ -127,9 +123,8 @@ class TargetTracker:
         if os.path.exists(logo_path):
             raw_logo = cv2.imread(logo_path, cv2.IMREAD_UNCHANGED)
             if raw_logo is not None and raw_logo.shape[2] == 4:
-                # Das Logo schön groß für den Startbildschirm skalieren (z.B. 1.2x Original)
                 h, w = raw_logo.shape[:2]
-                scale = 1.8
+                scale = 1.2  # Proportional identisch zu ALT.py (1.2 * 480 / 720)
                 new_w, new_h = int(w * scale), int(h * scale)
                 raw_logo = cv2.resize(raw_logo, (new_w, new_h), interpolation=cv2.INTER_AREA)
                 
@@ -140,41 +135,34 @@ class TargetTracker:
         start_time = time.time()
         
         while not getattr(self, 'kameras_bereit', False):
-            # Dunkelgraue Leinwand
-            #splash = np.full((720, 1280, 3), (35, 35, 35), dtype=np.uint8)
-            splash = np.full((720, 1280, 3), (235, 35, 35), dtype=np.uint8)
+            # Nativ auf 852x480 im reflexionsfreien Anthrazit-Dunkelgrau
+            splash = np.full((480, 852, 3), (235, 35, 35), dtype=np.uint8)
             elapsed = time.time() - start_time
             
-            # --- Logo pulsieren lassen (Sinuswelle) ---
+            # --- Logo pulsieren lassen ---
             if logo_img is not None:
-                # math.sin pendelt zwischen -1.0 und 1.0. 
-                # Multipliziert mit 3.0 steuern wir die Geschwindigkeit des Pulsierens.
-                # Mit 0.75 + (0.25 * sin) pendelt der Wert sauber zwischen 0.5 (halbtransparent) und 1.0 (voll sichtbar).
-                pulse_factor = 0.5 + (0.5 * math.sin(elapsed * 3.0))
-                
+                pulse_factor = 0.6 + (0.4 * math.sin(elapsed * 3.0))
                 current_alpha = logo_alpha * pulse_factor
                 inv_alpha = 1.0 - current_alpha
                 
-                # Exakt in der Mitte platzieren
-                c_y = (720 - new_h) // 2
-                c_x = (1280 - new_w) // 2
+                c_y = (480 - new_h) // 2
+                c_x = (852 - new_w) // 2
                 
                 roi = splash[c_y:c_y+new_h, c_x:c_x+new_w].astype(np.float32)
-                # Alpha-Blending
                 blended = (roi * np.dstack([inv_alpha]*3)) + (logo_img * np.dstack([current_alpha]*3))
                 splash[c_y:c_y+new_h, c_x:c_x+new_w] = blended.astype(np.uint8)
             else:
-                # Fallback, falls kein Logo da ist (Text pulsiert nicht, bleibt statisch)
-                cv2.putText(splash, "TargetVision DeLuebs", (380, 350), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3, cv2.LINE_AA)
+                cv2.putText(splash, "TargetVision DeLuebs", (250, 240), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
             
-            # --- Lade-Text und rotierender Cyber-Kreis unten rechts ---
-            cv2.putText(splash, "Lade Hardware...", (1000, 685), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (200, 200, 200), 1, cv2.LINE_AA)
-            cv2.ellipse(splash, (1200, 680), (24, 24), winkel, 0, 280, (50, 200, 255), 2, cv2.LINE_AA)
+            # --- Text & Spinner rechts nebeneinander (exakt proportioniert auf 852x480) ---
+            load_txt = "Lade Hardware..."
+            cv2.putText(splash, load_txt, (625, 457), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1, cv2.LINE_AA)
+            cv2.ellipse(splash, (798, 451), (12, 12), winkel, 0, 280, (50, 200, 255), 2, cv2.LINE_AA)
             
             cv2.imshow(self.window_name, splash)
-            cv2.waitKey(33) # 33ms Wait = Saubere ~30 FPS für die Animation
+            cv2.waitKey(33)
             winkel = (winkel + 15) % 360
 
 
@@ -1100,21 +1088,16 @@ class TargetTracker:
     def run(self):
         blink_timer = time.time()
         blink_state = True
+        first_frame = True  # <--- NEU: Verhindert den 1-Sekunden-Glitch
         
-        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
-        
-        if self.vollbild:
-            cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        else:
-            cv2.resizeWindow(self.window_name, 1280, 720) 
-            
         cv2.setMouseCallback(self.window_name, self.on_mouse_click)
         self.log("SYSTEM", "=== PROGRAMM GESTARTET ===", True)
 
         while True:
             frame_start_time = time.perf_counter() 
             
-            frame_l, frame_r = self.read_frames()
+            # Hier schwitzt die Kamera beim ersten Durchlauf kurz (~1s)
+            frame_l, frame_r = self.read_frames() 
             self.last_frame_l = frame_l 
             self.last_frame_r = frame_r 
             
@@ -1128,6 +1111,14 @@ class TargetTracker:
                 blink_state = not blink_state
                 blink_timer = time.time()
             
+            # ---> NEU: Fenster exakt in dem Frame anpassen, in dem auch das Bild da ist! <---
+            if first_frame:
+                if self.vollbild:
+                    cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                else:
+                    cv2.resizeWindow(self.window_name, 1280, 720)
+                first_frame = False
+
             self.renderer.update_gui(frame_l, frame_r, blink_state)
             
             if self.check_keys(frame_start_time):

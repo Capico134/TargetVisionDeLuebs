@@ -904,7 +904,8 @@ class TargetDetector:
                     win_final_prefix = f"{win_prefix_padded}{win_ziel}->"
                     
                     # 4. Ausgabe: Exakt im Raster, der Siegername steht stolz ganz hinten!
-                    self.log(side, f"{win_final_prefix} Score: {winner['score']:5.1f} | {winner['name']}")
+                    self.log(side, f"{win_final_prefix} Score: {winner['score']:5.1f} | {winner['name']} 👑")
+                    #self.log(side, f"{win_final_prefix} Score: {winner['score']:5.1f} | {winner['name']}")
                     
                     cx, cy = winner['cx'], winner['cy']
                     final_shot_score = winner['score']
@@ -992,7 +993,9 @@ class TargetDetector:
 
                             # ---> Das eigentliche Sichel-Duell <---
                             if final_shot_score > existing_shot['score']:
-                                self.log(side, f"🔄 Sichel-Duell: Neues Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) schlägt altes Fragment ({existing_shot['score']:.1f}).")
+                                msg = f"🔄 Sichel-Duell: Neues Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) schlägt altes Fragment ({existing_shot['score']:.1f})."
+                                self.log(side, f"{msg:<115} 🔄")
+                                self.log(side, "-" * 60)
                                 
                                 # ---> DER FIX: MEC-Radius für den neuen Duell-Sieger berechnen und anhängen! <---
                                 _, new_mec_radius = cv2.minEnclosingCircle(cnt)
@@ -1009,8 +1012,9 @@ class TargetDetector:
                                     'outer_edge': current_outer_edge # <--- NEU: Die grüne Kante retten
                                 }
                             else:
-                                self.log(side, f"⚠️ Treffer ignoriert: Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) verliert Sichel-Duell gegen besseres Fragment ({existing_shot['score']:.1f})!")
-                            
+                                msg = f"⚠️ Treffer ignoriert: Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) verliert Sichel-Duell gegen besseres Fragment ({existing_shot['score']:.1f})!"
+                                self.log(side, f"{msg:<115} ⚠️")
+                                self.log(side, "-" * 60)
                             is_new = False
                             break
 
@@ -1070,7 +1074,22 @@ class TargetDetector:
                     shot_num = sum(1 for s in self.sm.shots if s['side'] == side)
                     durchmesser_mm = (shot.get('mec_radius', 0.0) * 2) / avg_px_pro_mm if avg_px_pro_mm > 0 else 0
                     
-                    self.log(side, f"█ 💥 SCHUSS #{shot_num} 💥 █ Pos X:{shot['cx']:.2f}, Y:{shot['cy']:.2f} | {shot['score']:.{decimals}f} Ringe (Roh: {shot.get('raw_score', 0.0):.3f}) | CV-Score: {shot.get('cv_score', 0.0):.1f} | Fläche: {shot.get('area', 0.0):.1f}px | MEC-Ø: {durchmesser_mm:.2f}mm")
+                    # ---> NEU: Perfekt formatierte Endausgabe! <---
+                    # Linker Teil mit Ringwertung, Rohwert und Fläche
+                    ring_str = f"{shot['score']:.{decimals}f}"
+                    raw_str = f"{shot.get('raw_score', 0.0):.3f}"
+                    area_str = f"{shot.get('area', 0.0):.1f}"
+                    prefix_left = f"|||||* SCHUSS #{shot_num} *||||| --> Ringwertung: {ring_str} | {raw_str} Roh | Area: {area_str}px "
+                    
+                    # Auf exakt 87 Zeichen mit Bindestrichen auffüllen (wie bei den Kandidaten)
+                    padded_prefix = f"{prefix_left:-<87}"
+                    
+                    # Rechter Teil mit Zielkoordinaten, CV-Score und Durchmesser
+                    cv_score_str = f"{shot.get('cv_score', 0.0):5.1f}"
+                    ziel_right = f" - Ziel X:{shot['cx']:>6.2f} Y:{shot['cy']:>6.2f} -> Score: {cv_score_str} | MEC-Ø: {durchmesser_mm:.2f}mm 💥"
+                    
+                    # Ausgabe zusammenkleben
+                    self.log(side, f"{padded_prefix}{ziel_right}")
                     
                 self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!", True)
             
