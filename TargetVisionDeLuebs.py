@@ -295,18 +295,30 @@ class TargetTracker:
 
     def read_frames(self):
         frame_l, frame_r = None, None
-        if self.nutze_kamera_links: 
-            ret_l, raw_l = self.cap_left.read()
+        
+        # SCHRITT 1: Beide Kameras fast zeitgleich anweisen, den Sensor "einzufrieren" (grab)
+        # Das geht blitzschnell und blockiert nicht die vollen 33ms!
+        if self.nutze_kamera_links and self.cap_left: 
+            self.cap_left.grab()
+        if self.nutze_kamera_rechts and self.cap_right: 
+            self.cap_right.grab()
+            
+        # SCHRITT 2: Die eingefrorenen Bilder nacheinander abholen und decodieren (retrieve)
+        if self.nutze_kamera_links and self.cap_left: 
+            ret_l, raw_l = self.cap_left.retrieve()
             frame_l = self.apply_crop(raw_l, 'left') if ret_l else None
-        if self.nutze_kamera_rechts: 
-            ret_r, raw_r = self.cap_right.read()
+            
+        if self.nutze_kamera_rechts and self.cap_right: 
+            ret_r, raw_r = self.cap_right.retrieve()
             frame_r = self.apply_crop(raw_r, 'right') if ret_r else None
+            
         return frame_l, frame_r
 
     def flush_camera_buffers(self, frames_to_drop=5):
         for _ in range(frames_to_drop):
-            if self.nutze_kamera_links and self.cap_left: self.cap_left.read()
-            if self.nutze_kamera_rechts and self.cap_right: self.cap_right.read()
+            if self.nutze_kamera_links and self.cap_left: self.cap_left.grab()
+            if self.nutze_kamera_rechts and self.cap_right: self.cap_right.grab()
+            # Hier brauchen wir retrieve() gar nicht, weil wir die Bilder ja eh wegwerfen!
 
     def _smart_set(self, cap, prop, target_value):
         """Setzt einen OpenCV-Parameter nur, wenn er abweicht, um irrelevante USB-Neustarts zu verhindern."""
