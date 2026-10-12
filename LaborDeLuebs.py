@@ -270,8 +270,16 @@ class LaborApp:
 
     def print_log(self, side, msg, show_gui=False):
         """Simuliert den Log-Output der Engine in der GUI"""
-        # ---> DER FIX: Wir hängen das "mono" Tag an jeden eingefügten Text <---
-        self.log_text.insert(tk.END, f"[{side.upper()}] {msg}\n", "mono")
+        # ---> DER FIX: Wir filtern versehentlich doppelte Zeilenumbrüche heraus
+        clean_msg = msg.rstrip('\n')
+        
+        self.log_text.insert(tk.END, f"[{side.upper()}] {clean_msg}\n", "mono")
+        
+        # ---> DER FIX: Wir zwingen Tkinter, exakt den letzten echten Buchstaben zu 
+        # fokussieren ("end-2c") und ignorieren die unsichtbaren Leerzeilen am Ende!
+        #self.log_text.see("end-2c")
+
+        #Erstmal wieder mit Leerzeile unten:
         self.log_text.see(tk.END)
 
     def apply_config_to_ui(self, parser):
@@ -352,7 +360,19 @@ class LaborApp:
             # ---> NEU: Initialen Push der Kalibrierungsdaten in die Slider erzwingen, 
             # BEVOR der Dirty-Marker scharfgeschaltet wird!
             self.update_calib_sliders()
-            
+    
+    def print_help_banner(self):
+        """Gibt das kompakte Cheat-Sheet für die Steuerung im Log aus."""
+        self.print_log("SYSTEM", "----------------------------------------------------------------------")    
+        self.print_log("SYSTEM", "🚀 WILLKOMMEN IM LABOR - TASTATUR & MAUS STEUERUNG")
+        self.print_log("SYSTEM", "[Pfeil Links/Rechts]   : Bild auf der Zeitleiste vor- und zurückspulen")
+        self.print_log("SYSTEM", "[W, A, S, D]           : Zielscheiben-Zentrum (Nullpunkt) feinjustieren")
+        self.print_log("SYSTEM", "[Mausrad]/[STRG+Ziehen]: Zoomen")
+        self.print_log("SYSTEM", "[L-Klick + Ziehen]     : Bildausschnitt frei verschieben (Panning)")
+        self.print_log("SYSTEM", "[Mittelklick]          : Ansicht auf den neuesten Schuss zentrieren")
+        self.print_log("SYSTEM", "[Rechtsklick]          : Ansicht komplett zurücksetzen (Auto-Fit)")
+        self.print_log("SYSTEM", "[ESC]                  : Aktionen abbrechen / Kalibrierungs-Klick zurück")
+        self.print_log("SYSTEM", "----------------------------------------------------------------------")    
             
     def get_img(self, name):
         """Holt ein Bild blitzschnell aus dem vorbereiteten RAM-Speicher"""
@@ -380,6 +400,9 @@ class LaborApp:
         
         self.root.title("Labor & Einstellungen - Lokale config.ini")
         self.print_log("SYSTEM", "Stand-Alone Modus: Lokale config.ini geladen.")
+        # ---> NEU: Hier rufen wir das Cheat-Sheet auf! <---
+        self.print_help_banner()
+        
         self.lbl_image.config(text="Stand-Alone Modus aktiv.\n(Klicke auf 'Erweiterte Einstellungen')", fg="white")
         
         # Exakt dieselbe Hilfsfunktion nutzen – keine Redundanz mehr!
@@ -997,21 +1020,27 @@ class LaborApp:
         self.btn_calib_assist.config(bg="#e74c3c", text="🔴 Assistent aktiv (Abbrechen)")
         self.lbl_image.config(cursor="crosshair")
         
-        # ---> NEU: Backspace für "Rückgängig" binden <---
-        self.root.bind('<BackSpace>', self.undo_calibration_click)
-        
         # =========================================================================
         # ---> NEU: Extrem auffällige Warnung für das Zielprofil! <---
         # =========================================================================
         d_config = self.package_data['config']
         aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
         
-        self.print_log("KALIB", "▼" * 60, show_gui=True)
+        self.print_log("KALIB", "▼" * 70, show_gui=True)
         self.print_log("KALIB", f"🛑  !!! AKTIVES PROFIL: {aktive_scheibe.upper()} !!!  🛑", show_gui=True)
-        self.print_log("KALIB", "▲" * 60, show_gui=True)
+        self.print_log("KALIB", "▲" * 70, show_gui=True)
         
         if "Laufende" in aktive_scheibe:
             self.print_log("KALIB", "⚠️ Achtung: Es ist ein Profil für Laufende Scheiben aktiv!", show_gui=True)
+            
+        # ---> NEU: Die gezielte Anleitung direkt zum Start des Assistenten <---
+        self.print_log("KALIB", "----------------------------------------------------------------------", show_gui=True)
+        self.print_log("KALIB", "📐 BEDIENUNG DER KALIBRIERUNG:", show_gui=True)
+        self.print_log("KALIB", "[Linksklick]         : Punkt setzen", show_gui=True)
+        self.print_log("KALIB", "[Mausrad / Zoom-Box] : Nah heranzoomen für Subpixel-Präzision!", show_gui=True)
+        self.print_log("KALIB", "[Rechtsklick]        : Zoom zurücksetzen (Bildausschnitt anpassen)", show_gui=True)
+        self.print_log("KALIB", "[Backspace / ESC]    : Letzten Klick rückgängig machen", show_gui=True)
+        self.print_log("KALIB", "----------------------------------------------------------------------\n", show_gui=True)
             
         self.update_calibration_instruction()
         
@@ -1034,7 +1063,7 @@ class LaborApp:
         self.calib_points = []
         self.btn_calib_assist.config(bg="#8e44ad", text="📏 Kalibrierung")
         self.lbl_image.config(cursor="")
-        self.root.unbind('<BackSpace>') # Binding wieder lösen
+        #self.root.unbind('<BackSpace>') # Binding wieder lösen
         self.print_log("KALIB", "Assistent manuell abgebrochen.", show_gui=True)
         self.renderer.update_image_display()
 
@@ -1093,7 +1122,7 @@ class LaborApp:
         """Berechnet aus den gesammelten Punkten die Empfehlungen inkl. Best-Fit Validierung."""
         
         
-        self.root.unbind('<BackSpace>')
+        #self.root.unbind('<BackSpace>')
         self.calib_mode_active = False
         self.btn_calib_assist.config(bg="#8e44ad", text="📏 Kalibrierung")
         self.lbl_image.config(cursor="")
@@ -1667,8 +1696,11 @@ class LaborApp:
         # ---> SONDERFALL: INDEX 0 = DAS REFERENZBILD <---
         # ==========================================================
         if self.current_index == 0:
-            #self.image_frame.config(text=f" Live-Labor (Referenz & Startmaske)  |  📷 Kamera {side.upper()} ")
-            self.print_log("SYSTEM", f"Zeige initialen Zustand für Kamera {side.upper()}.")
+            
+            # ---> NEU: Aufruf des zentralen Hilfe-Banners <---
+            self.print_help_banner()
+            
+            self.print_log("SYSTEM", f"Zeige initialen Zustand für Kamera {side.upper()}.\n")
             
             # ---> NEU: Treffer-Anzeige konsequent zurücksetzen! <---
             self.lbl_current_scores.config(text="- keine -", fg="gray")
@@ -1702,7 +1734,7 @@ class LaborApp:
             self.last_abrisskante = None
             
             self.renderer.update_image_display()
-            return
+            return 
             
         # ==========================================================
         # ---> NORMALE SCHÜSSE (Index > 0) <---
@@ -1748,9 +1780,9 @@ class LaborApp:
             img = self.get_img(side_origs[i])
             
             if i == target_idx:
-                self.log_text.insert(tk.END, "\n" + "▼"*70 + "\n")
-                self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR BILD-AUFNAHME ({i+1})  ███\n")
-                self.log_text.insert(tk.END, "▼"*70 + "\n\n")
+                self.log_text.insert(tk.END, "\n" + "▼"*70 + "\n", "mono")
+                self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR BILD-AUFNAHME ({i+1})  ███\n", "mono")
+                self.log_text.insert(tk.END, "▼"*70 + "\n", "mono")
                 
                 # --- ELA: Alte Geister-Bilder aus der Zeitreise vor dem echten Frame löschen ---
                 d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)

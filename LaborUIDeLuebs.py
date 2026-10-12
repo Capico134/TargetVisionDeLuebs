@@ -490,11 +490,14 @@ class LaborUIBuilder:
         self.app.root.bind('<Left>', self.app.safe_prev_shot)
         self.app.root.bind('<Right>', self.app.safe_next_shot)
         # ---> NEU: Tasten-Bindings für das Battle Royale VAR <---
-        self.app.root.bind('<Up>', lambda e: self.app.toggle_var_mode(1))#, e))
-        self.app.root.bind('<Down>', lambda e: self.app.toggle_var_mode(-1))#, e))
+        self.app.root.bind('<Up>', lambda e: self.app.toggle_var_mode(1))
+        self.app.root.bind('<Down>', lambda e: self.app.toggle_var_mode(-1))
 
         for key_char in ['w', 'a', 's', 'd', 'W', 'A', 'S', 'D']:
             self.app.root.bind(f'<{key_char}>', self.app.nudge_center)
+            
+        # ---> NEU: Backspace global binden für saubere Struktur <---
+        self.app.root.bind('<BackSpace>', lambda e: self.app.undo_calibration_click())
     
         self.app.show_orig_hits_var = tk.BooleanVar(value=False)
         tk.Checkbutton(param_frame, text="🟡 Original-Treffer (match.json) einblenden", 
@@ -513,16 +516,26 @@ class LaborUIBuilder:
                 pass
         self.app.root.bind_all('<Button-1>', release_focus, add="+")
 
-        # ---> DER FIX: Kombiniertes ESC-Binding <---
+        # ---> DER FIX: Kombiniertes und intelligentes ESC-Binding <---
         def handle_escape(event):
             self.app.root.focus_set()
+            
+            # 1. Sonderfall: Wenn der Kalibrierungs-Assistent läuft!
+            if getattr(self.app, 'calib_mode_active', False):
+                if self.app.calib_points:
+                    # Wenn schon Punkte geklickt wurden -> einen Schritt zurück
+                    self.app.undo_calibration_click()
+                else:
+                    # Wenn noch 0 Punkte da sind -> Kalibrierung komplett abbrechen
+                    self.app.cancel_calibration()
+                return # WICHTIG: Danach abbrechen, damit ESC hier nicht andere Overlays schließt!
+            
+            # 2. Reguläres Verhalten für den Rest des Programms
             self.app.abort_zoom_box(event)
             
-            # ---> NEU: Beendet das Battle Royale Overlay <---
             if hasattr(self.app, 'clear_var_mode'):
                 self.app.clear_var_mode()
                 
-            # ---> Bricht den Lila-Kreis sofort ab (falls man keine 5 Sek warten will) <---
             self.app.clear_highlight()
             
         self.app.root.bind_all('<Escape>', handle_escape, add="+")
