@@ -1030,7 +1030,14 @@ class TargetDetector:
                         'score_export_details': export_details, # <--- Sicheres Variablen-Mapping
                         'outer_edge': current_outer_edge # <--- NEU: Die grüne Kante retten
                     })
-                    self.log(side, f"---> NEUES LOCH BESTÄTIGT: Pos ({cx:.2f}, {cy:.2f}) | Fläche: {area:.1f}px | Score: {final_shot_score:.1f} | Flächen-Ratio: {winner['cov_new']:.1f}%")
+                    # ---> NEU: Exakt ausgerichtete Bestätigungs-Zeile <---
+                    area_str = f"{area:>6.1f}"
+                    prefix_loch = "---> NEUES LOCH BESTÄTIGT:"
+                    prefix_loch_padded = f"{prefix_loch:-<60}"
+                    left_part = f"{prefix_loch_padded}| Fläche: {area_str}px "
+                    padded_left = f"{left_part:-<87}"
+                    ziel_right = f" - Ziel X:{winner['cx']:>6.2f} Y:{winner['cy']:>6.2f} -> Score: {final_shot_score:>5.1f} | Flächen-Ratio: {winner['cov_new']:>5.1f}% 🎯"
+                    self.log(side, f"{padded_left}{ziel_right}")
                     self.log(side, "------------------------------------------------------------")
                     
         # =========================================================================
@@ -1074,22 +1081,17 @@ class TargetDetector:
                     shot_num = sum(1 for s in self.sm.shots if s['side'] == side)
                     durchmesser_mm = (shot.get('mec_radius', 0.0) * 2) / avg_px_pro_mm if avg_px_pro_mm > 0 else 0
                     
-                    # ---> NEU: Perfekt formatierte Endausgabe! <---
-                    # Linker Teil mit Ringwertung, Rohwert und Fläche
-                    ring_str = f"{shot['score']:.{decimals}f}"
-                    raw_str = f"{shot.get('raw_score', 0.0):.3f}"
-                    area_str = f"{shot.get('area', 0.0):.1f}"
-                    prefix_left = f"|||||* SCHUSS #{shot_num} *||||| --> Ringwertung: {ring_str} | {raw_str} Roh | Area: {area_str}px "
+                    # ---> NEU: Perfekt formatiert & 1:1 ausgerichtet mit "NEUES LOCH" <---
+                    ring_str = f"{shot['score']:>4.{decimals}f}"
+                    raw_str = f"{shot.get('raw_score', 0.0):>6.3f}"
+                    area_str = f"{shot.get('area', 0.0):>6.1f}"
+                    prefix_schuss = f"|||||* SCHUSS #{shot_num:>2d} *||||| --> Ringwertung: {ring_str} | {raw_str} Roh "
+                    left_part = f"{prefix_schuss}| Fläche: {area_str}px "
+                    padded_left = f"{left_part:-<87}"
+                    cv_score_str = f"{shot.get('cv_score', 0.0):>5.1f}"
+                    ziel_right = f" - Ziel X:{shot['cx']:>6.2f} Y:{shot['cy']:>6.2f} -> Score: {cv_score_str} | MEC-Ø: {durchmesser_mm:>5.2f}mm 💥"
                     
-                    # Auf exakt 87 Zeichen mit Bindestrichen auffüllen (wie bei den Kandidaten)
-                    padded_prefix = f"{prefix_left:-<87}"
-                    
-                    # Rechter Teil mit Zielkoordinaten, CV-Score und Durchmesser
-                    cv_score_str = f"{shot.get('cv_score', 0.0):5.1f}"
-                    ziel_right = f" - Ziel X:{shot['cx']:>6.2f} Y:{shot['cy']:>6.2f} -> Score: {cv_score_str} | MEC-Ø: {durchmesser_mm:.2f}mm 💥"
-                    
-                    # Ausgabe zusammenkleben
-                    self.log(side, f"{padded_prefix}{ziel_right}")
+                    self.log(side, f"{padded_left}{ziel_right}")
                     
                 self.log(side, f"🎯 {len(new_shots_found_this_frame)} neue(r) Treffer bestätigt!", True)
             
