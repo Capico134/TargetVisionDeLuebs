@@ -1788,12 +1788,11 @@ class LaborApp:
         lines = []
         
         # ---> DER FIX: Auslesen der Nachkommastellen direkt aus der Config! <---
-        # Wir holen den Wert einmal pro Frame-Wechsel frisch aus dem RAM-ConfigParser.
         decimals = d_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
         
         for i, s in enumerate(side_shots):
-            if s.get('is_new', False):
-                # Dynamische Formatierung auf die eingestellte Nachkommastellen-Zahl (ohne das Wort "Ringe")
+            # DER FIX: Wir verlassen uns stur auf die Frame-Nummer, nicht auf "is_new"!
+            if s.get('labor_frame_num') == self.current_index:
                 lines.append(f"🎯 #{i+1}: {s['score']:.{decimals}f}")
                 
         if lines:
@@ -1804,7 +1803,6 @@ class LaborApp:
             
         diff_img = d_dm.debug_images.get(f"diff_letzter_treffer_{side}")
         if diff_img is None:
-            # Fallback falls kein Treffer erkannt wurde
             diff_img = d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}", np.zeros_like(live_img))
         
         if len(diff_img.shape) == 2:
@@ -1812,23 +1810,20 @@ class LaborApp:
             
         # ====================================================================
         # ---> ELA-Render-Pipeline: Optische Schichten (Layers) <---
-        # Schicht 1 (Hintergrund): Alte berechnete Treffer (Grün)
-        # Schicht 2 (Mitte): Original-Treffer aus der JSON (Gelb)
-        # Schicht 3 (Vordergrund): Aktuellster Treffer (Rot)
         # ====================================================================
-        
-        # Radien sauber runden
         r_erkennung = round(detector.get_caliber_radius(side))
         r_offiziell = round(self.official_radius_px)
-        self.current_radius_px = r_erkennung  # Für das Maus-Fadenkreuz speichern!
+        self.current_radius_px = r_erkennung
 
         # --- LAYER 1: Alte Treffer (Grün) ---
         for shot in d_sm.shots:
-            if shot['side'] == side and not shot.get('is_new', False):
+            # DER FIX: Ein Schuss ist alt, wenn seine Frame-Nummer kleiner ist als das aktuelle Bild!
+            is_current_frame_shot = (shot.get('labor_frame_num') == self.current_index)
+            if shot['side'] == side and not is_current_frame_shot:
                 draw_pos = (int(round(shot['pos'][0])), int(round(shot['pos'][1])))
                 cv2.circle(live_img, draw_pos, r_erkennung, (0, 255, 0), 1)
                 
-        self.last_orig_shots_to_draw = [] # <--- NEU: Vorab leeren
+        self.last_orig_shots_to_draw = [] 
         
         # --- LAYER 2: Original-Treffer aus match.json (Gelb) ---
         if getattr(self, 'show_orig_hits_var', None) and self.show_orig_hits_var.get() and getattr(self, 'original_match_data', None):
@@ -1836,7 +1831,6 @@ class LaborApp:
             orig_shots_side = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
             curr_shots_side = [s for s in d_sm.shots if s.get('side') == side]
             
-            # Smart Alignment
             aligned = self.align_shots(orig_shots_side, curr_shots_side, r_erkennung * 2.5)
             
             shots_to_draw = []
@@ -1853,15 +1847,11 @@ class LaborApp:
             for s in shots_to_draw:
                 hx = int(round(s['x']))
                 hy = int(round(s['y']))
-                # Wieder zurück auf knackig scharfe Standard-Pixel ohne Kantenglättung!
                 cv2.circle(live_img, (hx, hy), r_offiziell, (0, 255, 255), 1)
                 cv2.circle(live_img, (hx, hy), 1, (0, 255, 255), 0)
         
-        ## --- LAYER 3: Neue Treffer (Rot - Immer ganz oben!) ---
-        #for shot in d_sm.shots:
-        #    if shot['side'] == side and shot.get('is_new', False):
-        #        draw_pos = (int(round(shot['pos'][0])), int(round(shot['pos'][1])))
-        #        cv2.circle(live_img, draw_pos, r_erkennung, (0, 0, 255), 1)
+        # --- LAYER 3 ENTFERNT ---
+        # (Wird wieder butterweich und hochauflösend vom Renderer übernommen)
         
         
         # ====================================================================

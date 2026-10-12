@@ -167,7 +167,8 @@ class LaborRenderer:
                 current_frame_num = self.app.current_index
 
                 for shot in self.app.current_engine_shots:
-                    if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
+                    #if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
+                    if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num:    
                         details = shot.get('score_export_details')
                         if details:
                             scale = details.get('scale', 4)
@@ -293,7 +294,8 @@ class LaborRenderer:
                         new_score = None
                         if hasattr(self.app, 'current_engine_shots'):
                             for shot in self.app.current_engine_shots:
-                                if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
+                                #if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
+                                if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num:
                                     new_score = shot.get('score', 0.0)
                                     break
                                     
@@ -414,7 +416,8 @@ class LaborRenderer:
             color_left = (0, 0, 255) if blink_on else (255, 0, 0) # Wechselt Rot / Blau (BGR)
             color_right = (133, 83, 255) # Neon-Koralle
             for shot in self.app.current_engine_shots:
-                if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
+                #if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num and shot.get('is_new', False):
+                if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num:
                     hx, hy = shot['pos']
                      # 1. LINKE SEITE (Wechselt Rot/Blau synchron, gezeichnet mit scharfen Subpixeln)
                     shift = 4

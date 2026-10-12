@@ -489,7 +489,7 @@ class TargetDetector:
             # ---> NEU: 3 Nachkommastellen <---
             self.log(side, f"Analysiere Konturen... (Neuer Zuwachs: {change_percent:.3f}% | Konturen: {len(contours)})")
 
-        for cnt in contours:
+        for c_idx, cnt in enumerate(contours):
             area = cv2.contourArea(cnt)
             if area > self.min_hole_area:
                 
@@ -893,18 +893,14 @@ class TargetDetector:
 
                     # ---> NEU: Formatierter Sieger (Ziel UND Score perfekt im Raster!) <---
                     win_prefix = "BATTLE ROYALE SIEGER:"
-                    
                     # 1. Wir füllen den Prefix mit Bindestrichen bis exakt Zeichen 87 auf
                     win_prefix_padded = f"{win_prefix:-<87}" 
-                    
                     # 2. Das Ziel hat wie bei den Kandidaten exakt 25 Zeichen (87 + 25 = 112)
                     win_ziel = f" - Ziel X:{winner['cx']:>6.2f} Y:{winner['cy']:>6.2f} "
-                    
                     # 3. Wir hängen "-->" an, um auf exakt 115 Zeichen vor dem " Score:" zu kommen
                     win_final_prefix = f"{win_prefix_padded}{win_ziel}->"
-                    
                     # 4. Ausgabe: Exakt im Raster, der Siegername steht stolz ganz hinten!
-                    self.log(side, f"{win_final_prefix} Score: {winner['score']:5.1f} | {winner['name']} 👑")
+                    self.log(side, f"{win_final_prefix} Score: {winner['score']:5.1f} | {winner['name']} 👑👑👑👑👑👑👑")
                     #self.log(side, f"{win_final_prefix} Score: {winner['score']:5.1f} | {winner['name']}")
                     
                     cx, cy = winner['cx'], winner['cy']
@@ -1009,7 +1005,8 @@ class TargetDetector:
                                     'base_pos': winner.get('base_pos', (cx, cy)),
                                     'end_pos': winner.get('end_pos', (cx, cy)),
                                     'score_export_details': export_details, # <--- Sicheres Variablen-Mapping
-                                    'outer_edge': current_outer_edge # <--- NEU: Die grüne Kante retten
+                                    'outer_edge': current_outer_edge, # <--- NEU: Die grüne Kante retten
+                                    'frag_info': f"Frag {c_idx+1}/{len(contours)}" # <--- NEU: Welches Fragment hat gewonnen?
                                 }
                             else:
                                 msg = f"⚠️ Treffer ignoriert: Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) verliert Sichel-Duell gegen besseres Fragment ({existing_shot['score']:.1f})!"
@@ -1028,7 +1025,8 @@ class TargetDetector:
                         'base_pos': winner['base_pos'],
                         'end_pos': winner.get('end_pos', (winner['cx'], winner['cy'])), # <--- Zielpunkt sichern
                         'score_export_details': export_details, # <--- Sicheres Variablen-Mapping
-                        'outer_edge': current_outer_edge # <--- NEU: Die grüne Kante retten
+                        'outer_edge': current_outer_edge, # <--- NEU: Die grüne Kante retten
+                        'frag_info': f"Frag {c_idx+1}/{len(contours)}" # <--- NEU: Welches Fragment hat gewonnen?
                     })
                     # ---> NEU: Exakt ausgerichtete Bestätigungs-Zeile <---
                     area_str = f"{area:>6.1f}"
@@ -1081,15 +1079,24 @@ class TargetDetector:
                     shot_num = sum(1 for s in self.sm.shots if s['side'] == side)
                     durchmesser_mm = (shot.get('mec_radius', 0.0) * 2) / avg_px_pro_mm if avg_px_pro_mm > 0 else 0
                     
+                    # ---> NEU: Die siegreiche Methode UND das Fragment auslesen
+                    base_method = shot.get('winner_method', 'Unbekannt')
+                    frag_info = sd.get('frag_info', '')
+                    winner_method = f"{base_method} [{frag_info}]" if frag_info else base_method
+                    
                     # ---> NEU: Perfekt formatiert & 1:1 ausgerichtet mit "NEUES LOCH" <---
                     ring_str = f"{shot['score']:>4.{decimals}f}"
                     raw_str = f"{shot.get('raw_score', 0.0):>6.3f}"
                     area_str = f"{shot.get('area', 0.0):>6.1f}"
+                    
                     prefix_schuss = f"|||||* SCHUSS #{shot_num:>2d} *||||| --> Ringwertung: {ring_str} | {raw_str} Roh "
                     left_part = f"{prefix_schuss}| Fläche: {area_str}px "
                     padded_left = f"{left_part:-<87}"
+                    
                     cv_score_str = f"{shot.get('cv_score', 0.0):>5.1f}"
-                    ziel_right = f" - Ziel X:{shot['cx']:>6.2f} Y:{shot['cy']:>6.2f} -> Score: {cv_score_str} | MEC-Ø: {durchmesser_mm:>5.2f}mm 💥"
+                    
+                    # Die Methode wird mit <36 auf eine feste Breite gezwungen (Platz für Name + [Frag x/y])
+                    ziel_right = f" - Ziel X:{shot['cx']:>6.2f} Y:{shot['cy']:>6.2f} -> Score: {cv_score_str} | {winner_method:<36} | MEC-Ø: {durchmesser_mm:>5.2f}mm 💥"
                     
                     self.log(side, f"{padded_left}{ziel_right}")
                     
@@ -1169,21 +1176,27 @@ class TargetDetector:
         bg_visible, bg_percent = state.is_background_visible(frame)
         diff = bg_percent - state.min_area 
         
+        # ---> NEU: Immer transparent loggen, was die Hintergrund-Analyse sieht! <---
+        status_str = "WAND (Scheibe weg)" if bg_visible else "SCHEIBE (Aktiv)"
+        self.log(state.side, f"🔎 Hintergrund-Check: {bg_percent:.1f}% Wandfarbe -> {status_str} (Limit: {state.min_area}%)")
+        
         if bg_visible:
             if state.target_present:
-                self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> WAND (+{diff:.1f}% über Limit {state.min_area}%)")
-                self.log(state.side, "Scheibe außer Sicht -> Warte auf Zielscheibe...", True)
+                self.log(state.side, "⚠️ Scheibe außer Sicht -> Warte auf Zielscheibe...", True)
                 state.target_present = False
+            else:
+                self.log(state.side, "⏸️ Auswertung blockiert: Scheibe laut Farbanalyse immer noch nicht zurück.")
+                
             return False  # <--- WICHTIG: Signal weitergeben
         else:
             if not state.target_present:
-                self.log(state.side, f"Hintergrund-Analyse: {bg_percent:.1f}% -> SCHEIBE ({abs(diff):.1f}% unter Limit {state.min_area}%)")
+                self.log(state.side, "✅ Scheibe wieder im Bild erkannt! Starte Auswertung...", True)
                 state.target_present = True
                 
                 if current_ref is None:
                     self.set_reference_image(frame, state.side)
                     return False  # <--- WICHTIG: Signal weitergeben
                 else:
-                    return self.detect_new_shot(frame, state.side) # <--- WICHTIG: Erkennungs-Ergebnis durchreichen!
+                    return self.detect_new_shot(frame, state.side)
             else:
-                return self.detect_new_shot(frame, state.side) # <--- WICHTIG: Erkennungs-Ergebnis durchreichen!
+                return self.detect_new_shot(frame, state.side)
