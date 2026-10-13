@@ -35,6 +35,11 @@ class TargetTracker:
         self.nutze_kamera_links = config.getboolean('Kameras', 'nutze_kamera_links')
         self.nutze_kamera_rechts = config.getboolean('Kameras', 'nutze_kamera_rechts')
 
+        # =========================================================================
+        # ---> DER FIX: GUI-Variablen (wie fps_limit) VOR dem Thread laden! <---
+        # =========================================================================
+        self.refresh_gui_settings_from_config()
+
         print("\n--- START KAMERA INITIALISIERUNG (ASYNCHRON) ---")
         self.kameras_bereit = False
         # 1. Den Hintergrundarbeiter losschicken
@@ -42,6 +47,47 @@ class TargetTracker:
         init_thread.start()
         # 2. Während der Arbeiter schwitzt, bespaßen wir den Nutzer mit der Animation
         self._play_splash_screen()
+        
+        # =========================================================================
+        # ---> NEU: Hardware-Status direkt nach dem Start auslesen und loggen <---
+        # =========================================================================
+        self.log("SYSTEM", "--- KAMERA HARDWARE STATUS ---", True)
+        
+        def log_cam_status(name, cap, is_active):
+            if not is_active: return
+            if cap and cap.isOpened():
+                
+                # =======================================================
+                # ---> WARM-UP BLOCK (Später leicht auszukommentieren)
+                # Zwingt Windows dazu, den Stream aufzubauen und die 
+                # wahre Codec-Aushandlung JETZT abzuschließen.
+                cap.grab()
+                cap.retrieve()
+                # =======================================================
+                
+                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                exp = cap.get(cv2.CAP_PROP_EXPOSURE)
+                
+                # FOURCC ist ein Integer, den wir in 4 Buchstaben decodieren müssen (z.B. 'MJPG')
+                fourcc_int = int(cap.get(cv2.CAP_PROP_FOURCC))
+                try:
+                    codec = "".join([chr((fourcc_int >> 8 * i) & 0xFF) for i in range(4)]).strip()
+                    # ---> NEU: Abfangen von unsichtbaren Bytes (\x00), falls 
+                    # die Kamera wirklich unkomprimiert feuert!
+                    if not codec or not codec.isprintable() or '\x00' in codec:
+                        codec = "RAW/YUV (Unkomprimiert)"
+                except Exception:
+                    codec = "Unbekannt"
+                    
+                self.log("SYSTEM", f"Kamera {name} -> {w}x{h} | Codec: {codec} | FPS: {fps} | Exp: {exp}", True)
+            else:
+                self.log("SYSTEM", f"Kamera {name} -> ⚠️ FEHLER: Hardware antwortet nicht!", True)
+
+        log_cam_status("LINKS", self.cap_left, self.nutze_kamera_links)
+        log_cam_status("RECHTS", self.cap_right, self.nutze_kamera_rechts)
+        self.log("SYSTEM", "------------------------------", True)
         
         # --- GUI-Variablen einmalig initialisieren ---
         self.refresh_gui_settings_from_config()
@@ -88,7 +134,13 @@ class TargetTracker:
             self.cap_left.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
             self.cap_left.set(cv2.CAP_PROP_FRAME_WIDTH, width_l)
             self.cap_left.set(cv2.CAP_PROP_FRAME_HEIGHT, height_l)
-            self.cap_left.set(cv2.CAP_PROP_FPS, 30)
+            
+            # ---> NEU: Die smarte FPS-Verhandlung <---
+            self.cap_left.set(cv2.CAP_PROP_FPS, self.fps_limit)
+            # Wenn der Treiber uns eine geringere Rate aufzwingt als gewünscht, 
+            # fordern wir lieber gleich die vollen 30 an (Fallback).
+            if self.cap_left.get(cv2.CAP_PROP_FPS) < self.fps_limit - 1:
+                self.cap_left.set(cv2.CAP_PROP_FPS, 30)
             
             belichtung_l = self.config.get('Kameras', 'belichtung_links', fallback='Standard')
             self._set_camera_exposure(self.cap_left, belichtung_l)
@@ -98,7 +150,11 @@ class TargetTracker:
             self.cap_right.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
             self.cap_right.set(cv2.CAP_PROP_FRAME_WIDTH, width_r)
             self.cap_right.set(cv2.CAP_PROP_FRAME_HEIGHT, height_r)
-            self.cap_right.set(cv2.CAP_PROP_FPS, 30)
+            
+            # ---> NEU: Die smarte FPS-Verhandlung <---
+            self.cap_right.set(cv2.CAP_PROP_FPS, self.fps_limit)
+            if self.cap_right.get(cv2.CAP_PROP_FPS) < self.fps_limit - 1:
+                self.cap_right.set(cv2.CAP_PROP_FPS, 30)
             
             belichtung_r = self.config.get('Kameras', 'belichtung_rechts', fallback='Standard')
             self._set_camera_exposure(self.cap_right, belichtung_r)
@@ -210,13 +266,15 @@ class TargetTracker:
     def log(self, side, text, show_gui=False):
         timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
         log_msg = f"[{timestamp}] [{side.upper()}] {text}"
-        
         self.dm.write_log(log_msg)
-            
         if show_gui:
             gui_text = "".join(c for c in text if ord(c) < 1000).strip()
             gui_text = gui_text if len(gui_text) <= 45 else gui_text[:42] + "..."
-            self.renderer.set_message(side, gui_text)
+            # =========================================================================
+            # ---> DER FIX: Wir prüfen, ob der Renderer (das HUD) überhaupt schon existiert!
+            # =========================================================================
+            if hasattr(self, 'renderer'):
+                self.renderer.set_message(side, gui_text)
 
     def apply_crop(self, frame, side):
         if frame is None: return None

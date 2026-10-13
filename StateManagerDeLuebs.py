@@ -66,12 +66,18 @@ class CameraState:
         self.is_initialized = False 
         self.is_fortsetzung = False
         self.last_scan_time = 0 
+        self.cumulative_mask = None
         
+        # ---> NEU: Wir rufen die Lade-Funktion direkt hier auf! <---
+        self.refresh_settings_from_config(config)
+
+    def refresh_settings_from_config(self, config):
+        """Aktualisiert alle Live-Parameter für die Bewegung und den Hintergrund."""
         self.motion_threshold = config.getint('Erkennung', 'motion_threshold')
         self.motion_tolerance = config.getint('Erkennung', 'motion_tolerance', fallback=25)
         self.stillness_frames = config.getint('Timing', 'stillness_frames')
         
-        bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
+        bg_sec = 'Hintergrund_Links' if self.side == 'left' else 'Hintergrund_Rechts'
         r = config.getint(bg_sec, 'rgb_r')
         g = config.getint(bg_sec, 'rgb_g')
         b = config.getint(bg_sec, 'rgb_b')
@@ -80,8 +86,6 @@ class CameraState:
         self.min_area = config.getfloat(bg_sec, 'min_area_percent')
         self.lower_color = np.array([max(0, b-tol), max(0, g-tol), max(0, r-tol)])
         self.upper_color = np.array([min(255, b+tol), min(255, g+tol), min(255, r+tol)])
-        
-        self.cumulative_mask = None
 
     def is_background_visible(self, frame):
         mask = cv2.inRange(frame, self.lower_color, self.upper_color)
@@ -128,6 +132,15 @@ class StateManager:
         self.dm.write_log("\n" + "="*80)
         self.dm.write_log(f"SYSTEM: 🔄 Neues Match initialisiert (ID: {self.get_formatted_match_id()})")
         self.dm.write_log("="*80 + "\n")
+
+    def refresh_settings_from_config(self):
+        """ELA: Zieht die neusten Werte aus der config.ini live in den StateManager."""
+        self.ringwertung_aktiv = self.config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+        self.nachkommastellen = self.config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
+        if self.state_left:
+            self.state_left.refresh_settings_from_config(self.config)
+        if self.state_right:
+            self.state_right.refresh_settings_from_config(self.config)
 
     def get_next_match_id(self):
         highest_id = 0
