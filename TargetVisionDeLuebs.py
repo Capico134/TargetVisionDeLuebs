@@ -425,7 +425,8 @@ class TargetTracker:
             ('Kameras', 'cam_height_links'),
             ('Kameras', 'cam_width_rechts'),
             ('Kameras', 'cam_height_rechts'),
-            ('Anzeige', 'vollbild')
+            ('Anzeige', 'vollbild'),
+            ('Timing', 'fps_limit')
             #('Crop_Links', 'cut_top'), ('Crop_Links', 'cut_bottom'), ('Crop_Links', 'cut_left'), ('Crop_Links', 'cut_right'),
             #('Crop_Rechts', 'cut_top'), ('Crop_Rechts', 'cut_bottom'), ('Crop_Rechts', 'cut_left'), ('Crop_Rechts', 'cut_right')
         ]

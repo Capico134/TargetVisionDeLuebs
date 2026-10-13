@@ -630,25 +630,92 @@ class LaborRenderer:
         #    gui_upload = "+ GUI" if push_to_gui else "(RAM ONLY)"
         #    print(f"🐌 Render-Zyklus [{modus} {gui_upload}]: {dauer_ms:.1f} ms  -  t_end: {t_end}")		
 
+    #def draw_crosshair(self, x, y):
+    #    if getattr(self.app, 'base_combined_img_rgb', None) is None or not hasattr(self.app, 'current_scale'):
+    #        return
+    #        
+    #    temp_img = self.app.base_combined_img_rgb.copy()
+    #    kreis_radius = int(getattr(self.app, 'current_radius_px', 15) * self.app.current_scale) 
+    #    
+    #    neon_cyan_rgb = (0, 255, 255) 
+    #    
+    #    is_left = (x < self.app.current_img_w)
+    #    mirror_x = (x + self.app.current_img_w) if is_left else (x - self.app.current_img_w)
+    #    
+    #    cv2.circle(temp_img, (mirror_x, y), kreis_radius, neon_cyan_rgb, 2)
+    #    cv2.circle(temp_img, (mirror_x, y), 2, neon_cyan_rgb, -1) 
+    #
+    #    img_pil = Image.fromarray(temp_img)
+    #    self.app.tk_image = ImageTk.PhotoImage(img_pil)
+    #    self.app.lbl_image.config(image=self.app.tk_image)
+    
     def draw_crosshair(self, x, y):
         if getattr(self.app, 'base_combined_img_rgb', None) is None or not hasattr(self.app, 'current_scale'):
             return
             
         temp_img = self.app.base_combined_img_rgb.copy()
-        kreis_radius = int(getattr(self.app, 'current_radius_px', 15) * self.app.current_scale) 
-        
-        neon_cyan_rgb = (0, 255, 255) 
         
         is_left = (x < self.app.current_img_w)
-        mirror_x = (x + self.app.current_img_w) if is_left else (x - self.app.current_img_w)
+        raw_x = x if is_left else (x - self.app.current_img_w)
+        real_x = raw_x / self.app.current_scale
+        real_y = y / self.app.current_scale
         
-        cv2.circle(temp_img, (mirror_x, y), kreis_radius, neon_cyan_rgb, 2)
-        cv2.circle(temp_img, (mirror_x, y), 2, neon_cyan_rgb, -1) 
+        # Helfer-Daten laden
+        side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
+        seite_str = "links" if side == 'left' else "rechts"
+        
+        if getattr(self.app, 'package_data', None) and self.app.package_data.get('config'):
+            d_config = self.app.package_data['config']
+            px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+            px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+            korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
+            
+            meta = getattr(self.app, 'original_match_data', {})
+            meta_dict = meta.get("metadata", {}) if isinstance(meta, dict) else {}
+            center_key = 'center_l' if side == 'left' else 'center_r'
+            center_pts = meta_dict.get(center_key)
+            fb_cx = center_pts[0] if center_pts else None
+            fb_cy = center_pts[1] if center_pts else None
+            
+            aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+            ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+            targets = self.app.dm.load_targets()
+            
+            if aktive_scheibe in targets and ringwertung_aktiv:
+                kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
+            else:
+                kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
+        else:
+            # Fallback
+            px_x, px_y, korrektur = 5.0, 5.0, 0.0
+            fb_cx, fb_cy = None, None
+            kaliber_mm = 4.5
+
+        # ---> DIE FARBE <---
+        # Das Bild hier ist in RGB (für Tkinter). Das Blau vom blinkenden Treffer 
+        # war in OpenCV (BGR) (255, 0, 0). In RGB ist das exakt (0, 0, 255).
+        blue_rgb = (0, 0, 255) 
+        
+        # Offset für die korrekte Bildhälfte berechnen
+        mirror_ox = (self.app.current_img_w / self.app.current_scale) if is_left else 0.0
+        zoom_p = (1.0, mirror_ox, 0.0)
+        
+        # =========================================================================
+        # ---> DER FIX: Wir nutzen den Smart-Renderer für 100% Physik! <---
+        # =========================================================================
+        Helfer.draw_smart_ellipse(
+            img=temp_img, center_x=real_x, center_y=real_y, radius_mm=kaliber_mm/2.0,
+            color=blue_rgb, px_x=px_x, px_y=px_y, korrektur=korrektur,
+            feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=2, dashed=False, 
+            is_hit=True,          # <--- LINIENSTÄRKE NACH INNEN WACHSEN LASSEN!
+            zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, 
+            draw_center_dot=True  # <--- MITTELPUNKT HINZUFÜGEN!
+        )
 
         img_pil = Image.fromarray(temp_img)
         self.app.tk_image = ImageTk.PhotoImage(img_pil)
         self.app.lbl_image.config(image=self.app.tk_image)
-        
+    
     def _draw_candidate_vector(self, combined_img, base_pos, end_pos, target_pos, offset_x=0):
         """Zeichnet den Vektor (Kante -> Rumpf -> Ziel) für Abrisskanten."""
         if not base_pos or not end_pos or not target_pos: return
