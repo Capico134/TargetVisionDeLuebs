@@ -167,6 +167,37 @@ class StateManager:
         """Speichert den exakten weißen Punkt aus der Kalibrierung."""
         self.nullpunkts[side] = (cx, cy)
 
+    def _get_lens_center(self, side):
+        """ELA: Berechnet den physikalischen Linsenmittelpunkt im beschnittenen Bild."""
+        seite_str = "links" if side == 'left' else "rechts"
+        crop_sec = "Crop_Links" if side == 'left' else "Crop_Rechts"
+        
+        cam_w = self.config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
+        cam_h = self.config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
+        cut_l = self.config.getint(crop_sec, 'cut_left', fallback=0)
+        cut_t = self.config.getint(crop_sec, 'cut_top', fallback=0)
+        
+        return (cam_w / 2.0) - cut_l, (cam_h / 2.0) - cut_t
+
+    def _undistort_point_mm(self, px_x, px_y, cx_linse, cy_linse, px_per_mm_x, px_per_mm_y, korrektur, kurve):
+        """ELA: Rechnet eine verzerrte Pixel-Koordinate in eine flache Millimeter-Distanz zur Linse um."""
+        dx_mm_obs = (px_x - cx_linse) / px_per_mm_x
+        dy_mm_obs = (px_y - cy_linse) / px_per_mm_y
+        dist_mm_obs = math.hypot(dx_mm_obs, dy_mm_obs)
+        
+        if korrektur != 0.0 and dist_mm_obs > 0:
+            dist_mm = dist_mm_obs
+            for _ in range(4): # Newton-Raphson
+                # f(d) = d + k * d^(c+1) - d_obs
+                f = dist_mm + korrektur * (dist_mm**(kurve + 1.0)) - dist_mm_obs
+                # f'(d) = 1 + (c+1) * k * d^c
+                df = 1.0 + (kurve + 1.0) * korrektur * (dist_mm**kurve)
+                if df == 0: break
+                dist_mm = dist_mm - (f / df)
+            scale = dist_mm / dist_mm_obs
+            return dx_mm_obs * scale, dy_mm_obs * scale
+        return dx_mm_obs, dy_mm_obs
+
     # ---> NEU: Ausgelagerte Funktion für die Ringwert-Berechnung <---
     def calculate_score(self, side, cx, cy):
         """Berechnet den Ringwert für gegebene Koordinaten."""
@@ -190,27 +221,18 @@ class StateManager:
             dist_mm_obs = math.hypot(dx_mm_obs, dy_mm_obs)
             
             # =========================================================================
-            # ---> DER FIX: Korrekte Fischaugen-Umkehrfunktion auf den ECHTEN Millimetern! <---
+            # ---> NEU: ELA-Architektur! (Wir arbeiten nur noch mit echten Millimetern)
             # =========================================================================
-            korrektur = self.config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
+            korrektur = self.config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0)
+            kurve = self.config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5) # <--- NEU
+            cx_linse, cy_linse = self._get_lens_center(side)
             
-            if korrektur != 0.0:
-                # Wir suchen die ECHTE physikalische Distanz (dist_mm).
-                # Formel (vom Zeichnen): dist_mm_obs = dist_mm * (1 + dist_mm * korrektur)
-                # Umgestellt nach dist_mm mittels p-q-Formel:
-                a = korrektur
-                b = 1.0
-                c = -dist_mm_obs
-                
-                diskriminante = b**2 - 4*a*c
-                if diskriminante >= 0:
-                    # Wir nehmen die positive Wurzel
-                    dist_mm = (-b + math.sqrt(diskriminante)) / (2*a)
-                else:
-                    dist_mm = dist_mm_obs # Fallback bei mathematisch unmöglichen Werten
-            else:
-                # Keine Korrektur aktiv
-                dist_mm = dist_mm_obs
+            # 1. Beide Pixel-Punkte in das wahre, unverzerrte Millimeter-Raster umrechnen
+            true_shot_x, true_shot_y = self._undistort_point_mm(cx, cy, cx_linse, cy_linse, px_x, px_y, korrektur, kurve) # <--- 'kurve' hinten übergeben!
+            true_null_x, true_null_y = self._undistort_point_mm(nullpunkt[0], nullpunkt[1], cx_linse, cy_linse, px_x, px_y, korrektur, kurve) # <--- 'kurve' hinten übergeben!
+            
+            # 2. Reiner Pythagoras auf der perfekten Zielscheibe!
+            dist_mm = math.hypot(true_shot_x - true_null_x, true_shot_y - true_null_y)
             
             aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
             targets = self.dm.load_targets()

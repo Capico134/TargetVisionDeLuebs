@@ -5,9 +5,9 @@ class Helfer:
     
     @staticmethod
     def draw_smart_ellipse(img, center_x, center_y, radius_mm, color, 
-                           px_x, px_y, korrektur, 
-                           feedback_cx=None, feedback_cy=None,
-                           thickness=1, dashed=False, dash_offset=0, 
+                           px_x, px_y, korrektur, kurve=1.5,
+                           lens_cx=None, lens_cy=None, # <--- ELA: Umbenannt!
+                           thickness=1, dashed=False, dash_offset=0,
                            dash_step=6, dash_length=2, 
                            text=None, text_color=(0,0,0), 
                            is_hit=False, zoom_params=(1.0, 0.0, 0.0), 
@@ -32,64 +32,34 @@ class Helfer:
         
         rx, ry, angle_deg = 0, 0, 0
         
-        # 3. Verzerrung berechnen (falls Zentrum kalibriert ist)
-        if feedback_cx is not None and feedback_cy is not None:
-            dx_mm = (center_x - feedback_cx) / px_x
-            dy_mm = (center_y - feedback_cy) / px_y
+        # 3. Verzerrung berechnen (falls Linsenzentrum übergeben wurde)
+        if lens_cx is not None and lens_cy is not None:
+            dx_mm = (center_x - lens_cx) / px_x
+            dy_mm = (center_y - lens_cy) / px_y
             r_mm_center = math.hypot(dx_mm, dy_mm)
             
-            ## ---> DER FIX: Wir dürfen nur drehen, wenn es WIRKLICH eine Fischaugen-Linsenverzerrung gibt! <---
-            #if r_mm_center > 0.05 and abs(korrektur) > 0.00001:
-            #    # Fall A: Fischauge AKTIV! Objekt liegt NICHT im optischen Zentrum.
-            #    # Hier rotieren wir die Ellipse physikalisch zum Zentrum hin.
-            #    angle_deg = math.degrees(math.atan2(dy_mm, dx_mm))
-            #    scale_radial = 1.0 + (2.0 * r_mm_center * korrektur)
-            #    scale_tangential = 1.0 + (r_mm_center * korrektur)
-            #    
-            #    # Bei Rotation MÜSSEN wir einen Durchschnitts-Pixelwert nehmen. 
-            #    # OpenCV kann eine X/Y-Streckung nicht nachträglich schräg rotieren, 
-            #    # ohne das Koordinatensystem zu zerstören.
-            #    avg_px = (px_x + px_y) / 2.0
-            #    rx_raw = (radius_mm * scale_radial * avg_px) * z * scale_x
-            #    ry_raw = (radius_mm * scale_tangential * avg_px) * z * scale_y
-            #else:
-            #    # Fall B: Normale Linse (korrektur=0) ODER exakt im Zentrum.
-            #    # Hier greift AUSSCHLIESSLICH die kartesische Kamera-Verzerrung (Rechteckige Pixel)!
-            #    angle_deg = 0
-            #    r_mm_draw = radius_mm * (1.0 + (radius_mm * korrektur)) # (Ist bei korrektur=0 einfach radius_mm)
-            #    
-            #    # Absolut starr an den festen X/Y-Monitor-Achsen ausgerichtet:
-            #    rx_raw = (r_mm_draw * px_x) * z * scale_x
-            #    ry_raw = (r_mm_draw * px_y) * z * scale_y
-            #
-            if r_mm_center > 0.05 and abs(korrektur) > 0.00001:
-                # Fall A: Fischauge AKTIV! Objekt liegt NICHT im optischen Zentrum.
+            if r_mm_center > 0.05 and abs(korrektur) > 0.000001:
                 rad = math.atan2(dy_mm, dx_mm)
                 angle_deg = math.degrees(rad)
-                scale_radial = 1.0 + (2.0 * r_mm_center * korrektur)
-                scale_tangential = 1.0 + (r_mm_center * korrektur)
                 
-                # =========================================================================
-                # ---> DER BEST-FIT FIX: Richtungsabhängiger Pixel-Maßstab für X und Y <---
-                # =========================================================================
-                # Wir projizieren px_x und px_y sauber auf den jeweiligen Richtungsvektor,
-                # anstatt sie durch einen starren Durchschnitt (avg_px) zu vernichten!
+                # ---> NEU: IDDQD! Dynamische Kurve <---
+                scale_tangential = 1.0 + (r_mm_center**kurve * korrektur)
+                scale_radial = 1.0 + ((kurve + 1.0) * r_mm_center**kurve * korrektur)
+                
                 cos_a = math.cos(rad)
                 sin_a = math.sin(rad)
-                
-                # Effektiver Pixel-Skalierer in radialer und tangentialer Richtung
                 px_radial = math.sqrt((px_x * cos_a)**2 + (px_y * sin_a)**2)
                 px_tangential = math.sqrt((px_x * (-sin_a))**2 + (px_y * cos_a)**2)
                 
                 rx_raw = (radius_mm * scale_radial * px_radial) * z * scale_x
                 ry_raw = (radius_mm * scale_tangential * px_tangential) * z * scale_y
             else:
-                # Fall B: Normale Linse oder exakt im Zentrum
                 angle_deg = 0
-                r_mm_draw = radius_mm * (1.0 + (radius_mm * korrektur))
+                r_mm_draw = radius_mm * (1.0 + (radius_mm**kurve * korrektur))
                 
                 rx_raw = (r_mm_draw * px_x) * z * scale_x
                 ry_raw = (r_mm_draw * px_y) * z * scale_y
+                
             rx = int(round(rx_raw - thickness_komp))
             ry = int(round(ry_raw - thickness_komp))
         else:

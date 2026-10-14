@@ -205,7 +205,20 @@ class LaborRenderer:
             d_config = self.app.package_data['config']
             px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
             px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-            korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
+            korrektur = d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0)
+            kurve = d_config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5)
+            
+            # =========================================================================
+            # ---> NEU: ELA-Linsen-Mittelpunkt aus Crop & Auflösung berechnen! <---
+            # =========================================================================
+            crop_sec = "Crop_Links" if side == 'left' else "Crop_Rechts"
+            cam_w = d_config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
+            cam_h = d_config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
+            cut_l = d_config.getint(crop_sec, 'cut_left', fallback=0)
+            cut_t = d_config.getint(crop_sec, 'cut_top', fallback=0)
+            
+            lens_cx = (cam_w / 2.0) - cut_l
+            lens_cy = (cam_h / 2.0) - cut_t
             
             meta = getattr(self.app, 'original_match_data', {})
             meta_dict = meta.get("metadata", {}) if isinstance(meta, dict) else {}
@@ -239,15 +252,15 @@ class LaborRenderer:
                         for ring_name, d_mm in ringe.items():
                             Helfer.draw_smart_ellipse(
                                 img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=float(d_mm)/2.0,
-                                color=ring_color, px_x=px_x, px_y=px_y, korrektur=korrektur,
-                                feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=True, is_hit=False,
+                                color=ring_color, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                                lens_cx=fb_cx, lens_cy=fb_cy, thickness=1, dashed=True, is_hit=False,
                                 zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
                             )
                         if innenzehner > 0:
                             Helfer.draw_smart_ellipse(
                                 img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=float(innenzehner)/2.0,
-                                color=ring_color, px_x=px_x, px_y=px_y, korrektur=korrektur,
-                                feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=True, is_hit=False,
+                                color=ring_color, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                                lens_cx=fb_cx, lens_cy=fb_cy, thickness=1, dashed=True, is_hit=False,
                                 zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
                             )
                             
@@ -269,8 +282,8 @@ class LaborRenderer:
                                     r_mm_base = r_outer_mm + (r_inner_mm - r_outer_mm) * fraction
                                     Helfer.draw_smart_ellipse(
                                         img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
-                                        color=color_outer, px_x=px_x, px_y=px_y, korrektur=korrektur,
-                                        feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=True, dash_step=12, dash_length=2, is_hit=False,
+                                        color=color_outer, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                                        lens_cx=fb_cx, lens_cy=fb_cy, thickness=1, dashed=True, dash_step=12, dash_length=2, is_hit=False,
                                         zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
                                     )
                             
@@ -284,8 +297,8 @@ class LaborRenderer:
                                 if r_mm_base > 0:
                                     Helfer.draw_smart_ellipse(
                                         img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
-                                        color=color_inner, px_x=px_x, px_y=px_y, korrektur=korrektur,
-                                        feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=True, dash_offset=6, dash_step=12, dash_length=2, is_hit=False,
+                                        color=color_inner, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                                        lens_cx=fb_cx, lens_cy=fb_cy, thickness=1, dashed=True, dash_offset=6, dash_step=12, dash_length=2, is_hit=False,
                                         zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
                                     )
                             
@@ -316,8 +329,8 @@ class LaborRenderer:
                                         if r_mm_base >= 0:
                                             Helfer.draw_smart_ellipse(
                                                 img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
-                                                color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur,
-                                                feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=False, is_hit=False,
+                                                color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                                                lens_cx=fb_cx, lens_cy=fb_cy, thickness=1, dashed=False, is_hit=False,
                                                 zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
                                             )
                             else:
@@ -342,8 +355,8 @@ class LaborRenderer:
                                         r_draw = r_outer + (r_inner - r_outer) * fraction
                                         Helfer.draw_smart_ellipse(
                                             img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_draw,
-                                            color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur,
-                                            feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=False, is_hit=False,
+                                            color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                                            lens_cx=fb_cx, lens_cy=fb_cy, thickness=1, dashed=False, is_hit=False,
                                             zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
                                         )
             
@@ -354,8 +367,8 @@ class LaborRenderer:
                     for s in orig_shots:
                         Helfer.draw_smart_ellipse(
                             img=combined, center_x=s['x'], center_y=s['y'], radius_mm=kaliber_mm/2.0,
-                            color=(0, 255, 255), px_x=px_x, px_y=px_y, korrektur=korrektur,
-                            feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=False, is_hit=True,
+                            color=(0, 255, 255), px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                            lens_cx=lens_cx, lens_cy=lens_cy, thickness=1, dashed=False, is_hit=True,
                             zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True
                         )
             
@@ -372,7 +385,20 @@ class LaborRenderer:
         d_config = self.app.package_data['config']
         px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
         px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-        korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
+        korrektur = d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0)
+        kurve = d_config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5)
+        
+        # =========================================================================
+        # ---> NEU: ELA-Linsen-Mittelpunkt aus Crop & Auflösung berechnen! <---
+        # =========================================================================
+        crop_sec = "Crop_Links" if side == 'left' else "Crop_Rechts"
+        cam_w = d_config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
+        cam_h = d_config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
+        cut_l = d_config.getint(crop_sec, 'cut_left', fallback=0)
+        cut_t = d_config.getint(crop_sec, 'cut_top', fallback=0)
+        
+        lens_cx = (cam_w / 2.0) - cut_l
+        lens_cy = (cam_h / 2.0) - cut_t
         
         meta = getattr(self.app, 'original_match_data', {})
         meta_dict = meta.get("metadata", {}) if isinstance(meta, dict) else {}
@@ -400,9 +426,9 @@ class LaborRenderer:
         #            hx, hy = shot['pos']
         #            Helfer.draw_smart_ellipse(
         #                img=combined, center_x=hx, center_y=hy, radius_mm=kaliber_mm/2.0,
-        #                #color=(0, 165, 255), px_x=px_x, px_y=px_y, korrektur=korrektur,
-        #                color=(133, 83, 255), px_x=px_x, px_y=px_y, korrektur=korrektur,  #Neon-Koralle
-        #                feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=False, is_hit=True,
+        #                #color=(0, 165, 255), px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+        #                color=(133, 83, 255), px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,  #Neon-Koralle
+        #                lens_cx=lens_cx, lens_cy=lens_cy, thickness=1, dashed=False, is_hit=True,
         #                zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True
         #            )
         # ---> RENDER-HELFER: Blinkender Live-Treffer <---
@@ -430,8 +456,8 @@ class LaborRenderer:
                     if blink_on:
                         Helfer.draw_smart_ellipse(
                             img=combined, center_x=hx, center_y=hy, radius_mm=kaliber_mm/2.0,
-                            color=color_right, px_x=px_x, px_y=px_y, korrektur=korrektur,
-                            feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=1, dashed=False, is_hit=True,
+                            color=color_right, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                            lens_cx=lens_cx, lens_cy=lens_cy, thickness=1, dashed=False, is_hit=True,
                             zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True
                         )
 
@@ -610,6 +636,28 @@ class LaborRenderer:
                 cv2.circle(combined, (final_x, final_y), 4, (0, 0, 0), -1)
                 cv2.circle(combined, (final_x, final_y), 3, (0, 0, 255), -1)
         
+        # =========================================================================
+        # ---> NEU: Optische Linsen-Mitte zur Kontrolle einzeichnen <---
+        # =========================================================================
+        if getattr(self.app, 'show_target_rings_var', None) and self.app.show_target_rings_var.get():
+            if 'lens_cx' in locals() and 'lens_cy' in locals():
+                marker_color = (0, 255, 255) # Leuchtend Gelb in BGR
+                
+                # 1. Linke Bildhälfte
+                lx_left = int(round(lens_cx * self.app.current_scale))
+                ly_left = int(round(lens_cy * self.app.current_scale))
+                
+                cv2.drawMarker(combined, (lx_left, ly_left), marker_color, markerType=cv2.MARKER_CROSS, markerSize=25, thickness=2, line_type=cv2.LINE_AA)
+                cv2.putText(combined, "Linsen-Mitte", (lx_left + 15, ly_left - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, marker_color, 2, cv2.LINE_AA)
+                
+                # 2. Rechte Bildhälfte
+                lx_right = int(round(lens_cx * self.app.current_scale)) + self.app.current_img_w
+                ly_right = int(round(lens_cy * self.app.current_scale))
+                
+                cv2.drawMarker(combined, (lx_right, ly_right), marker_color, markerType=cv2.MARKER_CROSS, markerSize=25, thickness=2, line_type=cv2.LINE_AA)
+                cv2.putText(combined, "Linsen-Mitte", (lx_right + 15, ly_right - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, marker_color, 2, cv2.LINE_AA)
+        
+        
         self.app.base_combined_img = combined.copy()
         self.app.base_combined_img_rgb = cv2.cvtColor(combined, cv2.COLOR_BGR2RGB)
         
@@ -668,7 +716,20 @@ class LaborRenderer:
             d_config = self.app.package_data['config']
             px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
             px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-            korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
+            korrektur = d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0)
+            kurve = d_config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5)
+            
+            # =========================================================================
+            # ---> NEU: ELA-Linsen-Mittelpunkt aus Crop & Auflösung berechnen! <---
+            # =========================================================================
+            crop_sec = "Crop_Links" if side == 'left' else "Crop_Rechts"
+            cam_w = d_config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
+            cam_h = d_config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
+            cut_l = d_config.getint(crop_sec, 'cut_left', fallback=0)
+            cut_t = d_config.getint(crop_sec, 'cut_top', fallback=0)
+            
+            lens_cx = (cam_w / 2.0) - cut_l
+            lens_cy = (cam_h / 2.0) - cut_t
             
             meta = getattr(self.app, 'original_match_data', {})
             meta_dict = meta.get("metadata", {}) if isinstance(meta, dict) else {}
@@ -705,8 +766,8 @@ class LaborRenderer:
         # =========================================================================
         Helfer.draw_smart_ellipse(
             img=temp_img, center_x=real_x, center_y=real_y, radius_mm=kaliber_mm/2.0,
-            color=blue_rgb, px_x=px_x, px_y=px_y, korrektur=korrektur,
-            feedback_cx=fb_cx, feedback_cy=fb_cy, thickness=2, dashed=False, 
+            color=blue_rgb, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+            lens_cx=lens_cx, lens_cy=lens_cy, thickness=2, dashed=False, 
             is_hit=True,          # <--- LINIENSTÄRKE NACH INNEN WACHSEN LASSEN!
             zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, 
             draw_center_dot=True  # <--- MITTELPUNKT HINZUFÜGEN!
@@ -772,7 +833,7 @@ class LaborRenderer:
     #    
     #    px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
     #    px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-    #    korrektur = d_config.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0)
+    #    korrektur = d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0)
     #    
     #    aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
     #    ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)

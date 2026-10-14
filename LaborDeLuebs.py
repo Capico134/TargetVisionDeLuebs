@@ -242,18 +242,21 @@ class LaborApp:
                 
             val_x = parser.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
             val_y = parser.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-            val_fisch = parser.getfloat('Kameras', f'fischaugenkorrektur_{seite_str}', fallback=0.0) 
+            val_fisch = parser.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0) 
+            val_kurve = parser.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5) # <--- NEU
             
             # ---> DER FIX: original_values ZUERST aktualisieren, bevor set() den Trace auslöst! <---
             if hasattr(self, 'orig_calib'):
                 self.original_values[str(self.calib_x_var)] = self.orig_calib[f"{side}_x"]
                 self.original_values[str(self.calib_y_var)] = self.orig_calib[f"{side}_y"]
-                self.original_values[str(self.calib_fischauge_var)] = self.orig_calib.get(f"{side}_fisch", 0.0) 
+                self.original_values[str(self.calib_linsen_verzerrung_var)] = self.orig_calib.get(f"{side}_fisch", 0.0) 
+                self.original_values[str(self.calib_linsen_kurve_var)] = self.orig_calib.get(f"{side}_kurve", 1.5) # <--- NEU
 
             # Jetzt erst die GUI setzen, damit der Trace keinen falschen Alarm (Rot) schlägt
             self.calib_x_var.set(val_x)
             self.calib_y_var.set(val_y)
-            self.calib_fischauge_var.set(val_fisch)
+            self.calib_linsen_verzerrung_var.set(val_fisch)
+            self.calib_linsen_kurve_var.set(val_kurve) # <--- NEU
 
     def switch_camera(self):
         """Wird aufgerufen, wenn man zwischen Links/Rechts umschaltet."""
@@ -347,14 +350,16 @@ class LaborApp:
                 parser.add_section('Kameras')
                 
             # Da wir auch hier getfloat MIT Fallback nutzen, werden fehlende 
-            # Kamera-Parameter (wie fischaugenkorrektur) sofort vom Parser geheilt!
+            # Kamera-Parameter (wie 'linsen_verzerrung) sofort vom Parser geheilt!
             self.orig_calib = {
                 'left_x': parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0),
                 'left_y': parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0),
-                'left_fisch': parser.getfloat('Kameras', 'fischaugenkorrektur_links', fallback=0.0),
+                'left_fisch': parser.getfloat('Kameras', 'linsen_verzerrung_links', fallback=0.0),
+                'left_kurve': parser.getfloat('Kameras', 'linsen_kurve_links', fallback=1.5),     # <--- NEU
                 'right_x': parser.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0),
                 'right_y': parser.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0),
-                'right_fisch': parser.getfloat('Kameras', 'fischaugenkorrektur_rechts', fallback=0.0)
+                'right_fisch': parser.getfloat('Kameras', 'linsen_verzerrung_rechts', fallback=0.0),
+                'right_kurve': parser.getfloat('Kameras', 'linsen_kurve_rechts', fallback=1.5)      # <--- NEU
             }
             
             # ---> NEU: Initialen Push der Kalibrierungsdaten in die Slider erzwingen, 
@@ -563,17 +568,31 @@ class LaborApp:
         cx, cy = meta[center_key]
         char = event.keysym.lower()
         
-        if char == 'w': cy   -= 0.2
+        # ---> NEU: Wir merken uns den alten Stand für das Log <---
+        alt_cx, alt_cy = cx, cy
+        
+        if char == 'w': cy -= 0.2
         elif char == 's': cy += 0.2
         elif char == 'a': cx -= 0.2
         elif char == 'd': cx += 0.2
 
         # 2. Den neuen Wert speichern (wird dann beim nächsten "Test-Case-Export" auch physisch in die JSON geschrieben!)
-        self.original_match_data['metadata'][center_key] = [cx, cy]
+        self.original_match_data['metadata'][center_key] = [round(cx, 4), round(cy, 4)]
         
-        # 3. Log ausgeben und Bild sofort neu rendern (stanzt die Engine neu und berechnet die Ringe neu!)
-        self.print_log("SYSTEM", f"🎯 Zentrum {side.upper()} feinjustiert: X:{cx} Y:{cy}")
+        # 3. Bild sofort neu rendern (stanzt die Engine neu und BEREINIGT das Log!)
         self.on_param_change(force=True)
+        
+        # 4. NACH dem Wipe die Meldung ins saubere Log schreiben, damit sie bleibt!
+        diff_x = cx - alt_cx
+        diff_y = cy - alt_cy
+        richtung = ""
+        if diff_x < 0: richtung = "◀ Links"
+        elif diff_x > 0: richtung = "▶ Rechts"
+        elif diff_y < 0: richtung = "▲ Hoch"
+        elif diff_y > 0: richtung = "▼ Runter"
+        
+        self.print_log("SYSTEM", f"🎯 Zentrum {side.upper()} verschoben ({richtung}): X:{cx:.4f} Y:{cy:.4f}")
+
  
     def on_param_change(self, event=None, force=False):
         if not self.current_zip_path:
@@ -1120,9 +1139,6 @@ class LaborApp:
 
     def finish_calibration(self):
         """Berechnet aus den gesammelten Punkten die Empfehlungen inkl. Best-Fit Validierung."""
-        
-        
-        #self.root.unbind('<BackSpace>')
         self.calib_mode_active = False
         self.btn_calib_assist.config(bg="#8e44ad", text="📏 Kalibrierung")
         self.lbl_image.config(cursor="")
@@ -1141,12 +1157,10 @@ class LaborApp:
             
         target_data = targets[aktive_scheibe]
         
-        # 1. Reale Millimeter-Maße
         try:
             spiegel_mm = float(target_data.get('spiegel_durchmesser_mm', 30.5))
             ringe_mm = target_data.get('ringe_durchmesser_mm', {})
             neun_mm = float(ringe_mm.get('9', spiegel_mm * 0.5))
-            
             if '1' in ringe_mm:
                 aussen_mm = float(ringe_mm['1'])
             else:
@@ -1155,181 +1169,247 @@ class LaborApp:
             messagebox.showerror("Fehler", "Ungültige Millimeter-Werte in der zielscheiben.json!")
             return
 
-        # 2. Punkte entpacken
         pts = self.calib_points
         spiegel_l, spiegel_r, spiegel_o, spiegel_u = pts[0], pts[1], pts[2], pts[3]
         diag1_o, diag1_u, diag2_o, diag2_u = pts[4], pts[5], pts[6], pts[7]
         neun_l, neun_r, neun_o, neun_u = pts[8], pts[9], pts[10], pts[11]
         aussen_l, aussen_r, aussen_o, aussen_u = pts[12], pts[13], pts[14], pts[15]
 
-        # 3. Das exakte Zentrum auf Basis des 9er Rings ermitteln (am zuverlässigsten)
-        cx = (neun_l[0] + neun_r[0]) / 2.0
-        cy = (neun_o[1] + neun_u[1]) / 2.0
-
-        # =========================================================================
-        # A) Best-Fit Regressions-Analyse (Least Squares) über alle 3 Ringe
-        # Minimiert den quadratischen Fehler über die gesamte Scheibe.
-        # =========================================================================
+        # Initiale Werte (Schätzung über ALLE Ringe statt nur dem 9er)
+        init_cx = (neun_l[0] + neun_r[0] + spiegel_l[0] + spiegel_r[0] + aussen_l[0] + aussen_r[0]) / 6.0
+        init_cy = (neun_o[1] + neun_u[1] + spiegel_o[1] + spiegel_u[1] + aussen_o[1] + aussen_u[1]) / 6.0
         
-        # Radien in echten Millimetern
         r_9 = neun_mm / 2.0
         r_s = spiegel_mm / 2.0
         r_a = aussen_mm / 2.0
         
-        # Gemessene Pixel-Radien (X-Achse)
         p_9_x = abs(neun_r[0] - neun_l[0]) / 2.0
         p_s_x = abs(spiegel_r[0] - spiegel_l[0]) / 2.0
         p_a_x = abs(aussen_r[0] - aussen_l[0]) / 2.0
-        
-        # Gemessene Pixel-Radien (Y-Achse)
         p_9_y = abs(neun_u[1] - neun_o[1]) / 2.0
         p_s_y = abs(spiegel_u[1] - spiegel_o[1]) / 2.0
         p_a_y = abs(aussen_u[1] - aussen_o[1]) / 2.0
         
-        # Umrechnung in gemessene "Pixel pro Millimeter" an den jeweiligen Radien
         y_data_x = np.array([p_9_x / r_9, p_s_x / r_s, p_a_x / r_a])
         y_data_y = np.array([p_9_y / r_9, p_s_y / r_s, p_a_y / r_a])
-        x_data = np.array([r_9, r_s, r_a])
-        
-        # Lineare Regression (y = m*x + b)
-        # b ist die Skalierung bei Radius 0 (das exakte optische Zentrum)
-        # m ist die Steigung der Verzerrung
-        m_x, b_x = np.polyfit(x_data, y_data_x, 1)
-        m_y, b_y = np.polyfit(x_data, y_data_y, 1)
-        
-        px_mm_x = b_x
-        px_mm_y = b_y
-        
-        # Die Fischaugenkorrektur (K) ergibt sich aus Steigung / Basis-Skalierung
-        k_x = m_x / b_x if b_x != 0 else 0.0
-        k_y = m_y / b_y if b_y != 0 else 0.0
-        
-        avg_korrektur = (k_x + k_y) / 2.0
-        
-        
-        
+
         dist_diag1 = math.hypot(diag1_o[0] - diag1_u[0], diag1_o[1] - diag1_u[1])
         dist_diag2 = math.hypot(diag2_o[0] - diag2_u[0], diag2_o[1] - diag2_u[1])
-        
-        # =========================================================================
-        # NEU: VALIDIERUNGS-CHECK & MONSTER-LOG
-        # =========================================================================
-        
-        log_lines = []
-        log_lines.append("\n" + "="*70)
-        log_lines.append("🎯 KALIBRIERUNGS-PROTOKOLL")
-        log_lines.append("="*70)
-        
-        log_lines.append("\n1. ROHE MAUSKLICKS (Pixel-Koordinaten):")
-        log_lines.append(f"  Spiegel : L{spiegel_l}, R{spiegel_r}, O{spiegel_o}, U{spiegel_u}")
-        log_lines.append(f"  Diagonal: LO{diag1_o}, RU{diag1_u}, RO{diag2_o}, LU{diag2_u}")
-        log_lines.append(f"  9er-Ring: L{neun_l}, R{neun_r}, O{neun_o}, U{neun_u}")
-        log_lines.append(f"  Außen   : L{aussen_l}, R{aussen_r}, O{aussen_o}, U{aussen_u}")
-        
-        log_lines.append(f"\n2. ERMITTELTE KONTROLL-DISTANZEN:")
-        log_lines.append(f"  Spiegel Diagonale 1: {dist_diag1:.1f} px")
-        log_lines.append(f"  Spiegel Diagonale 2: {dist_diag2:.1f} px")
-
-        log_lines.append(f"\n3. BERECHNETE PARAMETER:")
-        log_lines.append(f"  Zentrum (X/Y) : {cx:.2f} / {cy:.2f}")
-        log_lines.append(f"  px_pro_mm (X) : {px_mm_x:.3f}")
-        log_lines.append(f"  px_pro_mm (Y) : {px_mm_y:.3f}")
-        log_lines.append(f"  Fischaugenkorr: {avg_korrektur:.5f}")
-
-        def validate_point(name, pt, mm_real):
-            r_mm_base = mm_real / 2.0
-            r_mm_draw = r_mm_base * (1.0 + (r_mm_base * avg_korrektur))
-            
-            dx_px = pt[0] - cx
-            dy_px = pt[1] - cy
-            
-            dx_mm = dx_px / px_mm_x if px_mm_x else 0
-            dy_mm = dy_px / px_mm_y if px_mm_y else 0
-            dist_mm = math.hypot(dx_mm, dy_mm)
-            
-            err_mm = dist_mm - r_mm_draw
-            
-            act_dist_px = math.hypot(dx_px, dy_px)
-            px_per_mm_ray = act_dist_px / dist_mm if dist_mm > 0 else 0
-            err_px = err_mm * px_per_mm_ray
-            
-            return err_px, err_mm
-
-        log_lines.append("\n4. BEST-FIT VALIDIERUNG (Theorie vs. Klick):")
-        log_lines.append("  (Minus = Klick war näher am Zentrum als berechnet)")
-        
-        def add_validation(section_name, mm_real, labels, points):
-            log_lines.append(f"\n  ▶ {section_name} ({mm_real} mm):")
-            for lbl, pt in zip(labels, points):
-                err_px, err_mm = validate_point(lbl, pt, mm_real)
-                log_lines.append(f"    {lbl:<12} -> Abweichung: {err_px:>+5.1f} px  |  {err_mm:>+6.2f} mm")
-
-        add_validation("9er-Ring", neun_mm, ["Links", "Rechts", "Oben", "Unten"], [neun_l, neun_r, neun_o, neun_u])
-        add_validation("Spiegel (Achsen)", spiegel_mm, ["Links", "Rechts", "Oben", "Unten"], [spiegel_l, spiegel_r, spiegel_o, spiegel_u])
-        add_validation("Spiegel (Diag)", spiegel_mm, ["Links-Oben", "Rechts-Unten", "Rechts-Oben", "Links-Unten"], [diag1_o, diag1_u, diag2_o, diag2_u])
-        add_validation("Außenring", aussen_mm, ["Links", "Rechts", "Oben", "Unten"], [aussen_l, aussen_r, aussen_o, aussen_u])
-
-        log_lines.append("="*70 + "\n")
-        
-        # ... [Dein bestehender Code, log_lines.append("="*70 + "\n") etc.] ...
-
-        # Einmal direkt vorab ins Log schreiben (zur Vorschau)
-        for line in log_lines:
-            self.print_log("KALIB", line, show_gui=True)
-            
-        # UI-Ergebnis ausgeben
-        report = (
-            "🎯 Kalibrierung Abgeschlossen!\n\n"
-            "Vorgeschlagene Werte:\n"
-            f"▶ px_pro_mm (X): {px_mm_x:.3f}\n"
-            f"▶ px_pro_mm (Y): {px_mm_y:.3f}\n"
-            f"▶ Fischaugenkorr.: {avg_korrektur:.5f}\n\n"
-            "💡 Ein extrem detailliertes Protokoll (inkl. aller Koordinaten "
-            "und Millimeter-Abweichungen) findest du jetzt unten im Log!"
-        )
-        
-        def apply_values():
-             # ---> NEU: ELA-Präzision (3 und 5 Nachkommastellen statt 2 und 4) <---
-             self.calib_x_var.set(round(px_mm_x, 3))
-             self.calib_y_var.set(round(px_mm_y, 3))
-             self.calib_fischauge_var.set(round(avg_korrektur, 5))
-             
-             # Erzwingt den Neuaufbau der Bilder
-             self.on_param_change(force=True)
-             
-             # Verzögertes Schreiben des Logs
-             def write_log_delayed():
-                 for line in log_lines:
-                     self.print_log("KALIB", line, show_gui=True)
-                 self.print_log("SYSTEM", "✅ Kalibrierungswerte erfolgreich übernommen und Bilder neu berechnet!", show_gui=True)
-                 
-             self.root.after(400, write_log_delayed)
-             info_win.destroy()
 
         # =========================================================================
-        # ---> NEU: Zwischenablage-Funktion <---
+        # ---> GUI SETUP FÜR DIE WREKBANK <---
         # =========================================================================
-        def copy_to_clipboard():
-            full_log = "\n".join(log_lines)
-            self.root.clipboard_clear()
-            self.root.clipboard_append(full_log)
-            # Kurzes Feedback, damit man weiß, dass es geklappt hat
-            tk.messagebox.showinfo("Kopiert", "Das komplette Protokoll wurde in die Zwischenablage kopiert!", parent=info_win)
-             
         info_win = tk.Toplevel(self.root)
-        info_win.title("Kalibrierungs-Ergebnis")
+        info_win.title("Interaktive Kalibrierungs-Werkbank")
         info_win.attributes('-topmost', True)
         
-        tk.Label(info_win, text=report, justify=tk.LEFT, padx=20, pady=20, font=("Arial", 11)).pack()
+        sf = self.root.winfo_fpixels('1i') / 96.0
+        info_win.geometry(f"{int(750 * sf)}x{int(850 * sf)}")
+        
+        tk.Label(info_win, text="Kalibrierungs-Werkbank", font=("Arial", 12, "bold")).pack(pady=(10, 5))
+        
+        control_frame = tk.Frame(info_win)
+        control_frame.pack(fill=tk.X, padx=15, pady=5)
+        
+        var_cx = tk.DoubleVar(value=round(init_cx, 2))
+        var_cy = tk.DoubleVar(value=round(init_cy, 2))
+        var_px_x = tk.DoubleVar(value=self.calib_x_var.get())
+        var_px_y = tk.DoubleVar(value=self.calib_y_var.get())
+        var_korr = tk.DoubleVar(value=self.calib_linsen_verzerrung_var.get())
+        var_kurve = tk.DoubleVar(value=self.calib_linsen_kurve_var.get())
+        
+        def build_param_row(parent, label, tk_var, res, step):
+            row = tk.Frame(parent)
+            row.pack(fill=tk.X, pady=2)
+            tk.Label(row, text=label, width=20, anchor="w").pack(side=tk.LEFT)
+            
+            def nudge(amount):
+                tk_var.set(round(tk_var.get() + amount, 6))
+                recalculate()
+                
+            tk.Button(row, text="◀", command=lambda: nudge(-step), font=("Arial", 8), padx=2, pady=0).pack(side=tk.LEFT)
+            entry = tk.Entry(row, textvariable=tk_var, width=12, justify="center")
+            entry.pack(side=tk.LEFT, padx=5)
+            tk.Button(row, text="▶", command=lambda: nudge(step), font=("Arial", 8), padx=2, pady=0).pack(side=tk.LEFT)
+            
+            entry.bind("<Return>", lambda e: recalculate())
+            entry.bind("<FocusOut>", lambda e: recalculate())
+
+        build_param_row(control_frame, "Zentrum X (cx):", var_cx, 0.1, 0.2)
+        build_param_row(control_frame, "Zentrum Y (cy):", var_cy, 0.1, 0.2)
+        build_param_row(control_frame, "Pixel pro mm X:", var_px_x, 0.001, 0.01)
+        build_param_row(control_frame, "Pixel pro mm Y:", var_px_y, 0.001, 0.01)
+        build_param_row(control_frame, "Linsen-Verzerrung:", var_korr, 0.00001, 0.0001)
+        build_param_row(control_frame, "Linsen-Kurve (Exp):", var_kurve, 0.01, 0.05)
+
+        # Log Frame
+        txt_frame = tk.Frame(info_win)
+        txt_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+        scrollbar = tk.Scrollbar(txt_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        txt_log = tk.Text(txt_frame, font=("Consolas", 10), bg="#1e1e1e", fg="#00ff00", yscrollcommand=scrollbar.set)
+        txt_log.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=txt_log.yview)
+
+        final_values = {}
+
+        def recalculate(*args):
+            cx = var_cx.get()
+            cy = var_cy.get()
+            px_mm_x = var_px_x.get()
+            px_mm_y = var_px_y.get()
+            avg_korrektur = var_korr.get()
+            kurve = var_kurve.get()
+            
+            def validate_point(pt, mm_real):
+                r_mm_base = mm_real / 2.0
+                r_mm_draw = r_mm_base * (1.0 + ((r_mm_base**kurve) * avg_korrektur))
+                dx_px = pt[0] - cx
+                dy_px = pt[1] - cy
+                dx_mm = dx_px / px_mm_x if px_mm_x else 0
+                dy_mm = dy_px / px_mm_y if px_mm_y else 0
+                dist_mm = math.hypot(dx_mm, dy_mm)
+                err_mm = dist_mm - r_mm_draw
+                act_dist_px = math.hypot(dx_px, dy_px)
+                px_per_mm_ray = act_dist_px / dist_mm if dist_mm > 0 else 0
+                err_px = err_mm * px_per_mm_ray
+                return err_px, err_mm
+
+            log_lines = []
+            log_lines.append(f"AKTUELLE WERKZEUG-PARAMETER:")
+            log_lines.append(f"  Zentrum (X/Y) : {cx:.2f} / {cy:.2f}")
+            log_lines.append(f"  px_pro_mm (X) : {px_mm_x:.4f}")
+            log_lines.append(f"  px_pro_mm (Y) : {px_mm_y:.4f}")
+            log_lines.append(f"  Fischaugenkorr: {avg_korrektur:.6f}")
+            log_lines.append(f"  Linsen-Kurve  : {kurve:.2f}\n")
+            
+            log_lines.append("BEST-FIT VALIDIERUNG (Theorie vs. Klick):")
+            log_lines.append("(Minus = Klick war näher am Zentrum als berechnet)")
+
+            err_sum_9 = 0
+            err_sum_s = 0
+            err_sum_a = 0
+
+            def add_validation(section_name, mm_real, labels, points):
+                nonlocal err_sum_9, err_sum_s, err_sum_a
+                log_lines.append(f"\n▶ {section_name} ({mm_real} mm):")
+                sum_err = 0
+                for lbl, pt in zip(labels, points):
+                    err_px, err_mm = validate_point(pt, mm_real)
+                    sum_err += abs(err_mm)
+                    log_lines.append(f"  {lbl:<12} -> Abweichung: {err_px:>+5.1f} px  |  {err_mm:>+6.2f} mm")
+                
+                avg = sum_err / len(points)
+                if section_name == "9er-Ring": err_sum_9 = avg
+                elif "Spiegel" in section_name: err_sum_s += avg * len(points) 
+                elif section_name == "Außenring": err_sum_a = avg
+
+            add_validation("9er-Ring", neun_mm, ["Links", "Rechts", "Oben", "Unten"], [neun_l, neun_r, neun_o, neun_u])
+            add_validation("Spiegel (Achsen)", spiegel_mm, ["Links", "Rechts", "Oben", "Unten"], [spiegel_l, spiegel_r, spiegel_o, spiegel_u])
+            add_validation("Spiegel (Diag)", spiegel_mm, ["Links-Oben", "Rechts-Unten", "Rechts-Oben", "Links-Unten"], [diag1_o, diag1_u, diag2_o, diag2_u])
+            err_sum_s = err_sum_s / 8.0 
+            add_validation("Außenring", aussen_mm, ["Links", "Rechts", "Oben", "Unten"], [aussen_l, aussen_r, aussen_o, aussen_u])
+            
+            log_lines.append("\n" + "="*50)
+            log_lines.append("Ø ABSOLUTE FEHLERABWEICHUNG:")
+            log_lines.append(f"  9er-Ring  : ± {err_sum_9:.2f} mm")
+            log_lines.append(f"  Spiegel   : ± {err_sum_s:.2f} mm")
+            log_lines.append(f"  Außenring : ± {err_sum_a:.2f} mm")
+            
+            txt_log.config(state=tk.NORMAL)
+            txt_log.delete(1.0, tk.END)
+            txt_log.insert(tk.END, "\n".join(log_lines))
+            txt_log.config(state=tk.DISABLED)
+            
+            final_values['cx'] = cx
+            final_values['cy'] = cy
+            final_values['px_x'] = px_mm_x
+            final_values['px_y'] = px_mm_y
+            final_values['korr'] = avg_korrektur
+            final_values['kurve'] = kurve
+            final_values['log'] = log_lines
+
+        def do_auto_fit():
+            kurve = var_kurve.get()
+            x_data = np.array([r_9**kurve, r_s**kurve, r_a**kurve])
+            m_x, b_x = np.polyfit(x_data, y_data_x, 1)
+            m_y, b_y = np.polyfit(x_data, y_data_y, 1)
+            
+            var_px_x.set(round(b_x, 4))
+            var_px_y.set(round(b_y, 4))
+            k_x = m_x / b_x if b_x != 0 else 0.0
+            k_y = m_y / b_y if b_y != 0 else 0.0
+            var_korr.set(round((k_x + k_y) / 2.0, 6))
+            
+            # cx / cy machen wir über die 3 Ringe per Symmetrie-Durchschnitt
+            cx_neu = (neun_l[0] + neun_r[0] + spiegel_l[0] + spiegel_r[0] + aussen_l[0] + aussen_r[0]) / 6.0
+            cy_neu = (neun_o[1] + neun_u[1] + spiegel_o[1] + spiegel_u[1] + aussen_o[1] + aussen_u[1]) / 6.0
+            var_cx.set(round(cx_neu, 2))
+            var_cy.set(round(cy_neu, 2))
+            
+            recalculate()
+
+        def apply_preview():
+            """Spiegelt die Werte direkt ins Labor, lässt das Werkbank-Fenster aber offen!"""
+            self.calib_x_var.set(final_values['px_x'])
+            self.calib_y_var.set(final_values['px_y'])
+            self.calib_linsen_verzerrung_var.set(final_values['korr']) 
+            self.calib_linsen_kurve_var.set(final_values['kurve']) 
+            
+            side = self.active_camera_var.get()
+            center_key = 'center_l' if side == 'left' else 'center_r'
+            
+            # --- ELA-SICHERHEITSSICHT: Metadaten und Struktur garantieren ---
+            if getattr(self, 'original_match_data', None) is None:
+                self.original_match_data = {}
+            if 'metadata' not in self.original_match_data:
+                self.original_match_data['metadata'] = {}
+                
+            # Zentrum in die Metadaten schreiben
+            self.original_match_data['metadata'][center_key] = [final_values['cx'], final_values['cy']]
+            
+            # Zusätzlich direkt im StateManager als Nullpunkt verankern
+            if hasattr(self, 'package_data') and self.package_data and 'config' in self.package_data:
+                d_config = self.package_data['config']
+                d_dm = DummyDateiManager(self)
+                d_sm = StateManager(d_config, d_dm)
+                d_sm.set_nullpunkt(side, final_values['cx'], final_values['cy'])
+            
+            # Sofortiges Neuladen und Zeichnen erzwingen
+            self.on_param_change(force=True)
+
+        def apply_and_close():
+            apply_preview()
+            
+            def write_log_delayed():
+                self.print_log("KALIB", "="*70, show_gui=True)
+                self.print_log("KALIB", "🎯 FINAL GEWÄHLTES KALIBRIERUNGS-PROTOKOLL", show_gui=True)
+                self.print_log("KALIB", "="*70, show_gui=True)
+                for line in final_values['log']:
+                    self.print_log("KALIB", line, show_gui=True)
+                self.print_log("SYSTEM", "✅ Kalibrierungswerte erfolgreich übernommen!", show_gui=True)
+                
+            self.root.after(400, write_log_delayed)
+            info_win.destroy()
+
+        def copy_to_clipboard():
+            self.root.clipboard_clear()
+            self.root.clipboard_append("\n".join(final_values['log']))
+            tk.messagebox.showinfo("Kopiert", "Das aktuelle Protokoll wurde in die Zwischenablage kopiert!", parent=info_win)
+        
+        btn_frame_top = tk.Frame(control_frame)
+        btn_frame_top.pack(fill=tk.X, pady=10)
+        tk.Button(btn_frame_top, text="🤖 Auto-Fit (aus Klicks) ausführen", command=do_auto_fit, bg="#e67e22", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT)
         
         btn_frame = tk.Frame(info_win)
         btn_frame.pack(pady=10)
         
-        # ---> NEU: Der mittlere Button in blau <---
-        tk.Button(btn_frame, text="Werte übernehmen", command=apply_values, bg="#27ae60", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="📋 Log kopieren", command=copy_to_clipboard, bg="#3498db", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="Abbrechen", command=info_win.destroy).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="👁️ Live-Vorschau anwenden", command=apply_preview, bg="#3498db", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="✅ Schließen & Speichern", command=apply_and_close, bg="#27ae60", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="📋 Log kopieren", command=copy_to_clipboard, bg="#95a5a6", fg="white").pack(side=tk.LEFT, padx=5)
         
+        # Start
+        do_auto_fit()
         self.renderer.update_image_display()
   
     def identify_shot_at_click(self, x, y, jump_to_frame=False):
