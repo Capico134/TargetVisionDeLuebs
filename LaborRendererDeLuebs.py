@@ -253,14 +253,14 @@ class LaborRenderer:
                             Helfer.draw_smart_ellipse(
                                 img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=float(d_mm)/2.0,
                                 color=ring_color, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
-                                lens_cx=fb_cx, lens_cy=fb_cy, thickness=1, dashed=True, is_hit=False,
+                                lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=True, is_hit=False,
                                 zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
                             )
                         if innenzehner > 0:
                             Helfer.draw_smart_ellipse(
                                 img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=float(innenzehner)/2.0,
                                 color=ring_color, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
-                                lens_cx=fb_cx, lens_cy=fb_cy, thickness=1, dashed=True, is_hit=False,
+                                lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=True, is_hit=False,
                                 zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
                             )
                             
@@ -283,7 +283,7 @@ class LaborRenderer:
                                     Helfer.draw_smart_ellipse(
                                         img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
                                         color=color_outer, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
-                                        lens_cx=fb_cx, lens_cy=fb_cy, thickness=1, dashed=True, dash_step=12, dash_length=2, is_hit=False,
+                                        lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=True, dash_step=12, dash_length=2, is_hit=False,
                                         zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
                                     )
                             
@@ -298,7 +298,7 @@ class LaborRenderer:
                                     Helfer.draw_smart_ellipse(
                                         img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
                                         color=color_inner, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
-                                        lens_cx=fb_cx, lens_cy=fb_cy, thickness=1, dashed=True, dash_offset=6, dash_step=12, dash_length=2, is_hit=False,
+                                        lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=True, dash_offset=6, dash_step=12, dash_length=2, is_hit=False,
                                         zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
                                     )
                             
@@ -330,7 +330,7 @@ class LaborRenderer:
                                             Helfer.draw_smart_ellipse(
                                                 img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
                                                 color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
-                                                lens_cx=fb_cx, lens_cy=fb_cy, thickness=1, dashed=False, is_hit=False,
+                                                lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=False, is_hit=False,
                                                 zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
                                             )
                             else:
@@ -356,7 +356,7 @@ class LaborRenderer:
                                         Helfer.draw_smart_ellipse(
                                             img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_draw,
                                             color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
-                                            lens_cx=fb_cx, lens_cy=fb_cy, thickness=1, dashed=False, is_hit=False,
+                                            lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=False, is_hit=False,
                                             zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
                                         )
             
