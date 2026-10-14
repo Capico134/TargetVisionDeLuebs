@@ -61,6 +61,30 @@ class TargetVisionRenderer:
         self.treffer_zoom = config.getfloat('Anzeige', 'treffer_zoom', fallback=3.0)
         self.treffer_anzeigedauer = config.getfloat('Anzeige', 'treffer_anzeigedauer', fallback=4.0)
         self.nachkommastellen = config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
+        # =====================================================================
+        # ---> NEU: Einmaliges Caching der Kalibrierungs- und Linsendaten <---
+        # =====================================================================
+        self.cam_settings = {}
+        for side in ['left', 'right']:
+            seite_str = "links" if side == 'left' else "rechts"
+            crop_sec = "Crop_Links" if side == 'left' else "Crop_Rechts"
+            px_x = config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+            px_y = config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+            korrektur = self.linsen_verzerrung_links if side == 'left' else self.linsen_verzerrung_rechts
+            kurve = config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5)
+            cam_w = config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
+            cam_h = config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
+            cut_l = config.getint(crop_sec, 'cut_left', fallback=0)
+            cut_t = config.getint(crop_sec, 'cut_top', fallback=0)
+            off_x = config.getint('Kameras', f'lens_offset_x_{seite_str}', fallback=0)
+            off_y = config.getint('Kameras', f'lens_offset_y_{seite_str}', fallback=0)
+            lens_cx = (cam_w / 2.0) - cut_l + off_x
+            lens_cy = (cam_h / 2.0) - cut_t + off_y
+            self.cam_settings[side] = {
+                'px_x': px_x, 'px_y': px_y,
+                'korrektur': korrektur, 'kurve': kurve,
+                'lens_cx': lens_cx, 'lens_cy': lens_cy
+            }
 
     def _init_logo(self):
         """Lädt und skaliert das Logo einmalig beim Start"""
@@ -353,42 +377,20 @@ class TargetVisionRenderer:
             else:
                 kaliber_mm = self.tracker.config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
                 
-            # Kameradaten für den Helfer abrufen
-            seite_str = "links" if side == 'left' else "rechts"
-            px_x = self.tracker.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-            px_y = self.tracker.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-            korrektur = self.linsen_verzerrung_links if side == 'left' else self.linsen_verzerrung_rechts
+            # ---> Daten blitzschnell aus dem RAM holen <---
+            c_set = self.cam_settings[side]
+            px_x, px_y = c_set['px_x'], c_set['px_y']
+            korrektur, kurve = c_set['korrektur'], c_set['kurve']
+            lens_cx, lens_cy = c_set['lens_cx'], c_set['lens_cy']
             
-            # ---> NEU: Dynamischer God-Mode Exponent für das Live-System! <---
-            kurve = self.tracker.config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5)
-            
-            # ---> NEU: Dezent ein kleines gelbes Kreuz für die Linsen-Mitte einzeichnen <---
+            # ---> Dezent ein kleines gelbes Kreuz für die Linsen-Mitte einzeichnen (beim "Ringe" Modus) <---
             if self.show_all_rings:
-                crop_sec = "Crop_Links" if side == 'left' else "Crop_Rechts"
-                cam_w = self.tracker.config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
-                cam_h = self.tracker.config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
-                cut_l = self.tracker.config.getint(crop_sec, 'cut_left', fallback=0)
-                cut_t = self.tracker.config.getint(crop_sec, 'cut_top', fallback=0)
-                lens_cx = (cam_w / 2.0) - cut_l
-                lens_cy = (cam_h / 2.0) - cut_t
                 z, ox, oy = zoom_params[side]
                 lens_draw_cx = int(round((lens_cx * z + ox) * self.scale_x))
                 lens_draw_cy = int(round((lens_cy * z + oy) * self.scale_y))
-                # Ein dezentes, kleines gelbes Kreuz (Größe 4, 1px dick)
                 cross_sz = 4
                 cv2.line(roi, (lens_draw_cx - cross_sz, lens_draw_cy), (lens_draw_cx + cross_sz, lens_draw_cy), (0, 255, 255), 1, cv2.LINE_AA)
                 cv2.line(roi, (lens_draw_cx, lens_draw_cy - cross_sz), (lens_draw_cx, lens_draw_cy + cross_sz), (0, 255, 255), 1, cv2.LINE_AA)
-            
-            
-            # ---> NEU: ELA-Linsen-Mittelpunkt aus Crop & Auflösung berechnen! <---
-            crop_sec = "Crop_Links" if side == 'left' else "Crop_Rechts"
-            cam_w = self.tracker.config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
-            cam_h = self.tracker.config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
-            cut_l = self.tracker.config.getint(crop_sec, 'cut_left', fallback=0)
-            cut_t = self.tracker.config.getint(crop_sec, 'cut_top', fallback=0)
-            
-            lens_cx = (cam_w / 2.0) - cut_l
-            lens_cy = (cam_h / 2.0) - cut_t
             
             # 1. SHOTS (TREFFER) ZEICHNEN
             side_shots = self.tracker.sm.get_shots_for_side(side)
@@ -402,7 +404,6 @@ class TargetVisionRenderer:
                     id_str = str(idx + 1)
                     text_color = (255, 255, 255) if not shot.get('is_new', False) else (200, 200, 255)
                     
-                # ---> DER FIX: Neue Parameternamen und Linsen-Mitte übergeben! <---
                 Helfer.draw_smart_ellipse(
                     img=roi, center_x=x, center_y=y, 
                     radius_mm=kaliber_mm / 2.0, color=color, 
@@ -420,35 +421,24 @@ class TargetVisionRenderer:
                 roi = camera_rois[s]
                 z, ox, oy = zoom_params[s]
                 
-                # Kameradaten für den Helfer abrufen
-                seite_str = "links" if s == 'left' else "rechts"
-                px_x = self.tracker.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-                px_y = self.tracker.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-                korrektur = self.linsen_verzerrung_links if s == 'left' else self.linsen_verzerrung_rechts
-                kurve = self.tracker.config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5)
+                # ---> Daten blitzschnell aus dem RAM holen <---
+                c_set = self.cam_settings[s]
+                px_x, px_y = c_set['px_x'], c_set['px_y']
+                korrektur, kurve = c_set['korrektur'], c_set['kurve']
+                lens_cx, lens_cy = c_set['lens_cx'], c_set['lens_cy']
 
-                # ---> NEU: Echten Linsenmittelpunkt aus Crop berechnen <---
-                crop_sec = "Crop_Links" if s == 'left' else "Crop_Rechts"
-                cam_w = self.tracker.config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
-                cam_h = self.tracker.config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
-                cut_l = self.tracker.config.getint(crop_sec, 'cut_left', fallback=0)
-                cut_t = self.tracker.config.getint(crop_sec, 'cut_top', fallback=0)
-                
-                lens_cx = (cam_w / 2.0) - cut_l
-                lens_cy = (cam_h / 2.0) - cut_t
-
-                # ---> NEU: Linsen-Mitte auch in der 15s-Ansicht als gelbes Kreuz einblenden <---
+                # ---> Das große gelbe Linsen-Kreuz für das Live-Tuning am Monitor! <---
                 lens_draw_cx = int(round((lens_cx * z + ox) * self.scale_x))
                 lens_draw_cy = int(round((lens_cy * z + oy) * self.scale_y))
-                cross_sz = 4
-                cv2.line(roi, (lens_draw_cx - cross_sz, lens_draw_cy), (lens_draw_cx + cross_sz, lens_draw_cy), (0, 255, 255), 1, cv2.LINE_AA)
-                cv2.line(roi, (lens_draw_cx, lens_draw_cy - cross_sz), (lens_draw_cx, lens_draw_cy + cross_sz), (0, 255, 255), 1, cv2.LINE_AA)
+                marker_color = (0, 255, 255)
+                cv2.drawMarker(roi, (lens_draw_cx, lens_draw_cy), marker_color, markerType=cv2.MARKER_CROSS, markerSize=25, thickness=2, line_type=cv2.LINE_AA)
+                cv2.putText(roi, "Linsen-Mitte", (lens_draw_cx + 15, lens_draw_cy - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, marker_color, 2, cv2.LINE_AA)
 
-                # Der optische Mittelpunkt
+                # Der optische Mittelpunkt (Weißer Punkt/Erdnuss)
                 draw_cx = int(round((feedback['cx'] * z + ox) * self.scale_x))
                 draw_cy = int(round((feedback['cy'] * z + oy) * self.scale_y))
                 
-                # Der DEBUG-Kreis (Rot) - Pixelbasiert!
+                # Der DEBUG-Kreis (Rot)
                 if feedback.get('show_red', False) or feedback.get('show_red') == True:
                     draw_red_cx = int(round((feedback['red_cx'] * z + ox) * self.scale_x))
                     draw_red_cy = int(round((feedback['red_cy'] * z + oy) * self.scale_y))
@@ -459,7 +449,6 @@ class TargetVisionRenderer:
                         for angle in range(0, 360, 6):
                             cv2.ellipse(roi, (draw_red_cx, draw_red_cy), (fb_red_rx, fb_red_ry), 0, angle, angle + 2, (0, 0, 255), 1, cv2.LINE_AA)
                 
-                # Zwei äußerste Ringe zur Kontrolle einblenden
                 aktive_scheibe = self.tracker.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
                 targets = self.tracker.dm.load_targets()
                 
@@ -471,7 +460,7 @@ class TargetVisionRenderer:
                         img=roi, center_x=feedback['cx'], center_y=feedback['cy'], 
                         radius_mm=spiegel_mm / 2.0, color=(0, 255, 0), 
                         px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
-                        lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, # <--- HIER KORRIGIERT
+                        lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, 
                         thickness=1, dashed=True, is_hit=False, 
                         zoom_params=zoom_params[s], scale_x=self.scale_x, scale_y=self.scale_y
                     )
@@ -479,49 +468,38 @@ class TargetVisionRenderer:
                     ringe = target_data.get('ringe_durchmesser_mm', {})
                     if ringe:
                         alle_durchmesser = sorted([float(d) for d in ringe.values()], reverse=True)
-                        for d_mm in alle_durchmesser[:2]: # Die zwei größten
+                        for d_mm in alle_durchmesser[:2]: 
                             Helfer.draw_smart_ellipse(
                                 img=roi, center_x=feedback['cx'], center_y=feedback['cy'], 
                                 radius_mm=d_mm / 2.0, color=(0, 255, 0), 
                                 px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
-                                lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, # <--- HIER KORRIGIERT
+                                lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, 
                                 thickness=1, dashed=True, is_hit=False, 
                                 zoom_params=zoom_params[s], scale_x=self.scale_x, scale_y=self.scale_y
                             )
                 else:
-                    # Fallback (Ideal-Ringe aus Pixeln, falls keine JSON geladen ist)
                     fb_ideal_rx = int(round(feedback['ideal_rx'] * z * self.scale_x))
                     fb_ideal_ry = int(round(feedback['ideal_ry'] * z * self.scale_y))
                     if fb_ideal_rx > 0 and fb_ideal_ry > 0:
                         for angle in range(0, 360, 6):
                             cv2.ellipse(roi, (draw_cx, draw_cy), (fb_ideal_rx, fb_ideal_ry), 0, angle, angle + 2, (0, 255, 0), 1, cv2.LINE_AA)
 
-                # Zentrum-Kreuzchen (Manuell, da es keine Ellipse ist)
                 cross_size = 6
                 cv2.line(roi, (draw_cx - cross_size, draw_cy), (draw_cx + cross_size, draw_cy), (0, 255, 0), 1, cv2.LINE_AA)
                 cv2.line(roi, (draw_cx, draw_cy - cross_size), (draw_cx, draw_cy + cross_size), (0, 255, 0), 1, cv2.LINE_AA)
-                
+        
         # 3. DAUERHAFTE ZIELSCHEIBEN-RINGE
         if self.show_all_rings:
             for s, fb in [('left', self.tracker.calib_feedback_left), ('right', self.tracker.calib_feedback_right)]:
                 if s in camera_rois and fb:
                     roi = camera_rois[s]
+                    z, ox, oy = zoom_params[s]
                     
-                    seite_str = "links" if s == 'left' else "rechts"
-                    px_x = self.tracker.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-                    px_y = self.tracker.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-                    korrektur = self.linsen_verzerrung_links if s == 'left' else self.linsen_verzerrung_rechts
-                    kurve = self.tracker.config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5)
-
-                    # ---> NEU: Echten Linsenmittelpunkt aus Crop berechnen <---
-                    crop_sec = "Crop_Links" if s == 'left' else "Crop_Rechts"
-                    cam_w = self.tracker.config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
-                    cam_h = self.tracker.config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
-                    cut_l = self.tracker.config.getint(crop_sec, 'cut_left', fallback=0)
-                    cut_t = self.tracker.config.getint(crop_sec, 'cut_top', fallback=0)
-                    
-                    lens_cx = (cam_w / 2.0) - cut_l
-                    lens_cy = (cam_h / 2.0) - cut_t
+                    # ---> Daten blitzschnell aus dem RAM holen <---
+                    c_set = self.cam_settings[s]
+                    px_x, px_y = c_set['px_x'], c_set['px_y']
+                    korrektur, kurve = c_set['korrektur'], c_set['kurve']
+                    lens_cx, lens_cy = c_set['lens_cx'], c_set['lens_cy']
 
                     aktive_scheibe = self.tracker.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
                     targets = self.tracker.dm.load_targets()
@@ -535,7 +513,7 @@ class TargetVisionRenderer:
                                 img=roi, center_x=fb['cx'], center_y=fb['cy'], 
                                 radius_mm=float(d_mm) / 2.0, color=(0, 255, 0), 
                                 px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
-                                lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, # <--- HIER KORRIGIERT
+                                lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, 
                                 thickness=1, dashed=True, is_hit=False, 
                                 zoom_params=zoom_params[s], scale_x=self.scale_x, scale_y=self.scale_y
                             )
@@ -545,7 +523,7 @@ class TargetVisionRenderer:
                                 img=roi, center_x=fb['cx'], center_y=fb['cy'], 
                                 radius_mm=float(innenzehner) / 2.0, color=(0, 255, 0), 
                                 px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
-                                lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, # <--- HIER KORRIGIERT
+                                lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, 
                                 thickness=1, dashed=True, is_hit=False, 
                                 zoom_params=zoom_params[s], scale_x=self.scale_x, scale_y=self.scale_y
                             )

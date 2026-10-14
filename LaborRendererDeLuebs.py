@@ -216,9 +216,11 @@ class LaborRenderer:
             cam_h = d_config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
             cut_l = d_config.getint(crop_sec, 'cut_left', fallback=0)
             cut_t = d_config.getint(crop_sec, 'cut_top', fallback=0)
-            
-            lens_cx = (cam_w / 2.0) - cut_l
-            lens_cy = (cam_h / 2.0) - cut_t
+            # ---> NEU: Offset aus Config <---
+            off_x = d_config.getint('Kameras', f'lens_offset_x_{seite_str}', fallback=0)
+            off_y = d_config.getint('Kameras', f'lens_offset_y_{seite_str}', fallback=0)
+            lens_cx = (cam_w / 2.0) - cut_l + off_x
+            lens_cy = (cam_h / 2.0) - cut_t + off_y
             
             meta = getattr(self.app, 'original_match_data', {})
             meta_dict = meta.get("metadata", {}) if isinstance(meta, dict) else {}
@@ -396,9 +398,11 @@ class LaborRenderer:
         cam_h = d_config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
         cut_l = d_config.getint(crop_sec, 'cut_left', fallback=0)
         cut_t = d_config.getint(crop_sec, 'cut_top', fallback=0)
-        
-        lens_cx = (cam_w / 2.0) - cut_l
-        lens_cy = (cam_h / 2.0) - cut_t
+        # ---> NEU: Offset aus Config <---
+        off_x = d_config.getint('Kameras', f'lens_offset_x_{seite_str}', fallback=0)
+        off_y = d_config.getint('Kameras', f'lens_offset_y_{seite_str}', fallback=0)
+        lens_cx = (cam_w / 2.0) - cut_l + off_x
+        lens_cy = (cam_h / 2.0) - cut_t + off_y
         
         meta = getattr(self.app, 'original_match_data', {})
         meta_dict = meta.get("metadata", {}) if isinstance(meta, dict) else {}
@@ -657,7 +661,6 @@ class LaborRenderer:
                 cv2.drawMarker(combined, (lx_right, ly_right), marker_color, markerType=cv2.MARKER_CROSS, markerSize=25, thickness=2, line_type=cv2.LINE_AA)
                 cv2.putText(combined, "Linsen-Mitte", (lx_right + 15, ly_right - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, marker_color, 2, cv2.LINE_AA)
         
-        
         self.app.base_combined_img = combined.copy()
         self.app.base_combined_img_rgb = cv2.cvtColor(combined, cv2.COLOR_BGR2RGB)
         
@@ -727,9 +730,11 @@ class LaborRenderer:
             cam_h = d_config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
             cut_l = d_config.getint(crop_sec, 'cut_left', fallback=0)
             cut_t = d_config.getint(crop_sec, 'cut_top', fallback=0)
-            
-            lens_cx = (cam_w / 2.0) - cut_l
-            lens_cy = (cam_h / 2.0) - cut_t
+            # ---> NEU: Offset aus Config <---
+            off_x = d_config.getint('Kameras', f'lens_offset_x_{seite_str}', fallback=0)
+            off_y = d_config.getint('Kameras', f'lens_offset_y_{seite_str}', fallback=0)
+            lens_cx = (cam_w / 2.0) - cut_l + off_x
+            lens_cy = (cam_h / 2.0) - cut_t + off_y
             
             meta = getattr(self.app, 'original_match_data', {})
             meta_dict = meta.get("metadata", {}) if isinstance(meta, dict) else {}

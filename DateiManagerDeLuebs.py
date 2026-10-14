@@ -251,6 +251,10 @@ px_pro_mm_y_rechts = 5.0
 # Belichtungseinstellung (Standard, Auto oder manuelle Werte von -1 bis -10)
 belichtung_links = Standard
 belichtung_rechts = Standard
+linsen_verzerrung_links = -0.0000
+linsen_verzerrung_rechts = -0.0000
+linsen_kurve_links = 1.5
+linsen_kurve_rechts = 1.5
 
 [Erkennung]
 max_aspect_ratio = 3.5

@@ -168,16 +168,17 @@ class StateManager:
         self.nullpunkts[side] = (cx, cy)
 
     def _get_lens_center(self, side):
-        """ELA: Berechnet den physikalischen Linsenmittelpunkt im beschnittenen Bild."""
+        """ELA: Berechnet den physikalischen Linsenmittelpunkt inkl. manueller Justierung."""
         seite_str = "links" if side == 'left' else "rechts"
         crop_sec = "Crop_Links" if side == 'left' else "Crop_Rechts"
-        
         cam_w = self.config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
         cam_h = self.config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
         cut_l = self.config.getint(crop_sec, 'cut_left', fallback=0)
         cut_t = self.config.getint(crop_sec, 'cut_top', fallback=0)
-        
-        return (cam_w / 2.0) - cut_l, (cam_h / 2.0) - cut_t
+        # ---> NEU: Manuelle Justierung des Linsenmittelpunkts <---
+        offset_x = self.config.getint('Kameras', f'lens_offset_x_{seite_str}', fallback=0)
+        offset_y = self.config.getint('Kameras', f'lens_offset_y_{seite_str}', fallback=0)
+        return (cam_w / 2.0) - cut_l + offset_x, (cam_h / 2.0) - cut_t + offset_y
 
     def _undistort_point_mm(self, px_x, px_y, cx_linse, cy_linse, px_per_mm_x, px_per_mm_y, korrektur, kurve):
         """ELA: Rechnet eine verzerrte Pixel-Koordinate in eine flache Millimeter-Distanz zur Linse um."""

@@ -257,7 +257,12 @@ class LaborApp:
             self.calib_y_var.set(val_y)
             self.calib_linsen_verzerrung_var.set(val_fisch)
             self.calib_linsen_kurve_var.set(val_kurve) # <--- NEU
-
+            
+            val_off_x = parser.getint('Kameras', f'lens_offset_x_{seite_str}', fallback=0)
+            val_off_y = parser.getint('Kameras', f'lens_offset_y_{seite_str}', fallback=0)
+            self.calib_lens_offset_x_var.set(val_off_x)
+            self.calib_lens_offset_y_var.set(val_off_y)
+            
     def switch_camera(self):
         """Wird aufgerufen, wenn man zwischen Links/Rechts umschaltet."""
         self.current_index = 0 # Zurück auf Start!
@@ -355,11 +360,15 @@ class LaborApp:
                 'left_x': parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0),
                 'left_y': parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0),
                 'left_fisch': parser.getfloat('Kameras', 'linsen_verzerrung_links', fallback=0.0),
-                'left_kurve': parser.getfloat('Kameras', 'linsen_kurve_links', fallback=1.5),     # <--- NEU
+                'left_kurve': parser.getfloat('Kameras', 'linsen_kurve_links', fallback=1.5),
                 'right_x': parser.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0),
                 'right_y': parser.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0),
                 'right_fisch': parser.getfloat('Kameras', 'linsen_verzerrung_rechts', fallback=0.0),
-                'right_kurve': parser.getfloat('Kameras', 'linsen_kurve_rechts', fallback=1.5)      # <--- NEU
+                'right_kurve': parser.getfloat('Kameras', 'linsen_kurve_rechts', fallback=1.5),
+                'left_off_x': parser.getint('Kameras', 'lens_offset_x_links', fallback=0),
+                'left_off_y': parser.getint('Kameras', 'lens_offset_y_links', fallback=0),
+                'right_off_x': parser.getint('Kameras', 'lens_offset_x_rechts', fallback=0),
+                'right_off_y': parser.getint('Kameras', 'lens_offset_y_rechts', fallback=0),
             }
             
             # ---> NEU: Initialen Push der Kalibrierungsdaten in die Slider erzwingen, 
