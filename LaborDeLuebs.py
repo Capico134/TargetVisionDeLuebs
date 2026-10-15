@@ -353,7 +353,15 @@ class LaborApp:
             # =================================================================
             if not parser.has_section('Kameras'):
                 parser.add_section('Kameras')
-                
+            
+            # ---> NEU: Manuelle Prüfung der Linsen-Offsets für den Legacy Migrator <---
+            for s in ['links', 'rechts']:
+                for axis in ['x', 'y']:
+                    key = f"lens_offset_{axis}_{s}"
+                    if not parser.has_option('Kameras', key):
+                        parser.set('Kameras', key, "0")
+                        self.migrated_keys.append(key)
+            
             # Da wir auch hier getfloat MIT Fallback nutzen, werden fehlende 
             # Kamera-Parameter (wie 'linsen_verzerrung) sofort vom Parser geheilt!
             self.orig_calib = {
@@ -418,9 +426,17 @@ class LaborApp:
         self.print_help_banner()
         
         self.lbl_image.config(text="Stand-Alone Modus aktiv.\n(Klicke auf 'Erweiterte Einstellungen')", fg="white")
-        
+
         # Exakt dieselbe Hilfsfunktion nutzen – keine Redundanz mehr!
         self.apply_config_to_ui(parser)
+
+        # ---> NEU: Migrator-Log auch im lokalen Modus ausgeben! <---
+        if hasattr(self, 'migrated_keys') and self.migrated_keys:
+            keys_str = ", ".join(self.migrated_keys)
+            self.print_log("SYSTEM", f"🔧 Legacy-Migrator: {len(self.migrated_keys)} fehlende Parameter aus lokaler Config ergänzt:")
+            self.print_log("SYSTEM", f"   -> {keys_str}")
+            print(f"\n🔧 [LEGACY-MIGRATOR] {len(self.migrated_keys)} fehlende Parameter lokal ergänzt:\n   -> {keys_str}\n")
+            self.migrated_keys = []
 
     def load_zip(self, filepath=None):
         if not filepath:
