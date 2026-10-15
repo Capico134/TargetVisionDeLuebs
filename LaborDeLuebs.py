@@ -1038,19 +1038,35 @@ class LaborApp:
             messagebox.showwarning("Fehler", "Bitte lade zuerst ein ZIP-Paket!")
             return
             
-        # ---> DER FIX: Wenn der Modus schon aktiv ist, dient der Button als Abbruch! <---
         if getattr(self, 'calib_mode_active', False):
             self.cancel_calibration()
             return
             
+        # =========================================================================
+        # ---> NEU: Der JSON-Import für Klick-Koordinaten! <---
+        # =========================================================================
+        load_existing = messagebox.askyesno("Klicks importieren", "Möchtest du eine gespeicherte 16-Punkte-Liste laden, um das manuelle Klicken zu überspringen?")
+        if load_existing:
+            filepath = filedialog.askopenfilename(title="Punkte laden", filetypes=[("JSON", "*.json")])
+            if filepath:
+                try:
+                    with open(filepath, "r") as f:
+                        loaded_pts = json.load(f)
+                    if len(loaded_pts) == 16:
+                        self.calib_mode_active = True
+                        self.calib_points = loaded_pts
+                        self.finish_calibration() # Direkt in die Werkbank springen!
+                        return
+                    else:
+                        messagebox.showerror("Fehler", f"Die Datei enthält {len(loaded_pts)} statt 16 Punkte!")
+                except Exception as e:
+                    messagebox.showerror("Fehler", f"Konnte Datei nicht laden:\n{e}")
+                    
         self.calib_mode_active = True
         self.calib_points = []
         self.btn_calib_assist.config(bg="#e74c3c", text="🔴 Assistent aktiv (Abbrechen)")
         self.lbl_image.config(cursor="crosshair")
         
-        # =========================================================================
-        # ---> NEU: Extrem auffällige Warnung für das Zielprofil! <---
-        # =========================================================================
         d_config = self.package_data['config']
         aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
         
@@ -1061,7 +1077,6 @@ class LaborApp:
         if "Laufende" in aktive_scheibe:
             self.print_log("KALIB", "⚠️ Achtung: Es ist ein Profil für Laufende Scheiben aktiv!", show_gui=True)
             
-        # ---> NEU: Die gezielte Anleitung direkt zum Start des Assistenten <---
         self.print_log("KALIB", "----------------------------------------------------------------------", show_gui=True)
         self.print_log("KALIB", "📐 BEDIENUNG DER KALIBRIERUNG:", show_gui=True)
         self.print_log("KALIB", "[Linksklick]         : Punkt setzen", show_gui=True)
@@ -1184,7 +1199,6 @@ class LaborApp:
         neun_l, neun_r, neun_o, neun_u = pts[8], pts[9], pts[10], pts[11]
         aussen_l, aussen_r, aussen_o, aussen_u = pts[12], pts[13], pts[14], pts[15]
 
-        # Initiale Werte (Schätzung über ALLE Ringe statt nur dem 9er)
         init_cx = (neun_l[0] + neun_r[0] + spiegel_l[0] + spiegel_r[0] + aussen_l[0] + aussen_r[0]) / 6.0
         init_cy = (neun_o[1] + neun_u[1] + spiegel_o[1] + spiegel_u[1] + aussen_o[1] + aussen_u[1]) / 6.0
         
@@ -1202,12 +1216,18 @@ class LaborApp:
         y_data_x = np.array([p_9_x / r_9, p_s_x / r_s, p_a_x / r_a])
         y_data_y = np.array([p_9_y / r_9, p_s_y / r_s, p_a_y / r_a])
 
-        dist_diag1 = math.hypot(diag1_o[0] - diag1_u[0], diag1_o[1] - diag1_u[1])
-        dist_diag2 = math.hypot(diag2_o[0] - diag2_u[0], diag2_o[1] - diag2_u[1])
-
         # =========================================================================
-        # ---> GUI SETUP FÜR DIE WREKBANK <---
+        # ---> Kameradaten für das echte Linsenzentrum abrufen <---
         # =========================================================================
+        side = self.active_camera_var.get()
+        seite_str = "links" if side == 'left' else "rechts"
+        crop_sec = "Crop_Links" if side == 'left' else "Crop_Rechts"
+        cam_w = d_config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
+        cam_h = d_config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
+        cut_l = d_config.getint(crop_sec, 'cut_left', fallback=0)
+        cut_t = d_config.getint(crop_sec, 'cut_top', fallback=0)
+        
+        # GUI SETUP
         info_win = tk.Toplevel(self.root)
         info_win.title("Interaktive Kalibrierungs-Werkbank")
         info_win.attributes('-topmost', True)
@@ -1226,6 +1246,8 @@ class LaborApp:
         var_px_y = tk.DoubleVar(value=self.calib_y_var.get())
         var_korr = tk.DoubleVar(value=self.calib_linsen_verzerrung_var.get())
         var_kurve = tk.DoubleVar(value=self.calib_linsen_kurve_var.get())
+        var_off_x = tk.IntVar(value=self.calib_lens_offset_x_var.get())
+        var_off_y = tk.IntVar(value=self.calib_lens_offset_y_var.get())
         
         def build_param_row(parent, label, tk_var, res, step):
             row = tk.Frame(parent)
@@ -1233,7 +1255,10 @@ class LaborApp:
             tk.Label(row, text=label, width=20, anchor="w").pack(side=tk.LEFT)
             
             def nudge(amount):
-                tk_var.set(round(tk_var.get() + amount, 6))
+                if isinstance(tk_var, tk.IntVar):
+                    tk_var.set(int(tk_var.get() + amount))
+                else:
+                    tk_var.set(round(tk_var.get() + amount, 6))
                 recalculate()
                 
             tk.Button(row, text="◀", command=lambda: nudge(-step), font=("Arial", 8), padx=2, pady=0).pack(side=tk.LEFT)
@@ -1250,6 +1275,8 @@ class LaborApp:
         build_param_row(control_frame, "Pixel pro mm Y:", var_px_y, 0.001, 0.01)
         build_param_row(control_frame, "Linsen-Verzerrung:", var_korr, 0.00001, 0.0001)
         build_param_row(control_frame, "Linsen-Kurve (Exp):", var_kurve, 0.01, 0.05)
+        build_param_row(control_frame, "Linsen-Offset X:", var_off_x, 1, 5)
+        build_param_row(control_frame, "Linsen-Offset Y:", var_off_y, 1, 5)
 
         # Log Frame
         txt_frame = tk.Frame(info_win)
@@ -1269,19 +1296,45 @@ class LaborApp:
             px_mm_y = var_px_y.get()
             avg_korrektur = var_korr.get()
             kurve = var_kurve.get()
+            off_x = var_off_x.get()
+            off_y = var_off_y.get()
             
+            lens_cx = (cam_w / 2.0) - cut_l + off_x
+            lens_cy = (cam_h / 2.0) - cut_t + off_y
+
+            # =========================================================================
+            # ---> NEU: 100% ELA-KONFORME VALIDIERUNG WIE IM STATEMANAGER! <---
+            # Wir entzerren die geklickten Bild-Punkte auf eine perfekte flache Papierebene
+            # =========================================================================
+            def _undistort_point_mm(px_x, px_y):
+                dx_mm_obs = (px_x - lens_cx) / px_mm_x if px_mm_x else 0
+                dy_mm_obs = (px_y - lens_cy) / px_mm_y if px_mm_y else 0
+                dist_mm_obs = math.hypot(dx_mm_obs, dy_mm_obs)
+                
+                d_true = dist_mm_obs
+                if avg_korrektur != 0.0 and dist_mm_obs > 0:
+                    for _ in range(4):
+                        f = d_true + avg_korrektur * (d_true**(kurve + 1.0)) - dist_mm_obs
+                        df = 1.0 + (kurve + 1.0) * avg_korrektur * (d_true**kurve)
+                        if df == 0: break
+                        d_true = d_true - (f / df)
+                scale = d_true / dist_mm_obs if dist_mm_obs > 0 else 1.0
+                return dx_mm_obs * scale, dy_mm_obs * scale
+
             def validate_point(pt, mm_real):
                 r_mm_base = mm_real / 2.0
-                r_mm_draw = r_mm_base * (1.0 + ((r_mm_base**kurve) * avg_korrektur))
-                dx_px = pt[0] - cx
-                dy_px = pt[1] - cy
-                dx_mm = dx_px / px_mm_x if px_mm_x else 0
-                dy_mm = dy_px / px_mm_y if px_mm_y else 0
-                dist_mm = math.hypot(dx_mm, dy_mm)
-                err_mm = dist_mm - r_mm_draw
-                act_dist_px = math.hypot(dx_px, dy_px)
-                px_per_mm_ray = act_dist_px / dist_mm if dist_mm > 0 else 0
-                err_px = err_mm * px_per_mm_ray
+                
+                # Wir mappen Zielscheibenzentrum UND den Klick auf die flache Papierwelt
+                true_cx, true_cy = _undistort_point_mm(cx, cy)
+                true_pt_x, true_pt_y = _undistort_point_mm(pt[0], pt[1])
+                
+                # Pythagoras liefert uns nun die perfekte physische Distanz auf Papier
+                dist_mm_true = math.hypot(true_pt_x - true_cx, true_pt_y - true_cy)
+                
+                # Abweichung (Millimeter)
+                err_mm = dist_mm_true - r_mm_base
+                # Grobe Umrechnung für die visuelle Ausgabe in Pixeln
+                err_px = err_mm * ((px_mm_x + px_mm_y) / 2.0)
                 return err_px, err_mm
 
             log_lines = []
@@ -1290,7 +1343,8 @@ class LaborApp:
             log_lines.append(f"  px_pro_mm (X) : {px_mm_x:.4f}")
             log_lines.append(f"  px_pro_mm (Y) : {px_mm_y:.4f}")
             log_lines.append(f"  Fischaugenkorr: {avg_korrektur:.6f}")
-            log_lines.append(f"  Linsen-Kurve  : {kurve:.2f}\n")
+            log_lines.append(f"  Linsen-Kurve  : {kurve:.2f}")
+            log_lines.append(f"  Linsen-Offset : X:{off_x} / Y:{off_y}\n")
             
             log_lines.append("BEST-FIT VALIDIERUNG (Theorie vs. Klick):")
             log_lines.append("(Minus = Klick war näher am Zentrum als berechnet)")
@@ -1336,9 +1390,12 @@ class LaborApp:
             final_values['px_y'] = px_mm_y
             final_values['korr'] = avg_korrektur
             final_values['kurve'] = kurve
+            final_values['off_x'] = off_x
+            final_values['off_y'] = off_y
             final_values['log'] = log_lines
 
         def do_auto_fit():
+            # Der Auto-Fit nutzt weiterhin die alte Näherung für den groben Vorab-Wert
             kurve = var_kurve.get()
             x_data = np.array([r_9**kurve, r_s**kurve, r_a**kurve])
             m_x, b_x = np.polyfit(x_data, y_data_x, 1)
@@ -1350,7 +1407,6 @@ class LaborApp:
             k_y = m_y / b_y if b_y != 0 else 0.0
             var_korr.set(round((k_x + k_y) / 2.0, 6))
             
-            # cx / cy machen wir über die 3 Ringe per Symmetrie-Durchschnitt
             cx_neu = (neun_l[0] + neun_r[0] + spiegel_l[0] + spiegel_r[0] + aussen_l[0] + aussen_r[0]) / 6.0
             cy_neu = (neun_o[1] + neun_u[1] + spiegel_o[1] + spiegel_u[1] + aussen_o[1] + aussen_u[1]) / 6.0
             var_cx.set(round(cx_neu, 2))
@@ -1359,32 +1415,29 @@ class LaborApp:
             recalculate()
 
         def apply_preview():
-            """Spiegelt die Werte direkt ins Labor, lässt das Werkbank-Fenster aber offen!"""
             self.calib_x_var.set(final_values['px_x'])
             self.calib_y_var.set(final_values['px_y'])
             self.calib_linsen_verzerrung_var.set(final_values['korr']) 
             self.calib_linsen_kurve_var.set(final_values['kurve']) 
+            self.calib_lens_offset_x_var.set(final_values['off_x']) 
+            self.calib_lens_offset_y_var.set(final_values['off_y']) 
             
             side = self.active_camera_var.get()
             center_key = 'center_l' if side == 'left' else 'center_r'
             
-            # --- ELA-SICHERHEITSSICHT: Metadaten und Struktur garantieren ---
             if getattr(self, 'original_match_data', None) is None:
                 self.original_match_data = {}
             if 'metadata' not in self.original_match_data:
                 self.original_match_data['metadata'] = {}
                 
-            # Zentrum in die Metadaten schreiben
             self.original_match_data['metadata'][center_key] = [final_values['cx'], final_values['cy']]
             
-            # Zusätzlich direkt im StateManager als Nullpunkt verankern
             if hasattr(self, 'package_data') and self.package_data and 'config' in self.package_data:
                 d_config = self.package_data['config']
                 d_dm = DummyDateiManager(self)
                 d_sm = StateManager(d_config, d_dm)
                 d_sm.set_nullpunkt(side, final_values['cx'], final_values['cy'])
             
-            # Sofortiges Neuladen und Zeichnen erzwingen
             self.on_param_change(force=True)
 
         def apply_and_close():
@@ -1405,10 +1458,27 @@ class LaborApp:
             self.root.clipboard_clear()
             self.root.clipboard_append("\n".join(final_values['log']))
             tk.messagebox.showinfo("Kopiert", "Das aktuelle Protokoll wurde in die Zwischenablage kopiert!", parent=info_win)
+            
+        def export_points():
+            """Speichert die 16 Klick-Punkte zur späteren Wiederverwendung in einer JSON-Datei."""
+            filepath = filedialog.asksaveasfilename(
+                title="Klicks speichern", 
+                defaultextension=".json", 
+                initialfile="kalibrierung_klicks.json",
+                filetypes=[("JSON", "*.json")]
+            )
+            if filepath:
+                try:
+                    with open(filepath, "w") as f:
+                        json.dump(self.calib_points, f)
+                    tk.messagebox.showinfo("Erfolg", "Punkte erfolgreich gespeichert!", parent=info_win)
+                except Exception as e:
+                    tk.messagebox.showerror("Fehler", f"Speichern fehlgeschlagen:\n{e}", parent=info_win)
         
         btn_frame_top = tk.Frame(control_frame)
         btn_frame_top.pack(fill=tk.X, pady=10)
         tk.Button(btn_frame_top, text="🤖 Auto-Fit (aus Klicks) ausführen", command=do_auto_fit, bg="#e67e22", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+        tk.Button(btn_frame_top, text="💾 Klicks Speichern", command=export_points, bg="#8e44ad", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=10)
         
         btn_frame = tk.Frame(info_win)
         btn_frame.pack(pady=10)
