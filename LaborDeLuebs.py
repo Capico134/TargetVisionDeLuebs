@@ -1477,10 +1477,22 @@ class LaborApp:
             
         def export_points():
             """Speichert die 16 Klick-Punkte zur späteren Wiederverwendung in einer JSON-Datei."""
+            
+            # ---> NEU: Dynamischen Dateinamen zusammenbauen <---
+            match_name = "MATCH_Unbekannt"
+            if getattr(self, 'current_zip_path', None):
+                # Extrahiert "MATCH000082" aus "C:/.../MATCH000082.zip"
+                match_name = os.path.basename(self.current_zip_path).replace('.zip', '')
+                
+            side = self.active_camera_var.get()
+            seite_str = "Links" if side == 'left' else "Rechts"
+            
+            default_filename = f"kalibrierung_klicks_{match_name}_{seite_str}.json"
+
             filepath = filedialog.asksaveasfilename(
                 title="Klicks speichern", 
                 defaultextension=".json", 
-                initialfile="kalibrierung_klicks.json",
+                initialfile=default_filename,
                 filetypes=[("JSON", "*.json")]
             )
             if filepath:
