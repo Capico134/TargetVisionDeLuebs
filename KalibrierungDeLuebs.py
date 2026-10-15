@@ -22,22 +22,41 @@ class Kalibrator:
             return
             
         # =========================================================================
-        # ---> Der JSON-Import für Klick-Koordinaten! <---
+        # ---> Der erweiterte JSON-Import für Klick-Koordinaten & Parameter! <---
         # =========================================================================
-        load_existing = messagebox.askyesno("Klicks importieren", "Möchtest du eine gespeicherte 16-Punkte-Liste laden, um das manuelle Klicken zu überspringen?")
+        load_existing = messagebox.askyesno("Klicks importieren", "Möchtest du eine gespeicherte 20-Punkte-Liste laden, um das manuelle Klicken zu überspringen?")
         if load_existing:
-            filepath = filedialog.askopenfilename(title="Punkte laden", filetypes=[("JSON", "*.json")])
+            filepath = filedialog.askopenfilename(title="Kalibrierung laden", filetypes=[("JSON", "*.json")])
             if filepath:
                 try:
                     with open(filepath, "r") as f:
-                        loaded_pts = json.load(f)
-                    if len(loaded_pts) == 16:
+                        data = json.load(f)
+                        
+                    # Kompatibilität: Altes Array (16 Punkte) vs. neues Dictionary (20 Punkte + Params)
+                    if isinstance(data, list):
+                        pts = data
+                        params = {}
+                    else:
+                        pts = data.get("points", [])
+                        params = data.get("params", {})
+                        
+                    if len(pts) in [16, 20]:
                         self.app.calib_mode_active = True
-                        self.app.calib_points = loaded_pts
+                        self.app.calib_points = pts
+                        
+                        # ---> NEU: Parameter aus der JSON in die Slider laden <---
+                        if params:
+                            if 'px_x' in params: self.app.calib_x_var.set(params['px_x'])
+                            if 'px_y' in params: self.app.calib_y_var.set(params['px_y'])
+                            if 'korr' in params: self.app.calib_linsen_verzerrung_var.set(params['korr'])
+                            if 'kurve' in params: self.app.calib_linsen_kurve_var.set(params['kurve'])
+                            if 'off_x' in params: self.app.calib_lens_offset_x_var.set(params['off_x'])
+                            if 'off_y' in params: self.app.calib_lens_offset_y_var.set(params['off_y'])
+                            
                         self.finish_calibration() # Direkt in die Werkbank springen!
                         return
                     else:
-                        messagebox.showerror("Fehler", f"Die Datei enthält {len(loaded_pts)} statt 16 Punkte!")
+                        messagebox.showerror("Fehler", f"Die Datei enthält {len(pts)} statt 16 oder 20 Punkte!")
                 except Exception as e:
                     messagebox.showerror("Fehler", f"Konnte Datei nicht laden:\n{e}")
                     
@@ -89,22 +108,26 @@ class Kalibrator:
     def update_calibration_instruction(self):
         """Aktualisiert die Anweisungen für den Benutzer, je nachdem, wie viele Klicks schon erfolgt sind."""
         steps = [
-            "1/16: Klicke auf den LINKEN Rand des schwarzen Spiegels",
-            "2/16: Klicke auf den RECHTEN Rand des schwarzen Spiegels",
-            "3/16: Klicke auf den OBEREN Rand des schwarzen Spiegels",
-            "4/16: Klicke auf den UNTEREN Rand des schwarzen Spiegels",
-            "5/16: Klicke DIAGONAL LINKS OBEN am schwarzen Spiegel",
-            "6/16: Klicke DIAGONAL RECHTS UNTEN am schwarzen Spiegel",
-            "7/16: Klicke DIAGONAL RECHTS OBEN am schwarzen Spiegel",
-            "8/16: Klicke DIAGONAL LINKS UNTEN am schwarzen Spiegel",
-            "9/16: Klicke auf den LINKEN Rand des 9er-Rings",
-            "10/16: Klicke auf den RECHTEN Rand des 9er-Rings",
-            "11/16: Klicke auf den OBEREN Rand des 9er-Rings",
-            "12/16: Klicke auf den UNTEREN Rand des 9er-Rings",
-            "13/16: Klicke auf den LINKEN Rand des äußersten Rings",
-            "14/16: Klicke auf den RECHTEN Rand des äußersten Rings",
-            "15/16: Klicke auf den OBEREN Rand des äußersten Rings",
-            "16/16: Klicke auf den UNTEREN Rand des äußersten Rings"
+            "1/20: Klicke auf den LINKEN Rand des schwarzen Spiegels",
+            "2/20: Klicke auf den RECHTEN Rand des schwarzen Spiegels",
+            "3/20: Klicke auf den OBEREN Rand des schwarzen Spiegels",
+            "4/20: Klicke auf den UNTEREN Rand des schwarzen Spiegels",
+            "5/20: Klicke DIAGONAL LINKS OBEN am schwarzen Spiegel",
+            "6/20: Klicke DIAGONAL RECHTS UNTEN am schwarzen Spiegel",
+            "7/20: Klicke DIAGONAL RECHTS OBEN am schwarzen Spiegel",
+            "8/20: Klicke DIAGONAL LINKS UNTEN am schwarzen Spiegel",
+            "9/20: Klicke auf den LINKEN Rand des 9er-Rings",
+            "10/20: Klicke auf den RECHTEN Rand des 9er-Rings",
+            "11/20: Klicke auf den OBEREN Rand des 9er-Rings",
+            "12/20: Klicke auf den UNTEREN Rand des 9er-Rings",
+            "13/20: Klicke auf den LINKEN Rand des 6er-Rings",
+            "14/20: Klicke auf den RECHTEN Rand des 6er-Rings",
+            "15/20: Klicke auf den OBEREN Rand des 6er-Rings",
+            "16/20: Klicke auf den UNTEREN Rand des 6er-Rings",
+            "17/20: Klicke auf den LINKEN Rand des äußersten Rings",
+            "18/20: Klicke auf den RECHTEN Rand des äußersten Rings",
+            "19/20: Klicke auf den OBEREN Rand des äußersten Rings",
+            "20/20: Klicke auf den UNTEREN Rand des äußersten Rings"
         ]
         
         if len(self.app.calib_points) < len(steps):
@@ -141,8 +164,8 @@ class Kalibrator:
         self.app.btn_calib_assist.config(bg="#8e44ad", text="📏 Kalibrierung")
         self.app.lbl_image.config(cursor="")
         
-        if len(self.app.calib_points) != 16:
-            self.app.print_log("KALIB", "Zu wenige Punkte gesammelt. Abbruch.", show_gui=True)
+        if len(self.app.calib_points) not in [16, 20]:
+            self.app.print_log("KALIB", "Falsche Anzahl Punkte gesammelt. Abbruch.", show_gui=True)
             return
             
         d_config = self.app.package_data['config']
@@ -159,6 +182,10 @@ class Kalibrator:
             spiegel_mm = float(target_data.get('spiegel_durchmesser_mm', 30.5))
             ringe_mm = target_data.get('ringe_durchmesser_mm', {})
             neun_mm = float(ringe_mm.get('9', spiegel_mm * 0.5))
+            
+            # ---> GEÄNDERT: 6er Ring auslesen <---
+            sechs_mm = float(ringe_mm.get('6', spiegel_mm * 1.5)) 
+            
             if '1' in ringe_mm:
                 aussen_mm = float(ringe_mm['1'])
             else:
@@ -171,7 +198,15 @@ class Kalibrator:
         spiegel_l, spiegel_r, spiegel_o, spiegel_u = pts[0], pts[1], pts[2], pts[3]
         diag1_o, diag1_u, diag2_o, diag2_u = pts[4], pts[5], pts[6], pts[7]
         neun_l, neun_r, neun_o, neun_u = pts[8], pts[9], pts[10], pts[11]
-        aussen_l, aussen_r, aussen_o, aussen_u = pts[12], pts[13], pts[14], pts[15]
+        
+        # ---> GEÄNDERT: Dynamische Zuweisung für 16 vs 20 Punkte <---
+        if len(pts) == 20:
+            sechs_l, sechs_r, sechs_o, sechs_u = pts[12], pts[13], pts[14], pts[15]
+            aussen_l, aussen_r, aussen_o, aussen_u = pts[16], pts[17], pts[18], pts[19]
+        else:
+            # Fallback für alte 16-Punkte JSONs (Wir tun so, als gäbe es keinen Klick)
+            sechs_l, sechs_r, sechs_o, sechs_u = None, None, None, None
+            aussen_l, aussen_r, aussen_o, aussen_u = pts[12], pts[13], pts[14], pts[15]
 
         init_cx = (neun_l[0] + neun_r[0] + spiegel_l[0] + spiegel_r[0] + aussen_l[0] + aussen_r[0]) / 6.0
         init_cy = (neun_o[1] + neun_u[1] + spiegel_o[1] + spiegel_u[1] + aussen_o[1] + aussen_u[1]) / 6.0
@@ -279,8 +314,9 @@ class Kalibrator:
                 d_true = dist_mm_obs
                 if avg_korrektur != 0.0 and dist_mm_obs > 0:
                     for _ in range(4):
-                        f = d_true + avg_korrektur * (d_true**(kurve + 1.0)) - dist_mm_obs
-                        df = 1.0 + (kurve + 1.0) * avg_korrektur * (d_true**kurve)
+                        d_abs = abs(d_true)
+                        f = d_true + avg_korrektur * (d_abs**(kurve + 1.0)) - dist_mm_obs
+                        df = 1.0 + (kurve + 1.0) * avg_korrektur * (d_abs**kurve)
                         if df == 0: break
                         d_true = d_true - (f / df)
                 scale = d_true / dist_mm_obs if dist_mm_obs > 0 else 1.0
@@ -309,10 +345,11 @@ class Kalibrator:
 
             err_sum_9 = 0
             err_sum_s = 0
+            err_sum_6 = 0 # <--- GEÄNDERT
             err_sum_a = 0
 
             def add_validation(section_name, mm_real, labels, points):
-                nonlocal err_sum_9, err_sum_s, err_sum_a
+                nonlocal err_sum_9, err_sum_s, err_sum_6, err_sum_a
                 log_lines.append(f"\n▶ {section_name} ({mm_real} mm):")
                 sum_err = 0
                 for lbl, pt in zip(labels, points):
@@ -323,18 +360,26 @@ class Kalibrator:
                 avg = sum_err / len(points)
                 if section_name == "9er-Ring": err_sum_9 = avg
                 elif "Spiegel" in section_name: err_sum_s += avg * len(points) 
+                elif section_name == "6er-Ring": err_sum_6 = avg # <--- GEÄNDERT
                 elif section_name == "Außenring": err_sum_a = avg
 
             add_validation("9er-Ring", neun_mm, ["Links", "Rechts", "Oben", "Unten"], [neun_l, neun_r, neun_o, neun_u])
             add_validation("Spiegel (Achsen)", spiegel_mm, ["Links", "Rechts", "Oben", "Unten"], [spiegel_l, spiegel_r, spiegel_o, spiegel_u])
             add_validation("Spiegel (Diag)", spiegel_mm, ["Links-Oben", "Rechts-Unten", "Rechts-Oben", "Links-Unten"], [diag1_o, diag1_u, diag2_o, diag2_u])
             err_sum_s = err_sum_s / 8.0 
+            
+            # ---> GEÄNDERT: 6er Ring Validation (falls vorhanden) <---
+            if sechs_l is not None:
+                add_validation("6er-Ring", sechs_mm, ["Links", "Rechts", "Oben", "Unten"], [sechs_l, sechs_r, sechs_o, sechs_u])
+                
             add_validation("Außenring", aussen_mm, ["Links", "Rechts", "Oben", "Unten"], [aussen_l, aussen_r, aussen_o, aussen_u])
             
             log_lines.append("\n" + "="*50)
             log_lines.append("Ø ABSOLUTE FEHLERABWEICHUNG:")
             log_lines.append(f"  9er-Ring  : ± {err_sum_9:.2f} mm")
             log_lines.append(f"  Spiegel   : ± {err_sum_s:.2f} mm")
+            if sechs_l is not None:
+                log_lines.append(f"  6er-Ring  : ± {err_sum_6:.2f} mm") # <--- GEÄNDERT
             log_lines.append(f"  Außenring : ± {err_sum_a:.2f} mm")
             
             txt_log.config(state=tk.NORMAL)
@@ -354,9 +399,29 @@ class Kalibrator:
 
         def do_auto_fit():
             kurve = var_kurve.get()
-            x_data = np.array([r_9**kurve, r_s**kurve, r_a**kurve])
-            m_x, b_x = np.polyfit(x_data, y_data_x, 1)
-            m_y, b_y = np.polyfit(x_data, y_data_y, 1)
+            
+            # =========================================================================
+            # ---> ELA FIX: Der 9er-Ring ist toxisch für die Regression! <---
+            # Wir nutzen nur die großen, zuverlässigen Ringe für die physikalische Kurve.
+            # Ein 2px Blooming-Fehler beim winzigen 9er-Ring würde die Skalierung zerstören.
+            # =========================================================================
+            if sechs_l is not None:
+                # Neues 20-Punkte JSON (mit 6er Ring)
+                r_6 = sechs_mm / 2.0
+                p_6_x = abs(sechs_r[0] - sechs_l[0]) / 2.0
+                p_6_y = abs(sechs_u[1] - sechs_o[1]) / 2.0
+                
+                x_data = np.array([r_6**kurve, r_s**kurve, r_a**kurve])
+                y_data_x_fit = np.array([p_6_x / r_6, p_s_x / r_s, p_a_x / r_a])
+                y_data_y_fit = np.array([p_6_y / r_6, p_s_y / r_s, p_a_y / r_a])
+            else:
+                # Altes 16-Punkte JSON
+                x_data = np.array([r_s**kurve, r_a**kurve])
+                y_data_x_fit = np.array([p_s_x / r_s, p_a_x / r_a])
+                y_data_y_fit = np.array([p_s_y / r_s, p_a_y / r_a])
+
+            m_x, b_x = np.polyfit(x_data, y_data_x_fit, 1)
+            m_y, b_y = np.polyfit(x_data, y_data_y_fit, 1)
             
             var_px_x.set(round(b_x, 4))
             var_px_y.set(round(b_y, 4))
@@ -364,8 +429,11 @@ class Kalibrator:
             k_y = m_y / b_y if b_y != 0 else 0.0
             var_korr.set(round((k_x + k_y) / 2.0, 6))
             
-            cx_neu = (neun_l[0] + neun_r[0] + spiegel_l[0] + spiegel_r[0] + aussen_l[0] + aussen_r[0]) / 6.0
-            cy_neu = (neun_o[1] + neun_u[1] + spiegel_o[1] + spiegel_u[1] + aussen_o[1] + aussen_u[1]) / 6.0
+            # ---> ELA FIX: Zentrum NUR aus dem 9er-Ring berechnen! <---
+            # Da äußere Ringe durch das Offset asymmetrisch verzerrt werden, 
+            # ist ihre Bounding-Box-Mitte verfälscht. Der winzige 9er-Ring ist davon unberührt!
+            cx_neu = (neun_l[0] + neun_r[0]) / 2.0
+            cy_neu = (neun_o[1] + neun_u[1]) / 2.0
             var_cx.set(round(cx_neu, 2))
             var_cy.set(round(cy_neu, 2))
             
@@ -426,32 +494,45 @@ class Kalibrator:
             side = self.app.active_camera_var.get()
             seite_str = "Links" if side == 'left' else "Rechts"
             
-            default_filename = f"kalibrierung_klicks_{match_name}_{seite_str}.json"
+            default_filename = f"kalibrierung_{match_name}_{seite_str}.json"
 
             filepath = filedialog.asksaveasfilename(
-                title="Klicks speichern", 
+                title="Kalibrierung speichern", 
                 defaultextension=".json", 
                 initialfile=default_filename,
                 filetypes=[("JSON", "*.json")]
             )
             if filepath:
                 try:
+                    # ---> NEU: Dictionary mit Punkten UND aktuellen Parametern speichern! <---
+                    export_data = {
+                        "points": self.app.calib_points,
+                        "params": {
+                            "px_x": var_px_x.get(),
+                            "px_y": var_px_y.get(),
+                            "korr": var_korr.get(),
+                            "kurve": var_kurve.get(),
+                            "off_x": var_off_x.get(),
+                            "off_y": var_off_y.get()
+                        }
+                    }
                     with open(filepath, "w") as f:
-                        json.dump(self.app.calib_points, f)
-                    tk.messagebox.showinfo("Erfolg", "Punkte erfolgreich gespeichert!", parent=info_win)
+                        json.dump(export_data, f, indent=4)
+                    tk.messagebox.showinfo("Erfolg", "Punkte und Parameter erfolgreich gespeichert!", parent=info_win)
                 except Exception as e:
                     tk.messagebox.showerror("Fehler", f"Speichern fehlgeschlagen:\n{e}", parent=info_win)
         
         btn_frame_top = tk.Frame(control_frame)
         btn_frame_top.pack(fill=tk.X, pady=10)
         tk.Button(btn_frame_top, text="🤖 Auto-Fit (aus Klicks) ausführen", command=do_auto_fit, bg="#e67e22", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT)
-        tk.Button(btn_frame_top, text="💾 Klicks Speichern", command=export_points, bg="#8e44ad", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame_top, text="💾 Speichern / Exportieren", command=export_points, bg="#8e44ad", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=10)
         
         btn_frame = tk.Frame(info_win)
         btn_frame.pack(pady=10)
         
-        tk.Button(btn_frame, text="👁️ Live-Vorschau anwenden", command=apply_preview, bg="#3498db", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="✅ Schließen & Speichern", command=apply_and_close, bg="#27ae60", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        # ---> NEU: Umbenennung der Buttons <---
+        tk.Button(btn_frame, text="👁️ Übernehmen", command=apply_preview, bg="#3498db", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="✅ Schließen & Übernehmen", command=apply_and_close, bg="#27ae60", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="📋 Log kopieren", command=copy_to_clipboard, bg="#95a5a6", fg="white").pack(side=tk.LEFT, padx=5)
         
         do_auto_fit()

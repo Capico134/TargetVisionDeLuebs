@@ -87,14 +87,12 @@ class Helfer:
             d_true = d_obs
             if korrektur != 0.0 and d_obs > 0:
                 for _ in range(4):
-                    f = d_true + korrektur * (d_true**(kurve + 1.0)) - d_obs
-                    df = 1.0 + (kurve + 1.0) * korrektur * (d_true**kurve)
+                    d_abs = abs(d_true)
+                    f = d_true + korrektur * (d_abs**(kurve + 1.0)) - d_obs
+                    df = 1.0 + (kurve + 1.0) * korrektur * (d_abs**kurve)
                     if df == 0: break
                     d_true = d_true - (f / df)
                     
-            shift_x_px = 0.0
-            shift_y_px = 0.0
-            
             if d_true > 0.01 and abs(korrektur) > 0.000001:
                 # Wahre Kanten des Rings auf der Achse zum Linsenzentrum
                 d_out_true = d_true + radius_mm
@@ -108,11 +106,18 @@ class Helfer:
                 new_d_obs = (obs_out + obs_in) / 2.0
                 
                 # Verschiebung in Millimetern
-                shift_mm = (new_d_obs - d_obs)#/2.0
+                shift_mm = (new_d_obs - d_obs)
                 
                 # Auf X/Y Pixel umrechnen
                 shift_x_px = (dx_mm_obs / d_obs) * shift_mm * px_x
                 shift_y_px = (dy_mm_obs / d_obs) * shift_mm * px_y
+                
+                # ---> ELA BUGFIX: Die echte, optisch verzerrte Größe des Rings berechnen! <---
+                r_mm_draw = (obs_out - obs_in) / 2.0
+            else:
+                shift_x_px = 0.0
+                shift_y_px = 0.0
+                r_mm_draw = radius_mm * (1.0 + (radius_mm**kurve * korrektur))
                 
             shifted_cx = center_x + shift_x_px
             shifted_cy = center_y + shift_y_px
@@ -122,7 +127,7 @@ class Helfer:
             
             # ---> WIE VORHER: Keine Eier-Form, keine Rotation! <---
             angle_deg = 0
-            r_mm_draw = radius_mm * (1.0 + (radius_mm**kurve * korrektur))
+            
             rx_raw = (r_mm_draw * px_x) * z * scale_x
             ry_raw = (r_mm_draw * px_y) * z * scale_y
             
