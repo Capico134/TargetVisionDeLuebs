@@ -5,6 +5,7 @@ import math
 import numpy as np
 import os
 from StateManagerDeLuebs import StateManager
+from HelperDeLuebs import Helfer
 
 class Kalibrator:
     def __init__(self, app):
@@ -303,29 +304,16 @@ class Kalibrator:
             off_x = var_off_x.get()
             off_y = var_off_y.get()
             
-            lens_cx = (cam_w / 2.0) - cut_l + off_x
-            lens_cy = (cam_h / 2.0) - cut_t + off_y
+            lens_cx, lens_cy = Helfer.get_optical_center(cam_w, cam_h, cut_l, cut_t, off_x, off_y)
 
-            def _undistort_point_mm(px_x, px_y):
-                dx_mm_obs = (px_x - lens_cx) / px_mm_x if px_mm_x else 0
-                dy_mm_obs = (px_y - lens_cy) / px_mm_y if px_mm_y else 0
-                dist_mm_obs = math.hypot(dx_mm_obs, dy_mm_obs)
-                
-                d_true = dist_mm_obs
-                if avg_korrektur != 0.0 and dist_mm_obs > 0:
-                    for _ in range(4):
-                        d_abs = abs(d_true)
-                        f = d_true + avg_korrektur * (d_abs**(kurve + 1.0)) - dist_mm_obs
-                        df = 1.0 + (kurve + 1.0) * avg_korrektur * (d_abs**kurve)
-                        if df == 0: break
-                        d_true = d_true - (f / df)
-                scale = d_true / dist_mm_obs if dist_mm_obs > 0 else 1.0
-                return dx_mm_obs * scale, dy_mm_obs * scale
-
+            # =========================================================================
+            # ---> NEU: 100% ELA-KONFORME VALIDIERUNG (Zentrale Physik) <---
+            # =========================================================================
             def validate_point(pt, mm_real):
                 r_mm_base = mm_real / 2.0
-                true_cx, true_cy = _undistort_point_mm(cx, cy)
-                true_pt_x, true_pt_y = _undistort_point_mm(pt[0], pt[1])
+                # Wir mappen Zielscheibenzentrum UND den Klick auf die flache Papierwelt
+                true_cx, true_cy = Helfer.undistort_point_mm(cx, cy, lens_cx, lens_cy, px_mm_x, px_mm_y, avg_korrektur, kurve)
+                true_pt_x, true_pt_y = Helfer.undistort_point_mm(pt[0], pt[1], lens_cx, lens_cy, px_mm_x, px_mm_y, avg_korrektur, kurve)
                 dist_mm_true = math.hypot(true_pt_x - true_cx, true_pt_y - true_cy)
                 err_mm = dist_mm_true - r_mm_base
                 err_px = err_mm * ((px_mm_x + px_mm_y) / 2.0)

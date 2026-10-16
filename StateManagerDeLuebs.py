@@ -6,7 +6,7 @@ import time
 import math
 from datetime import datetime
 import shutil
-
+from HelperDeLuebs import Helfer
 
 class HighscoreManager:
     """Adaptiert aus Shooting DeLübs: Verwaltet die highscore.json sicher."""
@@ -175,35 +175,15 @@ class StateManager:
         cam_h = self.config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
         cut_l = self.config.getint(crop_sec, 'cut_left', fallback=0)
         cut_t = self.config.getint(crop_sec, 'cut_top', fallback=0)
-        # ---> NEU: Manuelle Justierung des Linsenmittelpunkts <---
         offset_x = self.config.getint('Kameras', f'lens_offset_x_{seite_str}', fallback=0)
         offset_y = self.config.getint('Kameras', f'lens_offset_y_{seite_str}', fallback=0)
-        return (cam_w / 2.0) - cut_l + offset_x, (cam_h / 2.0) - cut_t + offset_y
-
-    def _undistort_point_mm(self, px_x, px_y, cx_linse, cy_linse, px_per_mm_x, px_per_mm_y, korrektur, kurve):
-        """ELA: Rechnet eine verzerrte Pixel-Koordinate in eine flache Millimeter-Distanz zur Linse um."""
-        dx_mm_obs = (px_x - cx_linse) / px_per_mm_x
-        dy_mm_obs = (px_y - cy_linse) / px_per_mm_y
-        dist_mm_obs = math.hypot(dx_mm_obs, dy_mm_obs)
         
-        if korrektur != 0.0 and dist_mm_obs > 0:
-            dist_mm = dist_mm_obs
-            for _ in range(4): # Newton-Raphson
-                # f(d) = d + k * d^(c+1) - d_obs
-                f = dist_mm + korrektur * (dist_mm**(kurve + 1.0)) - dist_mm_obs
-                # f'(d) = 1 + (c+1) * k * d^c
-                df = 1.0 + (kurve + 1.0) * korrektur * (dist_mm**kurve)
-                if df == 0: break
-                dist_mm = dist_mm - (f / df)
-            scale = dist_mm / dist_mm_obs
-            return dx_mm_obs * scale, dy_mm_obs * scale
-        return dx_mm_obs, dy_mm_obs
+        return Helfer.get_optical_center(cam_w, cam_h, cut_l, cut_t, offset_x, offset_y)
 
-    # ---> NEU: Ausgelagerte Funktion für die Ringwert-Berechnung <---
     def calculate_score(self, side, cx, cy):
-        """Berechnet den Ringwert für gegebene Koordinaten."""
+        """Berechnet den Ringwert für gegebene Koordinaten (Nutzt nun die zentrale Helper-Mathematik)."""
         score = 0.0
-        raw_score = 0.0 # <--- NEU: Die ungerundete Wahrheit
+        raw_score = 0.0
         
         nullpunkt = self.nullpunkts.get(side)
         if self.ringwertung_aktiv and nullpunkt:
@@ -211,28 +191,15 @@ class StateManager:
             px_x = self.config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
             px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
             
-            dx_px = abs(cx - nullpunkt[0])
-            dy_px = abs(cy - nullpunkt[1])
-            
-            # 1. Strecken einzeln in Millimeter umrechnen (Unterschiedliche Pixel-Seitenverhältnisse respektieren!)
-            dx_mm_obs = dx_px / px_x
-            dy_mm_obs = dy_px / px_y
-            
-            # Die optisch gemessene, verzerrte Distanz in Millimetern
-            dist_mm_obs = math.hypot(dx_mm_obs, dy_mm_obs)
-            
-            # =========================================================================
-            # ---> NEU: ELA-Architektur! (Wir arbeiten nur noch mit echten Millimetern)
-            # =========================================================================
             korrektur = self.config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0)
-            kurve = self.config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5) # <--- NEU
+            kurve = self.config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5)
             cx_linse, cy_linse = self._get_lens_center(side)
             
-            # 1. Beide Pixel-Punkte in das wahre, unverzerrte Millimeter-Raster umrechnen
-            true_shot_x, true_shot_y = self._undistort_point_mm(cx, cy, cx_linse, cy_linse, px_x, px_y, korrektur, kurve) # <--- 'kurve' hinten übergeben!
-            true_null_x, true_null_y = self._undistort_point_mm(nullpunkt[0], nullpunkt[1], cx_linse, cy_linse, px_x, px_y, korrektur, kurve) # <--- 'kurve' hinten übergeben!
+            # ---> ELA: Die Magie passiert in der Helper-Datei! <---
+            true_shot_x, true_shot_y = Helfer.undistort_point_mm(cx, cy, cx_linse, cy_linse, px_x, px_y, korrektur, kurve)
+            true_null_x, true_null_y = Helfer.undistort_point_mm(nullpunkt[0], nullpunkt[1], cx_linse, cy_linse, px_x, px_y, korrektur, kurve)
             
-            # 2. Reiner Pythagoras auf der perfekten Zielscheibe!
+            # Reiner Pythagoras auf der perfekten Zielscheibe!
             dist_mm = math.hypot(true_shot_x - true_null_x, true_shot_y - true_null_y)
             
             aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
@@ -243,31 +210,19 @@ class StateManager:
                 d_10 = target_data['ringe_durchmesser_mm']['10']
                 d_9 = target_data['ringe_durchmesser_mm']['9']
                 
-                # =========================================================================
-                # ---> NEU: ELA-Entkopplung von Erkennung und Ringwertung! <---
-                # =========================================================================
                 offizielles_kaliber_mm = float(target_data.get('kaliber_mm', 4.5))
-                
                 ring_abstand_radius_mm = (d_9 - d_10) / 2.0
                 radius_10_score = (d_10 + offizielles_kaliber_mm) / 2.0
                 
-                # --- NEU: Faire 10er-Ring Verteilung für Scheiben mit großem Zehner ---
                 if dist_mm <= radius_10_score:
-                    # Der Schuss ist im 10er Ring! Wir verteilen 10.0 bis 10.9 prozentual bis zur exakten Mitte
                     prozent_zur_mitte = (radius_10_score - dist_mm) / radius_10_score
-                    raw_score = 10.0 + (prozent_zur_mitte * 0.99) # 0.99, damit die 10.9 wirklich erreichbar ist
-                # Normale ISSF-Formel für alle Ringe 1 bis 9
+                    raw_score = 10.0 + (prozent_zur_mitte * 0.99)
                 else:
                     raw_score = 10.0 + ((radius_10_score - dist_mm) / ring_abstand_radius_mm)
                 
-                # =========================================================================
-                # ---> DER FIX: Dynamische Nachkommastellen (Die echte Mathematik!) <---
-                # =========================================================================
                 decimals = self.nachkommastellen
                 faktor = 10 ** decimals
                 score = math.floor(raw_score * faktor) / faktor
-                
-                # Die maximale Ringzahl dynamisch begrenzen (z.B. 1 -> 10.9 | 0 -> 10.0 | 3 -> 10.999)
                 max_score = 11.0 - (1.0 / faktor)
                 
                 if score > max_score: score = max_score

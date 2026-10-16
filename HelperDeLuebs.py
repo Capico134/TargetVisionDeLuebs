@@ -3,6 +3,59 @@ import math
 
 class Helfer:
     
+    # =====================================================================
+    # ---> SINGLE SOURCE OF TRUTH: OPTIK & LINSEN-MATHEMATIK <---
+    # =====================================================================
+    @staticmethod
+    def get_optical_center(cam_w, cam_h, cut_l, cut_t, off_x, off_y):
+        """Berechnet den physikalischen Linsenmittelpunkt im Kamerabild."""
+        return (cam_w / 2.0) - cut_l + off_x, (cam_h / 2.0) - cut_t + off_y
+
+    @staticmethod
+    def distort_radius(r_mm_true, korrektur, kurve):
+        """Vorwärts-Verzerrung: Berechnet, wie groß ein wahrer Radius auf dem Sensor erscheint."""
+        if korrektur == 0.0:
+            return r_mm_true
+        return r_mm_true * (1.0 + (abs(r_mm_true)**kurve) * korrektur)
+
+    @staticmethod
+    def undistort_radius(d_obs, korrektur, kurve):
+        """Newton-Raphson Rückrechnung: Entzerrt einen Radius zurück auf die wahre Papierebene."""
+        if korrektur == 0.0 or d_obs <= 0:
+            return d_obs
+            
+        d_true = d_obs
+        for _ in range(4):
+            d_abs = abs(d_true)
+            f = d_true + korrektur * (d_abs**(kurve + 1.0)) - d_obs
+            df = 1.0 + (kurve + 1.0) * korrektur * (d_abs**kurve)
+            if df == 0: break
+            d_true = d_true - (f / df)
+        return d_true
+
+    @staticmethod
+    def undistort_point_mm(px_x, px_y, lens_cx, lens_cy, px_x_ratio, px_y_ratio, korrektur, kurve):
+        """Entzerrt einen Sensor-Punkt in Millimeter-Abstände zur Linsenachse."""
+        dx_mm_obs = (px_x - lens_cx) / px_x_ratio if px_x_ratio else 0
+        dy_mm_obs = (px_y - lens_cy) / px_y_ratio if px_y_ratio else 0
+        d_obs = math.hypot(dx_mm_obs, dy_mm_obs)
+        
+        d_true = Helfer.undistort_radius(d_obs, korrektur, kurve)
+        scale = d_true / d_obs if d_obs > 0 else 1.0
+        
+        return dx_mm_obs * scale, dy_mm_obs * scale
+
+    @staticmethod
+    def get_ellipse_scales(r_mm_center, korrektur, kurve):
+        """Gibt (scale_tangential, scale_radial) für die asymmetrische ovale Verzerrung zurück."""
+        scale_tan = 1.0 + (abs(r_mm_center)**kurve * korrektur)
+        scale_rad = 1.0 + ((kurve + 1.0) * abs(r_mm_center)**kurve * korrektur)
+        return scale_tan, scale_rad
+
+    # =====================================================================
+    # ---> DER RENDERER (Nutzt nun die Single Source of Truth!) <---
+    # =====================================================================
+
     @staticmethod
     def draw_smart_ellipse(img, center_x, center_y, radius_mm, color, 
                            px_x, px_y, korrektur, kurve=1.5,
@@ -13,68 +66,12 @@ class Helfer:
                            is_hit=False, is_ring=False,
                            zoom_params=(1.0, 0.0, 0.0), 
                            scale_x=1.0, scale_y=1.0, draw_center_dot=False):
-        """
-        Universelle Render-Funktion für TargetVision & Labor.
-        Regelt vollautomatisch:
-        - Fischaugen-Verzerrung in Bezug auf das Kamerazentrum
-        - Cinematic Zoom Matrix (z, ox, oy)
-        - Fenster-Skalierung (scale_x, scale_y)
-        - Intelligentes Stroke-Alignment (Linienstärke nach innen bei Treffern)
-        - Flexible Strichelung (dash_step, dash_length)
-
-        Parameter:
-        ----------
-        img : ndarray
-            Das OpenCV-Bild (NumPy-Array), auf das gezeichnet werden soll.
-        center_x, center_y : float
-            Das Zentrum des Objekts, das aktuell gezeichnet wird (in originalen Kamera-Pixeln). 
-            - Beim Zeichnen der Scheiben-Ringe: Der Nullpunkt der Zielscheibe.
-            - Beim Zeichnen eines Treffers: Der berechnete Mittelpunkt des Einschusslochs (z. B. der CoG).
-        radius_mm : float
-            Der physikalische Radius in Millimetern (z. B. für ISSF-Ringe oder das Kaliber).
-        color : tuple
-            Die Farbe der Linie als BGR-Tupel (z. B. (0, 255, 255) für Gelb).
-        px_x, px_y : float
-            Die Kamera-Kalibrierung: Pixel pro Millimeter für die X- und Y-Achse.
-        korrektur : float
-            Der Multiplikator für die Fischaugen-Verzerrung, um die Linsenkrümmung am Rand auszugleichen.
-        kurve : float, optional
-            Der Exponent (IDDQD) für die dynamische Verzerrungskurve. Standard ist 1.5.
-        lens_cx, lens_cy : float, optional
-            Der optische Mittelpunkt der Kameralinse. Dient als Nullpunkt, von dem aus die Verzerrung nach außen hin zunimmt.
-        thickness : int, optional
-            Die Linienstärke der Ellipse in Pixeln. Standard ist 1.
-        dashed : bool, optional
-            Aktiviert die gestrichelte Linie, wenn True. Standard ist False.
-        dash_offset : int, optional
-            Verschiebt den Startwinkel der Strichelung. Nützlich, um verschiedene Ringe optisch gegeneinander zu verdrehen.
-        dash_step : int, optional
-            Der Abstand zwischen den einzelnen Strichen in Grad. Standard ist 6.
-        dash_length : int, optional
-            Die Länge eines einzelnen Striches in Grad. Standard ist 2.
-        text : str, optional
-            Ein Text, der optisch perfekt zentriert in die Mitte der Ellipse geschrieben wird.
-        text_color : tuple, optional
-            Die BGR-Farbe des Textes. Standard ist Schwarz (0, 0, 0).
-        is_hit : bool, optional
-            Wenn True, greift das Stroke-Alignment: Die halbe Linienstärke wird vom Radius abgezogen.
-        is_ring : bool, optional
-            Wenn True, wird die Ellipse konzentrisch gezeichnet, aber ihr optischer Mittelpunkt verschiebt sich leicht durch die Verzerrung.
-        zoom_params : tuple, optional
-            Ein Tupel (z, ox, oy) mit dem Zoomfaktor und dem Versatz für die "Cinematic Camera" (Pan & Zoom Logik).
-        scale_x, scale_y : float, optional
-            Die Skalierungsfaktoren, falls das Bild für die GUI in der Größe verändert wurde.
-        draw_center_dot : bool, optional
-            Wenn True, wird ein kleiner Bullseye-Mittelpunkt (4px schwarzer Rand, 2px farbiger Kern) gezeichnet.
-        """
-        z, ox, oy = zoom_params
         
+        z, ox, oy = zoom_params
         thickness_komp = (thickness / 2.0) if is_hit else 0.0
         rx, ry, angle_deg = 0, 0, 0
         
-        # =====================================================================
-        # ---> NEU: ZIELSCHEIBEN-RINGE (Symmetrisch, aber leicht verschoben) <---
-        # =====================================================================
+        # 1. ZIELSCHEIBEN-RINGE (Symmetrisch, aber leicht verschoben)
         if is_ring and lens_cx is not None and lens_cy is not None:
             dx_px = center_x - lens_cx
             dy_px = center_y - lens_cy
@@ -83,41 +80,28 @@ class Helfer:
             dy_mm_obs = dy_px / px_y
             d_obs = math.hypot(dx_mm_obs, dy_mm_obs)
             
-            # Newton-Raphson für die wahre Distanz auf dem Papier (wie im StateManager)
-            d_true = d_obs
-            if korrektur != 0.0 and d_obs > 0:
-                for _ in range(4):
-                    d_abs = abs(d_true)
-                    f = d_true + korrektur * (d_abs**(kurve + 1.0)) - d_obs
-                    df = 1.0 + (kurve + 1.0) * korrektur * (d_abs**kurve)
-                    if df == 0: break
-                    d_true = d_true - (f / df)
+            # ---> ELA: Aufruf der zentralen Rückrechnung <---
+            d_true = Helfer.undistort_radius(d_obs, korrektur, kurve)
                     
             if d_true > 0.01 and abs(korrektur) > 0.000001:
-                # Wahre Kanten des Rings auf der Achse zum Linsenzentrum
                 d_out_true = d_true + radius_mm
                 d_in_true = d_true - radius_mm
                 
-                # Vorwärts-Verzerrung auf beide Ringkanten anwenden
-                obs_out = d_out_true * (1.0 + (abs(d_out_true)**kurve) * korrektur)
-                obs_in = d_in_true * (1.0 + (abs(d_in_true)**kurve) * korrektur)
+                # ---> ELA: Aufruf der zentralen Vorwärts-Verzerrung <---
+                obs_out = Helfer.distort_radius(d_out_true, korrektur, kurve)
+                obs_in = Helfer.distort_radius(d_in_true, korrektur, kurve)
                 
-                # Der NEUE optische Mittelpunkt (verschiebt sich bei großen Ringen!)
                 new_d_obs = (obs_out + obs_in) / 2.0
-                
-                # Verschiebung in Millimetern
                 shift_mm = (new_d_obs - d_obs)
                 
-                # Auf X/Y Pixel umrechnen
                 shift_x_px = (dx_mm_obs / d_obs) * shift_mm * px_x
                 shift_y_px = (dy_mm_obs / d_obs) * shift_mm * px_y
                 
-                # ---> ELA BUGFIX: Die echte, optisch verzerrte Größe des Rings berechnen! <---
                 r_mm_draw = (obs_out - obs_in) / 2.0
             else:
                 shift_x_px = 0.0
                 shift_y_px = 0.0
-                r_mm_draw = radius_mm * (1.0 + (radius_mm**kurve * korrektur))
+                r_mm_draw = Helfer.distort_radius(radius_mm, korrektur, kurve)
                 
             shifted_cx = center_x + shift_x_px
             shifted_cy = center_y + shift_y_px
@@ -125,20 +109,15 @@ class Helfer:
             draw_cx = int(round((shifted_cx * z + ox) * scale_x))
             draw_cy = int(round((shifted_cy * z + oy) * scale_y))
             
-            # ---> WIE VORHER: Keine Eier-Form, keine Rotation! <---
             angle_deg = 0
-            
             rx_raw = (r_mm_draw * px_x) * z * scale_x
             ry_raw = (r_mm_draw * px_y) * z * scale_y
             
             rx = int(round(rx_raw - thickness_komp))
             ry = int(round(ry_raw - thickness_komp))
 
-        # =====================================================================
-        # ---> SCHUSSLÖCHER (Treffer - Symmetrische Näherung) <---
-        # =====================================================================
+        # 2. SCHUSSLÖCHER (Treffer - Ovale Form)
         elif lens_cx is not None and lens_cy is not None:
-            # Hier bleibt alles beim Alten (Treffer werden leicht oval gestreckt und rotiert)
             dx_mm = (center_x - lens_cx) / px_x
             dy_mm = (center_y - lens_cy) / px_y
             r_mm_center = math.hypot(dx_mm, dy_mm)
@@ -150,8 +129,38 @@ class Helfer:
                 rad = math.atan2(dy_mm, dx_mm)
                 angle_deg = math.degrees(rad)
                 
-                scale_tangential = 1.0 + (r_mm_center**kurve * korrektur)
-                scale_radial = 1.0 + ((kurve + 1.0) * r_mm_center**kurve * korrektur)
+                ## ---> ELA: Die Punkt-Ableitung (Der "alte" Faktor) <---
+                #scale_tangential, scale_radial_approx = Helfer.get_ellipse_scales(r_mm_center, korrektur, kurve)
+                #scale_radial = scale_radial_approx
+                #
+                ## =================================================================
+                ## ---> DEIN FIX: Der perfekte Mittelwert für Treffer <---
+                ## =================================================================
+                #if is_hit:
+                #    # 1. Makroskopische Verzerrung (Wahre Kanten des Lochs)
+                #    d_out_true = r_mm_center + radius_mm
+                #    d_in_true = abs(r_mm_center - radius_mm)
+                #    
+                #    obs_out = Helfer.distort_radius(d_out_true, korrektur, kurve)
+                #    obs_in = Helfer.distort_radius(d_in_true, korrektur, kurve)
+                #    
+                #    # 2. Den neuen radialen Faktor aus der echten Bild-Ausdehnung berechnen
+                #    scale_radial_macro = ((obs_out - obs_in) / 2.0) / radius_mm
+                #    
+                #    # 3. Der Mittelwert aus Punkt-Verzerrung und Kanten-Verzerrung
+                #    scale_radial = (scale_radial_approx + scale_radial_macro) / 2.0
+                
+
+                # ---> ELA: Die Punkt-Ableitung (Der "alte" Faktor) <---
+                scale_tangential, scale_radial = Helfer.get_ellipse_scales(r_mm_center, korrektur, kurve)
+                # =================================================================
+                # ---> DEIN FIX: Fokus auf die wertungsrelevante Innenkante <---
+                # =================================================================
+                if is_hit:
+                    # Wir werten die radiale Verzerrung leicht nach innen versetzt aus
+                    r_eval = abs(r_mm_center - (radius_mm / 2.0))
+                    _, scale_radial = Helfer.get_ellipse_scales(r_eval, korrektur, kurve)
+
                 
                 cos_a = math.cos(rad)
                 sin_a = math.sin(rad)
@@ -162,22 +171,21 @@ class Helfer:
                 ry_raw = (radius_mm * scale_tangential * px_tangential) * z * scale_y
             else:
                 angle_deg = 0
-                r_mm_draw = radius_mm * (1.0 + (radius_mm**kurve * korrektur))
+                r_mm_draw = Helfer.distort_radius(radius_mm, korrektur, kurve)
                 rx_raw = (r_mm_draw * px_x) * z * scale_x
                 ry_raw = (r_mm_draw * px_y) * z * scale_y
                 
             rx = int(round(rx_raw - thickness_komp))
             ry = int(round(ry_raw - thickness_komp))
+            
+        # 3. Fallback (Keine Kalibrierung)
         else:
-            # Fallback (Keine Kalibrierung)
             draw_cx = int(round((center_x * z + ox) * scale_x))
             draw_cy = int(round((center_y * z + oy) * scale_y))
-            
             avg_px = (px_x + px_y) / 2.0
             r_raw = (radius_mm * avg_px) * z * scale_x
             rx = ry = int(round(r_raw - thickness_komp))
             
-        # 4. Sicherheitssperre, damit es nicht crasht, wenn der Radius winzig wird
         rx, ry = max(2, rx), max(2, ry)
         
         # 5. Zeichnen!
@@ -190,12 +198,10 @@ class Helfer:
             else:
                 cv2.ellipse(img, (draw_cx, draw_cy), (rx, ry), angle_deg, 0, 360, color, thickness, cv2.LINE_AA)
                 
-        # ---> Der sichtbare Bullseye-Mittelpunkt <---
         if draw_center_dot:
             cv2.circle(img, (draw_cx, draw_cy), 4, (0, 0, 0), -1, cv2.LINE_AA)
             cv2.circle(img, (draw_cx, draw_cy), 2, color, -1, cv2.LINE_AA)
                 
-        # 6. Text zentrieren (Falls übergeben)
         if text:
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 0.5
