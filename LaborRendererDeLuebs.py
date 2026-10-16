@@ -248,7 +248,8 @@ class LaborRenderer:
                         ringe = target_data.get('ringe_durchmesser_mm', {})
                         innenzehner = target_data.get('innenzehner_mm', 0.0)
                         
-                        ring_color = (255, 255, 0) # Cyan (BGR)
+                        #ring_color = (255, 255, 0) # Cyan (BGR)
+                        ring_color = (255, 0, 0) # Cyan (BGR)
                         
                         # 1. Standard-Ringe (gestrichelt)
                         for ring_name, d_mm in ringe.items():
