@@ -253,8 +253,12 @@ belichtung_links = Standard
 belichtung_rechts = Standard
 linsen_verzerrung_links = -0.0000
 linsen_verzerrung_rechts = -0.0000
-linsen_kurve_links = 1.5
-linsen_kurve_rechts = 1.5
+linsen_kurve_links = 2.0
+linsen_kurve_rechts = 2.0
+lens_offset_x_links = 0
+lens_offset_y_links = 0
+lens_offset_x_rechts = 0
+lens_offset_y_rechts = 0
 
 [Erkennung]
 max_aspect_ratio = 3.5
@@ -266,12 +270,8 @@ ausloeser_durch_erschuetterung = no
 # Auswertungsmethode für die Form des Schusslochs:
 # A = Umschließender Kreis (Standard, gut für leicht ausgefranste Löcher)
 # B = Schwerpunkt (Zieht bei unsauberen Rissen oft zum Papierschnipsel hin)
-# C = Smart-Hybrid (Hough-Kreisbogen + minEnclosingCircle - Empfohlen!)
+# C = Komplexe Analyse (Empfohlen!)
 erkennungs_methode = C
-# Für Methode C: Ab welchem Vergrößerungs-Faktor (im Vergleich zum Normal-Kaliber) ein unsauberes Loch
-# nicht mehr als "Normal" gilt und den Hough-Algorithmus auslöst. (Standard: 1.5)
-# hybrid_riss_faktor = 1.175
-# hybrid_sichel_faktor = 1.05
 discard_big_hits = 3.0
 # Für Methode C: Begrenzungen für den Hough-Algorithmus (Faktor bezogen auf caliber_radius)
 hough_min_faktor = 0.85
@@ -290,8 +290,6 @@ hit_tolerance = 20
 max_image_change_percent = 5.0
 # 200-Punkte-Score-Ratio
 gesamt_anteil_am_200score = 0.667
-# Speichert bei JEDEM erkannten Treffer die Bilder separat ab (für Entwicklungszwecke)
-debug_alle_bilder_speichern = yes
 caliber_durchmesser = 4.5
 abriss_max_edge_percent = 0.75
 abriss_base_bonus = 15.0
@@ -321,30 +319,30 @@ fps_limit = 30
 stillness_frames = 20
 
 [Hintergrund_Links]
-rgb_r = 234
-rgb_g = 241
-rgb_b = 190
+rgb_r = 0
+rgb_g = 0
+rgb_b = 0
 tolerance = 30
 min_area_percent = 40
 
 [Hintergrund_Rechts]
-rgb_r = 220
-rgb_g = 135
-rgb_b = 114
+rgb_r = 0
+rgb_g = 0
+rgb_b = 0
 tolerance = 30
 min_area_percent = 40
 
 [Crop_Links]
 cut_top = 0
 cut_bottom = 0
-cut_left = 175
-cut_right = 20
+cut_left = 0
+cut_right = 0
 
 [Crop_Rechts]
 cut_top = 0
 cut_bottom = 0
-cut_left = 175
-cut_right = 20
+cut_left = 0
+cut_right = 0
 
 [Anzeige]
 # Skalierungsfaktor für das Hauptfenster der Anzeige.
@@ -359,7 +357,7 @@ serien_gruppierung = 3
 # Zoomfaktor bei Treffererkennung (3 = 3x-facher Zoom)
 treffer_zoom = 3
 # Anzeigedauer wie viele Sekunden reingezoomt wird
-treffer_anzeigedauer = 5
+treffer_anzeigedauer = 8
 """)
             self.write_log("SYSTEM: 🆕 Standard config.ini erstellt.")
 

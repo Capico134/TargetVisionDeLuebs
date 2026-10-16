@@ -26,18 +26,26 @@ Damit das System weiß, WANN es auswerten soll, gibt es unter "Erkennung" den ex
 Wenn die Kamera ruhig steht und die leere Wand (Hintergrund) von der Zielscheibe verdeckt ist, macht das System ein "Referenzbild". 
 Dabei sucht es automatisch das exakte Zentrum der Scheibe (den weißen Punkt) und merkt sich diesen als "Nullpunkt". Ab jetzt vergleicht das System jedes Kamerabild mit dieser Referenz, um neue Löcher zu finden.
 
-5. Ringwertung kalibrieren (px_pro_mm)
-Damit die Zehntel-Ringe exakt berechnet werden, musst du das System optisch kalibrieren. So geht's am einfachsten:
+5. Treffergröße einstellen (Das Augenmaß für Einsteiger)
+Standardmäßig ist die Zehntel-Ringwertung ausgeschaltet. Das System markiert gefundene Treffer einfach mit einem farbigen Kreis. Damit dieser Kreis auf deinem Monitor exakt so groß ist wie das echte Einschussloch, reicht ein simples Augenmaß:
+- Schieße ein Loch in die Scheibe.
 - Klicke im Live-System auf "Labor & Einstellungen" (Das System pausiert).
-- Aktiviere in der Seitenleiste unten das Häkchen bei "🎯 Zielscheibe (Ringe) einblenden".
-- Nutze ganz oben in der Seitenleiste die Schieberegler für "Pixel pro mm (X)" und "(Y)", bis sich die cyanfarbenen Ringe perfekt über die Papierscheibe im Bild legen.
-- Klicke abschließend auf "✅ Einstellungen speichern".
+- Passe in der rechten Seitenleiste den Schieberegler "Pixel pro mm (X)" (und Y) so an, dass der angezeigte Trefferkreis das echte Loch auf dem Bildschirm gut abdeckt.
+- Die komplizierten physikalischen Parameter wie "Linsen-Verzerr." oder "Linsen-Kurve" kannst du als Einsteiger komplett ignorieren! (Lass sie einfach auf 0 bzw. 2.0).
+- Klicke abschließend oben auf "✅ Einstellungen speichern".
+
+6. Volle Ringwertung & Optische Kalibrierung (Für Profis)
+Wenn du echte Wettkampf-Präzision mit Zehntelwertung (z. B. 10.9) willst, muss das System die Linsenkrümmung (Fischaugen-Effekt) der Kamera perfekt herausrechnen:
+- Aktiviere in den Erweiterten Einstellungen unter "Zielscheibe" die Option "ringwertung_aktiv = yes".
+- Gehe ins Labor und klicke oben auf den Button "📏 Kalibrierung".
+- Folge den Anweisungen und klicke präzise auf die 20 geforderten Punkte (Ränder der Ringe) im Bild.
+- Das System berechnet nun vollautomatisch das optische Linsenzentrum, die Pixel-Skalierung und die Verzerrung! Klicke danach in der Werkbank auf "✅ Schließen & Übernehmen".
 
 💡 PRO-TIPP: Zentrum setzen (Pixelgenau per Tastatur!)
 Wenn der Nullpunkt der Kamera (das Zentrum) leicht verschoben ist, klicke im Live-Bild auf den Button "Zentrum" und klicke grob in die Mitte der Zielscheibe. Es erscheinen für 15 Sekunden grüne, gestrichelte Orientierungskreise. 
 Nutze in diesen 15 Sekunden die Pfeiltasten (oder W,A,S,D) auf deiner Tastatur! Damit kannst du das Zentrum (und die Ringwertung aller bisherigen Schüsse) extrem präzise Pixel für Pixel an die echte Papierscheibe heranrücken!
 
-6. Schüsse werden nicht richtig erkannt?
+7. Schüsse werden nicht richtig erkannt?
 Drücke im Live-System auf "Labor & Einstellungen". Die Kamera pausiert und du kannst in der rechten Seitenleiste mit den Reglern spielen (z. B. "hit_tolerance" verringern, um empfindlicher zu werden). Klicke auf Übernehmen, und das System lernt sofort dazu.
 """
 
