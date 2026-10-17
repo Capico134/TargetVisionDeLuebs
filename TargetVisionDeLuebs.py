@@ -130,15 +130,17 @@ class TargetTracker:
         self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_ANY) if self.nutze_kamera_rechts else None
         
         if self.nutze_kamera_links and self.cap_left:
-            # MJPEG erzwingen, DANN erst Breite und Höhe (Ohne Nachfragen!)
-            self.cap_left.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            # 1. MJPEG mit voller Wucht erzwingen
+            self.cap_left.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+            
+            # 2. Direkt danach die Framerate fordern (noch vor der Auflösung!)
+            self.cap_left.set(cv2.CAP_PROP_FPS, self.fps_limit)
+            
+            # 3. Erst jetzt die Auflösung setzen
             self.cap_left.set(cv2.CAP_PROP_FRAME_WIDTH, width_l)
             self.cap_left.set(cv2.CAP_PROP_FRAME_HEIGHT, height_l)
             
-            # ---> NEU: Die smarte FPS-Verhandlung <---
-            self.cap_left.set(cv2.CAP_PROP_FPS, self.fps_limit)
-            # Wenn der Treiber uns eine geringere Rate aufzwingt als gewünscht, 
-            # fordern wir lieber gleich die vollen 30 an (Fallback).
+            # 4. Fallback-Prüfung
             if self.cap_left.get(cv2.CAP_PROP_FPS) < self.fps_limit - 1:
                 self.cap_left.set(cv2.CAP_PROP_FPS, 30)
             
@@ -146,13 +148,17 @@ class TargetTracker:
             self._set_camera_exposure(self.cap_left, belichtung_l)
             
         if self.nutze_kamera_rechts and self.cap_right:
-            # MJPEG erzwingen
-            self.cap_right.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            # 1. MJPEG mit voller Wucht erzwingen
+            self.cap_right.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+            
+            # 2. Direkt danach die Framerate fordern
+            self.cap_right.set(cv2.CAP_PROP_FPS, self.fps_limit)
+            
+            # 3. Auflösung setzen
             self.cap_right.set(cv2.CAP_PROP_FRAME_WIDTH, width_r)
             self.cap_right.set(cv2.CAP_PROP_FRAME_HEIGHT, height_r)
             
-            # ---> NEU: Die smarte FPS-Verhandlung <---
-            self.cap_right.set(cv2.CAP_PROP_FPS, self.fps_limit)
+            # 4. Fallback-Prüfung
             if self.cap_right.get(cv2.CAP_PROP_FPS) < self.fps_limit - 1:
                 self.cap_right.set(cv2.CAP_PROP_FPS, 30)
             
