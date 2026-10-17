@@ -212,12 +212,13 @@ class LaborApp:
     @property
     def is_interacting(self):
         """
-        Zentraler Schalter: Gibt True zurück, wenn der User gerade aktiv zieht oder zoomt.
-        Kann in Zukunft für neue Maus-Gesten beliebig erweitert werden.
+        Zentraler Schalter: Gibt True zurück, wenn der User gerade aktiv zieht, 
+        zoomt oder Parameter (Slider/WASD) verändert.
         """
         is_zooming = getattr(self, 'is_zoom_box_active', False)
         is_panning = getattr(self, 'drag_start_x', None) is not None
-        return is_zooming or is_panning
+        is_tweaking = getattr(self, '_param_timer', None) is not None
+        return is_zooming or is_panning or is_tweaking
         
     def validate_float_chars(self, P):
         """Erlaubt nur Ziffern, Punkt, Minus, Plus und E (für wissenschaftliche Notation)"""
@@ -609,13 +610,13 @@ class LaborApp:
         elif char == 'a': cx -= 0.2
         elif char == 'd': cx += 0.2
 
-        # 2. Den neuen Wert speichern (wird dann beim nächsten "Test-Case-Export" auch physisch in die JSON geschrieben!)
+        # 2. Den neuen Wert speichern
         self.original_match_data['metadata'][center_key] = [round(cx, 4), round(cy, 4)]
         
-        # 3. Bild sofort neu rendern (stanzt die Engine neu und BEREINIGT das Log!)
-        self.on_param_change(force=True)
+        # ---> NEU: Das asynchrone Zentrum-Preview mit 800ms Puffer! <---
+        # Überbrückt die Windows-Tastatur-Verzögerung und menschliche Tipp-Pausen.
+        self.on_param_change(force=False, delay=600)
         
-        # 4. NACH dem Wipe die Meldung ins saubere Log schreiben, damit sie bleibt!
         diff_x = cx - alt_cx
         diff_y = cy - alt_cy
         richtung = ""
@@ -626,28 +627,28 @@ class LaborApp:
         
         self.print_log("SYSTEM", f"🎯 Zentrum {side.upper()} verschoben ({richtung}): X:{cx:.4f} Y:{cy:.4f}")
 
+        # ---> DER FIX: Wir rufen den Renderer auf! <---
+        self.renderer.draw_center_preview(cx, cy)
+
  
-    def on_param_change(self, event=None, force=False):
+    def on_param_change(self, event=None, force=False, delay=300):
         if not self.current_zip_path:
             return
             
-        # ---> NEU: Blockiere Updates, während ein ZIP im Hintergrund geladen wird! <---
         if getattr(self, '_is_loading', False):
             return
             
-        # Wenn 'Enter' im Textfeld gedrückt wurde, sofort aktualisieren
         if force:
+            if hasattr(self, '_param_timer') and self._param_timer is not None:
+                self.root.after_cancel(self._param_timer)
+                self._param_timer = None
             self.process_and_display()
             return
             
-        # ---> NEU: Die Debounce-Logik (Idee B) <---
-        # 1. Existiert schon ein laufender Timer? Dann brich ihn ab!
         if hasattr(self, '_param_timer') and self._param_timer is not None:
             self.root.after_cancel(self._param_timer)
             
-        # 2. Starte einen neuen Timer (z.B. 300 Millisekunden)
-        # Erst wenn 300 ms lang kein neues Event kam, wird process_and_display aufgerufen
-        self._param_timer = self.root.after(300, self._apply_param_change)
+        self._param_timer = self.root.after(delay, self._apply_param_change)
 
     def _apply_param_change(self):
         """Die eigentliche Ausführung nach dem Zeitpuffer"""
@@ -758,66 +759,18 @@ class LaborApp:
 
     def on_zoom_box_start(self, event):
         """Startet den Rahmen-Zoom (Strg / Shift)"""
-        self.root.focus_set() # <--- ELA FIX: Fokus sanft holen, bevor der Rahmen gezeichnet wird!
-        
+        self.root.focus_set() 
         if getattr(self, 'color_picker_active', False):
             return "break"
             
-        # ---> DER FIX: Türsteher entfernt! Wir lassen den Klick erstmal zu. <---
-        
         self.is_zoom_box_active = True
         self.zoom_box_start_x = event.x
         self.zoom_box_start_y = event.y
-        
-        # 4 hauchdünne UI-Linien erzeugen (falls noch nicht existent)
-        if not hasattr(self, 'zoom_borders'):
-            self.zoom_borders = [tk.Frame(self.img_container, bg="yellow") for _ in range(4)]
-            
         return "break"
         
-    #def on_zoom_box_motion(self, event):
-    #    """Zeichnet den Rahmen butterweich über natives Tkinter (0% CPU, Anti-Glitch)"""
-    #    if getattr(self, 'is_zoom_box_active', False):
-    #        
-    #        # 25 FPS Türsteher (0.040 Sekunden)
-    #        current_time = time.time()
-    #        if current_time - getattr(self, 'last_zoombox_update_time', 0) < 0.040:
-    #            return
-    #        self.last_zoombox_update_time = current_time
-    #        
-    #        x1, y1 = self.zoom_box_start_x, self.zoom_box_start_y
-    #        x2, y2 = event.x, event.y
-    #        
-    #        min_x, max_x = min(x1, x2), max(x1, x2)
-    #        min_y, max_y = min(y1, y2), max(y1, y2)
-    #        
-    #        t = 3 # Liniendicke
-    #        
-    #        w = max(t * 2, max_x - min_x)
-    #        h = max(t * 2, max_y - min_y)
-    #        
-    #        # =========================================================================
-    #        # DER FIX GEGEN DAS VERSCHWINDEN: 1 Pixel absichtlicher Overlap + Z-Order
-    #        # =========================================================================
-    #        # Wir machen die horizontalen Striche 2 Pixel breiter (w+2) und schieben sie 1px nach links
-    #        self.zoom_borders[0].place(x=min_x - 1, y=min_y, width=w + 2, height=t)
-    #        self.zoom_borders[1].place(x=min_x - 1, y=min_y + h - t, width=w + 2, height=t)
-    #        
-    #        # Die vertikalen Striche klemmen wir wie gehabt dazwischen
-    #        self.zoom_borders[2].place(x=min_x, y=min_y + t, width=t, height=h - 2*t)
-    #        self.zoom_borders[3].place(x=min_x + w - t, y=min_y + t, width=t, height=h - 2*t)
-    #
-    #        # Zwingt Windows, diese 4 Linien sofort ganz nach vorne zu rendern
-    #        for border in self.zoom_borders:
-    #            border.lift()
-    #
-    #    return "break"
-
     def on_zoom_box_motion(self, event):
-        """Zeichnet den Rahmen butterweich über natives Tkinter (ohne Overlap-Flackern)"""
+        """Berechnet die Koordinaten und weist den Renderer an, den Rahmen zu zeichnen"""
         if getattr(self, 'is_zoom_box_active', False):
-            
-            # ---> NEU: Floating-Point sicherer Türsteher für den Rahmen! <---
             if self.zoom_factor >= self.max_zoom_factor - 0.01:
                 return "break"
                 
@@ -827,38 +780,21 @@ class LaborApp:
                 return
             self.last_zoombox_update_time = current_time
             
-            x1, y1 = self.zoom_box_start_x, self.zoom_box_start_y
-            x2, y2 = event.x, event.y
-            
-            min_x, max_x = min(x1, x2), max(x1, x2)
-            min_y, max_y = min(y1, y2), max(y1, y2)
-            
-            t = 2 # Liniendicke in Pixeln
-            
-            w = max(t * 2, max_x - min_x)
-            h = max(t * 2, max_y - min_y)
-            
-            draw_x = min_x + getattr(self, 'pan_x', 0)
-            draw_y = min_y + getattr(self, 'pan_y', 0)
-            
-            self.zoom_borders[0].place(x=draw_x, y=draw_y, width=w, height=t)
-            self.zoom_borders[1].place(x=draw_x, y=draw_y + h - t, width=w, height=t)
-            self.zoom_borders[2].place(x=draw_x, y=draw_y + 2*t, width=t, height=h - 4*t)
-            self.zoom_borders[3].place(x=draw_x + w - t, y=draw_y + 2*t, width=t, height=h - 4*t)
-
+            # ---> NEU: Den Renderer die Arbeit machen lassen! <---
+            self.renderer.draw_zoom_box(
+                self.zoom_box_start_x, self.zoom_box_start_y, 
+                event.x, event.y, 
+                getattr(self, 'pan_x', 0), getattr(self, 'pan_y', 0)
+            )
         return "break"
-
 
     def on_zoom_box_stop(self, event):
         """Führt den Box-Zoom aus"""
         if getattr(self, 'is_zoom_box_active', False):
             self.is_zoom_box_active = False
             
-            # UI-Linien wieder unsichtbar machen
-            if hasattr(self, 'zoom_borders'):
-                for border in self.zoom_borders:
-                    border.place_forget()
-                    
+            # ---> NEU: Dem Renderer sagen, er soll aufräumen <---
+            self.renderer.hide_zoom_box()
             self.apply_zoom_box(self.zoom_box_start_x, self.zoom_box_start_y, event.x, event.y)
         return "break"
 
@@ -869,11 +805,8 @@ class LaborApp:
             self.zoom_box_start_x = None
             self.zoom_box_start_y = None
             
-            # UI-Linien wieder unsichtbar machen
-            if hasattr(self, 'zoom_borders'):
-                for border in self.zoom_borders:
-                    border.place_forget()
-                    
+            # ---> NEU: Dem Renderer sagen, er soll aufräumen <---
+            self.renderer.hide_zoom_box()
             self.print_log("SYSTEM", "Zoom-Rahmen abgebrochen.")
 
     def on_drag_start(self, event):
