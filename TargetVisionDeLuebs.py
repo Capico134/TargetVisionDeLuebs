@@ -8,16 +8,14 @@ import sys
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox
-import threading #loading
-import math      #loading
+import threading
+import math
 
-# --- NEU: Unsere sauberen Manager-Importe ---
 from DateiManagerDeLuebs import DateiManager
 from StateManagerDeLuebs import StateManager
 from DetectionDeLuebs import TargetDetector
-from TargetVisionRenderer import TargetVisionRenderer # <--- NEU!
-
-#import LoggerDeLuebs
+from TargetVisionRenderer import TargetVisionRenderer
+from CameraDeLuebs import AsyncCamera # <--- NEU!
 
 class TargetTracker:
     def __init__(self, config, datei_manager, state_manager):
@@ -29,72 +27,24 @@ class TargetTracker:
         print(f"🎯 TargetVision DeLübs     [v{self.version}]")
         self.window_name = f"TargetVision DeLuebs - v{self.version}"
         
-        # ---> NEU: Als Instanz-Variable speichern! <---
         self.is_windows = platform.system() == 'Windows'
-        
-        self.nutze_kamera_links = config.getboolean('Kameras', 'nutze_kamera_links')
-        self.nutze_kamera_rechts = config.getboolean('Kameras', 'nutze_kamera_rechts')
-
-        # =========================================================================
-        # ---> DER FIX: GUI-Variablen (wie fps_limit) VOR dem Thread laden! <---
-        # =========================================================================
         self.refresh_gui_settings_from_config()
 
         print("\n--- START KAMERA INITIALISIERUNG (ASYNCHRON) ---")
         self.kameras_bereit = False
+        self.cap_left = None
+        self.cap_right = None
+        
         # 1. Den Hintergrundarbeiter losschicken
         init_thread = threading.Thread(target=self._background_camera_init, daemon=True)
         init_thread.start()
-        # 2. Während der Arbeiter schwitzt, bespaßen wir den Nutzer mit der Animation
+        
+        # 2. Während der Arbeiter schwitzt, bespaßen wir den Nutzer
         self._play_splash_screen()
         
-        # =========================================================================
-        # ---> NEU: Hardware-Status direkt nach dem Start auslesen und loggen <---
-        # =========================================================================
-        self.log("SYSTEM", "--- KAMERA HARDWARE STATUS ---", True)
-        
-        def log_cam_status(name, cap, is_active):
-            if not is_active: return
-            if cap and cap.isOpened():
-                
-                # =======================================================
-                # ---> WARM-UP BLOCK (Später leicht auszukommentieren)
-                # Zwingt Windows dazu, den Stream aufzubauen und die 
-                # wahre Codec-Aushandlung JETZT abzuschließen.
-                cap.grab()
-                cap.retrieve()
-                # =======================================================
-                
-                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                fps = cap.get(cv2.CAP_PROP_FPS)
-                exp = cap.get(cv2.CAP_PROP_EXPOSURE)
-                
-                # FOURCC ist ein Integer, den wir in 4 Buchstaben decodieren müssen (z.B. 'MJPG')
-                fourcc_int = int(cap.get(cv2.CAP_PROP_FOURCC))
-                try:
-                    codec = "".join([chr((fourcc_int >> 8 * i) & 0xFF) for i in range(4)]).strip()
-                    # ---> NEU: Abfangen von unsichtbaren Bytes (\x00), falls 
-                    # die Kamera wirklich unkomprimiert feuert!
-                    if not codec or not codec.isprintable() or '\x00' in codec:
-                        codec = "RAW/YUV (Unkomprimiert)"
-                except Exception:
-                    codec = "Unbekannt"
-                    
-                self.log("SYSTEM", f"Kamera {name} -> {w}x{h} | Codec: {codec} | FPS: {fps} | Exp: {exp}", True)
-            else:
-                self.log("SYSTEM", f"Kamera {name} -> ⚠️ FEHLER: Hardware antwortet nicht!", True)
-
-        log_cam_status("LINKS", self.cap_left, self.nutze_kamera_links)
-        log_cam_status("RECHTS", self.cap_right, self.nutze_kamera_rechts)
         self.log("SYSTEM", "------------------------------", True)
         
-        # --- GUI-Variablen einmalig initialisieren ---
-        self.refresh_gui_settings_from_config()
-        
         self.detector = TargetDetector(config, datei_manager, state_manager, self.log)
-        
-        # ---> NEU: Wir lagern das Zeichnen in den Renderer aus! <---
         self.renderer = TargetVisionRenderer(self)
 
         self.current_crops = {'left': (0,0,0,0), 'right': (0,0,0,0)}
@@ -116,57 +66,62 @@ class TargetTracker:
             self.show_config_alert()
 
     def _background_camera_init(self):
-        """Hier passiert die harte, blockierende Hardware-Arbeit im Hintergrund."""
+        """Initialisiert die Kameras asynchron über das neue Modul."""
         cam_left_idx = self.config.getint('Kameras', 'cam_left_index')
         cam_right_idx = self.config.getint('Kameras', 'cam_right_index')
-        
         width_l = self.config.getint('Kameras', 'cam_width_links', fallback=1280)
         height_l = self.config.getint('Kameras', 'cam_height_links', fallback=720)
         width_r = self.config.getint('Kameras', 'cam_width_rechts', fallback=1280)
         height_r = self.config.getint('Kameras', 'cam_height_rechts', fallback=720)
         
-        # ---> ZURÜCK ZU CAP_ANY (Media Foundation)! DSHOW bremst moderne Hardware aus. <---
-        self.cap_left = cv2.VideoCapture(cam_left_idx, cv2.CAP_ANY) if self.nutze_kamera_links else None
-        self.cap_right = cv2.VideoCapture(cam_right_idx, cv2.CAP_ANY) if self.nutze_kamera_rechts else None
+        self.log("SYSTEM", "--- KAMERA HARDWARE STATUS ---", True)
         
-        if self.nutze_kamera_links and self.cap_left:
-            # 1. MJPEG mit voller Wucht erzwingen
-            self.cap_left.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+        if self.nutze_kamera_links:
+            # ---> DER FIX: self.kamera_bildrate übergeben statt self.fps_limit <---
+            self.cap_left = AsyncCamera(cam_left_idx, cv2.CAP_MSMF, width_l, height_l, self.kamera_bildrate, self.log, "LINKS")
+            if self.cap_left.start():
+                belichtung_l = self.config.get('Kameras', 'belichtung_links', fallback='Standard')
+                self.cap_left.set_exposure(belichtung_l, self.is_windows)
+                
+        if self.nutze_kamera_rechts:
+            # ---> DER FIX: self.kamera_bildrate übergeben statt self.fps_limit <---
+            self.cap_right = AsyncCamera(cam_right_idx, cv2.CAP_MSMF, width_r, height_r, self.kamera_bildrate, self.log, "RECHTS")
+            if self.cap_right.start():
+                belichtung_r = self.config.get('Kameras', 'belichtung_rechts', fallback='Standard')
+                self.cap_right.set_exposure(belichtung_r, self.is_windows)
             
-            # 2. Direkt danach die Framerate fordern (noch vor der Auflösung!)
-            self.cap_left.set(cv2.CAP_PROP_FPS, self.fps_limit)
-            
-            # 3. Erst jetzt die Auflösung setzen
-            self.cap_left.set(cv2.CAP_PROP_FRAME_WIDTH, width_l)
-            self.cap_left.set(cv2.CAP_PROP_FRAME_HEIGHT, height_l)
-            
-            # 4. Fallback-Prüfung
-            if self.cap_left.get(cv2.CAP_PROP_FPS) < self.fps_limit - 1:
-                self.cap_left.set(cv2.CAP_PROP_FPS, 30)
-            
-            belichtung_l = self.config.get('Kameras', 'belichtung_links', fallback='Standard')
-            self._set_camera_exposure(self.cap_left, belichtung_l)
-            
-        if self.nutze_kamera_rechts and self.cap_right:
-            # 1. MJPEG mit voller Wucht erzwingen
-            self.cap_right.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-            
-            # 2. Direkt danach die Framerate fordern
-            self.cap_right.set(cv2.CAP_PROP_FPS, self.fps_limit)
-            
-            # 3. Auflösung setzen
-            self.cap_right.set(cv2.CAP_PROP_FRAME_WIDTH, width_r)
-            self.cap_right.set(cv2.CAP_PROP_FRAME_HEIGHT, height_r)
-            
-            # 4. Fallback-Prüfung
-            if self.cap_right.get(cv2.CAP_PROP_FPS) < self.fps_limit - 1:
-                self.cap_right.set(cv2.CAP_PROP_FPS, 30)
-            
-            belichtung_r = self.config.get('Kameras', 'belichtung_rechts', fallback='Standard')
-            self._set_camera_exposure(self.cap_right, belichtung_r)
-            
-        # Signal an die Animation: Wir sind fertig!
         self.kameras_bereit = True
+
+    def read_frames(self):
+        """Holt das Bild und die Info, ob OpenCV rechnen muss."""
+        frame_l, frame_r = None, None
+        new_l, new_r = False, False
+        
+        if self.nutze_kamera_links and self.cap_left: 
+            raw_l, new_l = self.cap_left.read()
+            if raw_l is not None:
+                frame_l = self.apply_crop(raw_l, 'left')
+            
+        if self.nutze_kamera_rechts and self.cap_right: 
+            raw_r, new_r = self.cap_right.read()
+            if raw_r is not None:
+                frame_r = self.apply_crop(raw_r, 'right')
+            
+        return (frame_l, new_l), (frame_r, new_r)
+
+    def flush_camera_buffers(self, frames_to_drop=2):
+        """Pausiert kurz, da die AsyncCamera automatisch weiterläuft und alte Bilder verwirft."""
+        # Wir warten einfach kurz, während die Kamera im Hintergrund weiter neue Bilder in den Puffer schiebt.
+        # Ein echtes Leeren des Hardware-Puffers (cap.grab()) ist beim asynchronen Ansatz nicht mehr nötig.
+        time.sleep(0.05)
+
+    def cleanup(self):
+        self.dm.flush_image_queue()
+        if self.nutze_kamera_links and self.cap_left: 
+            self.cap_left.stop()
+        if self.nutze_kamera_rechts and self.cap_right: 
+            self.cap_right.stop()
+        cv2.destroyAllWindows()
 
     def _play_splash_screen(self):
         """Zeichnet eine flüssige Animation (Pulsierend), bis die Kameras bereit sind."""
@@ -234,13 +189,13 @@ class TargetTracker:
         self.nutze_kamera_rechts = self.config.getboolean('Kameras', 'nutze_kamera_rechts', fallback=False)
         self.ausloeser_durch_erschuetterung = self.config.getboolean('Erkennung', 'ausloeser_durch_erschuetterung', fallback=False)
         
-        # ---> NEU: fps_limit statt poll_ms <---
         self.fps_limit = self.config.getint('Timing', 'fps_limit', fallback=30)
-        #self.poll_ms = self.config.getint('Timing', 'poll_ms', fallback=33)
+        
+        # ---> NEU: Hardware-Bildrate für die Kamera auslesen <---
+        self.kamera_bildrate = self.config.getint('Timing', 'kamera_bildrate', fallback=30)
         
         self.vollbild = self.config.getboolean('Anzeige', 'vollbild', fallback=False)
         
-        # Dem Renderer Bescheid geben, falls er schon existiert
         if hasattr(self, 'renderer'):
             self.renderer.refresh_settings()
 
@@ -357,59 +312,59 @@ class TargetTracker:
                     self.renderer.trigger_zoom(state.side, frame)
                     self.flush_camera_buffers(2)
 
-    def read_frames(self):
-        frame_l, frame_r = None, None
-        
-        # SCHRITT 1: Beide Kameras fast zeitgleich anweisen, den Sensor "einzufrieren" (grab)
-        # Das geht blitzschnell und blockiert nicht die vollen 33ms!
-        if self.nutze_kamera_links and self.cap_left: 
-            self.cap_left.grab()
-        if self.nutze_kamera_rechts and self.cap_right: 
-            self.cap_right.grab()
-            
-        # SCHRITT 2: Die eingefrorenen Bilder nacheinander abholen und decodieren (retrieve)
-        if self.nutze_kamera_links and self.cap_left: 
-            ret_l, raw_l = self.cap_left.retrieve()
-            frame_l = self.apply_crop(raw_l, 'left') if ret_l else None
-            
-        if self.nutze_kamera_rechts and self.cap_right: 
-            ret_r, raw_r = self.cap_right.retrieve()
-            frame_r = self.apply_crop(raw_r, 'right') if ret_r else None
-            
-        return frame_l, frame_r
-
-    def flush_camera_buffers(self, frames_to_drop=5):
-        for _ in range(frames_to_drop):
-            if self.nutze_kamera_links and self.cap_left: self.cap_left.grab()
-            if self.nutze_kamera_rechts and self.cap_right: self.cap_right.grab()
-            # Hier brauchen wir retrieve() gar nicht, weil wir die Bilder ja eh wegwerfen!
-
-    def _smart_set(self, cap, prop, target_value):
-        """Setzt einen OpenCV-Parameter nur, wenn er abweicht, um irrelevante USB-Neustarts zu verhindern."""
-        if cap.get(prop) != target_value:
-            cap.set(prop, target_value)
+#    def read_frames(self):
+#        frame_l, frame_r = None, None
+#        
+#        # SCHRITT 1: Beide Kameras fast zeitgleich anweisen, den Sensor "einzufrieren" (grab)
+#        # Das geht blitzschnell und blockiert nicht die vollen 33ms!
+#        if self.nutze_kamera_links and self.cap_left: 
+#            self.cap_left.grab()
+#        if self.nutze_kamera_rechts and self.cap_right: 
+#            self.cap_right.grab()
+#            
+#        # SCHRITT 2: Die eingefrorenen Bilder nacheinander abholen und decodieren (retrieve)
+#        if self.nutze_kamera_links and self.cap_left: 
+#            ret_l, raw_l = self.cap_left.retrieve()
+#            frame_l = self.apply_crop(raw_l, 'left') if ret_l else None
+#            
+#        if self.nutze_kamera_rechts and self.cap_right: 
+#            ret_r, raw_r = self.cap_right.retrieve()
+#            frame_r = self.apply_crop(raw_r, 'right') if ret_r else None
+#            
+#        return frame_l, frame_r
+#
+#    def flush_camera_buffers(self, frames_to_drop=5):
+#        for _ in range(frames_to_drop):
+#            if self.nutze_kamera_links and self.cap_left: self.cap_left.grab()
+#            if self.nutze_kamera_rechts and self.cap_right: self.cap_right.grab()
+#            # Hier brauchen wir retrieve() gar nicht, weil wir die Bilder ja eh wegwerfen!
+#
+    # def _smart_set(self, cap, prop, target_value): #BRAUCHEN WIR DIE HIER???
+    #     """Setzt einen OpenCV-Parameter nur, wenn er abweicht, um irrelevante USB-Neustarts zu verhindern."""
+    #     if cap.get(prop) != target_value:
+    #         cap.set(prop, target_value)
     
-    def _set_camera_exposure(self, cap, belichtung_str):
-        """Erzwingt zuverlässig das Setzen der Belichtung (mit Smart-Check)."""
-        if not cap or not cap.isOpened() or belichtung_str == 'Standard':
-            return
-            
-        auto_mode_val = 1 if self.is_windows else 3
-        manual_mode_val = 0 if self.is_windows else 1
-            
-        if belichtung_str == 'Auto':
-            self._smart_set(cap, cv2.CAP_PROP_AUTO_EXPOSURE, auto_mode_val)
-        else:
-            try:
-                exp_val = int(belichtung_str)
-                # Nur in den manuellen Modus zwingen, falls sie noch auf Auto steht
-                if cap.get(cv2.CAP_PROP_AUTO_EXPOSURE) != manual_mode_val:
-                    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, manual_mode_val)
-                    time.sleep(0.05)
-                
-                self._smart_set(cap, cv2.CAP_PROP_EXPOSURE, exp_val)
-            except ValueError:
-                pass
+#    def _set_camera_exposure(self, cap, belichtung_str):
+#        """Erzwingt zuverlässig das Setzen der Belichtung (mit Smart-Check)."""
+#        if not cap or not cap.isOpened() or belichtung_str == 'Standard':
+#            return
+#            
+#        auto_mode_val = 1 if self.is_windows else 3
+#        manual_mode_val = 0 if self.is_windows else 1
+#            
+#        if belichtung_str == 'Auto':
+#            self._smart_set(cap, cv2.CAP_PROP_AUTO_EXPOSURE, auto_mode_val)
+#        else:
+#            try:
+#                exp_val = int(belichtung_str)
+#                # Nur in den manuellen Modus zwingen, falls sie noch auf Auto steht
+#                if cap.get(cv2.CAP_PROP_AUTO_EXPOSURE) != manual_mode_val:
+#                    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, manual_mode_val)
+#                    time.sleep(0.05)
+#                
+#                self._smart_set(cap, cv2.CAP_PROP_EXPOSURE, exp_val)
+#            except ValueError:
+#                pass
 
     def apply_handover(self, zip_path):
         package = self.dm.import_match_package(zip_path)
@@ -637,11 +592,11 @@ class TargetTracker:
 
         return False
 
-    def cleanup(self):
-        self.dm.flush_image_queue()
-        if self.nutze_kamera_links: self.cap_left.release()
-        if self.nutze_kamera_rechts: self.cap_right.release()
-        cv2.destroyAllWindows()
+#    def cleanup(self):
+#        self.dm.flush_image_queue()
+#        if self.nutze_kamera_links: self.cap_left.release()
+#        if self.nutze_kamera_rechts: self.cap_right.release()
+#        cv2.destroyAllWindows()
 
     def on_mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
@@ -1165,7 +1120,7 @@ class TargetTracker:
     def run(self):
         blink_timer = time.time()
         blink_state = True
-        first_frame = True  # <--- NEU: Verhindert den 1-Sekunden-Glitch
+        first_frame = True
         
         cv2.setMouseCallback(self.window_name, self.on_mouse_click)
         self.log("SYSTEM", "=== PROGRAMM GESTARTET ===", True)
@@ -1173,22 +1128,24 @@ class TargetTracker:
         while True:
             frame_start_time = time.perf_counter() 
             
-            # Hier schwitzt die Kamera beim ersten Durchlauf kurz (~1s)
-            frame_l, frame_r = self.read_frames() 
+            # Jetzt bekommen wir die Info, ob die Kamera was geliefert hat
+            (frame_l, new_l), (frame_r, new_r) = self.read_frames() 
             self.last_frame_l = frame_l 
             self.last_frame_r = frame_r 
             
             self.process_resets(frame_l, frame_r)
             self.process_edits()
             
-            if self.nutze_kamera_links: self.process_camera(frame_l, self.sm.state_left)
-            if self.nutze_kamera_rechts: self.process_camera(frame_r, self.sm.state_right)
+            # ---> DER PERFORMANCE-BOOST: OpenCV pausiert, bis ein neues Bild da ist! <---
+            if self.nutze_kamera_links and new_l: 
+                self.process_camera(frame_l, self.sm.state_left)
+            if self.nutze_kamera_rechts and new_r: 
+                self.process_camera(frame_r, self.sm.state_right)
             
             if time.time() - blink_timer > 0.3:
                 blink_state = not blink_state
                 blink_timer = time.time()
             
-            # ---> NEU: Fenster exakt in dem Frame anpassen, in dem auch das Bild da ist! <---
             if first_frame:
                 if self.vollbild:
                     cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
@@ -1196,6 +1153,7 @@ class TargetTracker:
                     cv2.resizeWindow(self.window_name, 1280, 720)
                 first_frame = False
 
+            # Die GUI rendert IMMER butterweich weiter!
             self.renderer.update_gui(frame_l, frame_r, blink_state)
             
             if self.check_keys(frame_start_time):
