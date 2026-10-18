@@ -23,7 +23,7 @@ from DateiManagerDeLuebs import DateiManager
 from StateManagerDeLuebs import StateManager
 from KalibrierungDeLuebs import Kalibrator
 
-import LoggerDeLuebs
+#import LoggerDeLuebs
 #from HandbuchDeLuebs import PARAMETER_LEXIKON
 
            
