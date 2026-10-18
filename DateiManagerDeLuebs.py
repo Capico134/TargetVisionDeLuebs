@@ -13,28 +13,29 @@ import threading #Für die Warteschlange
 import queue     #Für die Warteschlange
 
 class DateiManager:
-    # ---> ELA: Standardmäßig False, damit Zweit-Tools (Labor) nichts löschen!
     def __init__(self, clear_on_start=False):
         self.CONFIG_FILE = 'config.ini'
         self.DEBUG_FOLDER = 'debug_bilder'
         self.LOG_FILE = 'treffer_log.txt'
         self.ZIP_FOLDER = 'debug_pakete'
         
+        # ---> NEU: Unser RAM-Log-Puffer statt permanenter Festplatten-I/O <---
+        self.log_buffer = []
+        
         self._init_system(clear_on_start)
         
-        # ---> NEU: Multithreading für verzögerungsfreies Speichern <---
+        # Multithreading für verzögerungsfreies Speichern der Bilder
         self.image_queue = queue.Queue()
         self.save_thread = threading.Thread(target=self._image_writer_worker, daemon=True)
         self.save_thread.start()
         
-        self.targets_cache = None # <--- NEU: Der RAM-Speicher für die Zielscheiben!
+        self.targets_cache = None
 
     def _init_system(self, clear_on_start):
-        """Erstellt Ordner und leert das Log beim Start."""
+        """Erstellt Ordner und initialisiert das RAM-Log (ohne Festplatten-Zugriff)."""
         if not os.path.exists(self.DEBUG_FOLDER):
             os.makedirs(self.DEBUG_FOLDER)
         elif clear_on_start:
-            # ---> NEU: Fegt den Ordner nur noch, wenn es explizit gewünscht ist!
             alte_dateien = glob.glob(os.path.join(self.DEBUG_FOLDER, "*"))
             for f in alte_dateien:
                 try:
@@ -46,11 +47,19 @@ class DateiManager:
         if not os.path.exists(self.ZIP_FOLDER):
             os.makedirs(self.ZIP_FOLDER)    
 
-        # Das Log wird weiterhin bei JEDEM Start der DateiManager-Klasse (also auch 
-        # bei TargetVision Start) sauber getrennt. Da die Log-Rotation vorher läuft,
-        # geht nichts verloren.
-        with open(self.LOG_FILE, "w", encoding="utf-8") as f:
-            f.write(f"=== DIGITALE TREFFERANZEIGE LOG - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+        # Start-Eintrag direkt in den RAM-Puffer schreiben
+        header_msg = f"=== DIGITALE TREFFERANZEIGE LOG - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ==="
+        self.log_buffer.append(header_msg)
+
+    def write_log(self, log_msg):
+        """Schreibt eine Nachricht in die Konsole und puffert sie im RAM (0% Festplatten-Last)."""
+        # 1. Sofortige Ausgabe in der CMD-Konsole für Live-Feedback
+        print(log_msg) 
+        
+        # 2. Speicherung im RAM-Buffer (begrenzt auf die letzten 5000 Zeilen zum Schutz des RAMs)
+        self.log_buffer.append(log_msg)
+        if len(self.log_buffer) > 5000:
+            self.log_buffer.pop(0)
 
     def _image_writer_worker(self):
         """Der Koch: Läuft unsichtbar im Hintergrund und speichert Bilder als lupenreine PNGs."""
@@ -77,13 +86,13 @@ class DateiManager:
         except Exception:
             return "1.1.0-dev"
 
-    def write_log(self, log_msg):
-        """Schreibt eine fertige Nachricht in die Textdatei UND in die Konsole."""
-        # 1. Sofortige Ausgabe in der CMD-Konsole
-        print(log_msg) 
-        # 2. Archivierung in der Textdatei
-        with open(self.LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(log_msg + "\n")
+    #def write_log(self, log_msg):
+    #    """Schreibt eine fertige Nachricht in die Textdatei UND in die Konsole."""
+    #    # 1. Sofortige Ausgabe in der CMD-Konsole
+    #    print(log_msg) 
+    #    # 2. Archivierung in der Textdatei
+    #    with open(self.LOG_FILE, "a", encoding="utf-8") as f:
+    #        f.write(log_msg + "\n")
 
     #def save_debug_image(self, name, image):
     #    """Speichert Debug-Bilder intelligent als JPG (Fotos) oder PNG (Masken)."""
@@ -699,9 +708,10 @@ treffer_anzeigedauer = 8
                 elif os.path.exists(self.CONFIG_FILE):
                     zf_out.write(self.CONFIG_FILE, os.path.basename(self.CONFIG_FILE))
 
-                # 3. Log-Datei (Von der Festplatte, falls sie nicht herausgefiltert werden soll)
-                if os.path.exists(self.LOG_FILE) and not apply_diet_filter:
-                    zf_out.write(self.LOG_FILE, os.path.basename(self.LOG_FILE))
+                # 3. Log-Datei direkt aus dem RAM-Puffer ins ZIP schreiben (kein Festplatten-I/O!)
+                if not apply_diet_filter and self.log_buffer:
+                    log_content = "\n".join(self.log_buffer) + "\n"
+                    zf_out.writestr(os.path.basename(self.LOG_FILE), log_content)
                     
                 # =========================================================================
                 # ---> NEU: Die Time-Capsule Logik für die zielscheiben.json <---

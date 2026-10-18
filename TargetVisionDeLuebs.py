@@ -17,7 +17,7 @@ from StateManagerDeLuebs import StateManager
 from DetectionDeLuebs import TargetDetector
 from TargetVisionRenderer import TargetVisionRenderer # <--- NEU!
 
-import LoggerDeLuebs
+#import LoggerDeLuebs
 
 class TargetTracker:
     def __init__(self, config, datei_manager, state_manager):
@@ -345,7 +345,7 @@ class TargetTracker:
                         shot_found = self.detector.check_background_and_evaluate(frame, state) 
                         if shot_found: 
                             self.renderer.trigger_zoom(state.side, frame)
-                            self.flush_camera_buffers(12) 
+                            self.flush_camera_buffers(2) 
                         self.log(state.side, "-" * 60)
         else:
             current_time = time.time()
@@ -355,7 +355,7 @@ class TargetTracker:
                 shot_found = self.detector.check_background_and_evaluate(frame, state)
                 if shot_found: 
                     self.renderer.trigger_zoom(state.side, frame)
-                    self.flush_camera_buffers(12)
+                    self.flush_camera_buffers(2)
 
     def read_frames(self):
         frame_l, frame_r = None, None
