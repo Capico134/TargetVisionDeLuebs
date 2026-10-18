@@ -78,14 +78,16 @@ class TargetTracker:
         
         if self.nutze_kamera_links:
             # ---> DER FIX: self.kamera_bildrate übergeben statt self.fps_limit <---
-            self.cap_left = AsyncCamera(cam_left_idx, cv2.CAP_MSMF, width_l, height_l, self.kamera_bildrate, self.log, "LINKS")
+            #self.cap_left = AsyncCamera(cam_left_idx, cv2.CAP_MSMF, width_l, height_l, self.kamera_bildrate, self.log, "LINKS")
+            self.cap_left = AsyncCamera(cam_left_idx, cv2.CAP_DSHOW, width_l, height_l, self.kamera_bildrate, self.log, "LINKS")
             if self.cap_left.start():
                 belichtung_l = self.config.get('Kameras', 'belichtung_links', fallback='Standard')
                 self.cap_left.set_exposure(belichtung_l, self.is_windows)
                 
         if self.nutze_kamera_rechts:
             # ---> DER FIX: self.kamera_bildrate übergeben statt self.fps_limit <---
-            self.cap_right = AsyncCamera(cam_right_idx, cv2.CAP_MSMF, width_r, height_r, self.kamera_bildrate, self.log, "RECHTS")
+            #self.cap_right = AsyncCamera(cam_right_idx, cv2.CAP_MSMF, width_r, height_r, self.kamera_bildrate, self.log, "RECHTS")
+            self.cap_right = AsyncCamera(cam_right_idx, cv2.CAP_DSHOW, width_r, height_r, self.kamera_bildrate, self.log, "RECHTS")
             if self.cap_right.start():
                 belichtung_r = self.config.get('Kameras', 'belichtung_rechts', fallback='Standard')
                 self.cap_right.set_exposure(belichtung_r, self.is_windows)
