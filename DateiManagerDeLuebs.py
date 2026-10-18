@@ -58,7 +58,7 @@ class DateiManager:
         
         # 2. Speicherung im RAM-Buffer (begrenzt auf die letzten 5000 Zeilen zum Schutz des RAMs)
         self.log_buffer.append(log_msg)
-        if len(self.log_buffer) > 5000:
+        if len(self.log_buffer) > 50000:
             self.log_buffer.pop(0)
 
     def _image_writer_worker(self):
