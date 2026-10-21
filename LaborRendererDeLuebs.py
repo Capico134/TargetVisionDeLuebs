@@ -541,6 +541,32 @@ class LaborRenderer:
                 cv2.circle(combined, (final_x, final_y), 4, (0, 0, 0), -1)
                 cv2.circle(combined, (final_x, final_y), 3, (0, 0, 255), -1)
         
+        # =====================================================================
+        # ---> RENDER-HELFER: Kalibrierungspunkte (in BEIDEN Hälften!) <---
+        # =====================================================================
+        # Wir prüfen, ob Punkte da sind (egal ob der Assistent noch läuft oder die Werkbank schon offen ist)
+        if hasattr(self.app, 'calib_points') and self.app.calib_points:
+            for i, pt in enumerate(self.app.calib_points):
+                # 1. Koordinaten skalieren
+                scaled_x = round(pt[0] * self.app.current_scale)
+                scaled_y = round(pt[1] * self.app.current_scale)
+                
+                final_y = scaled_y + getattr(self.app, 'pad_y', 0)
+                
+                # Wenn wir im 16-Punkte Modus sind, überspringen wir die 6er-Ring Klicks beim Einfärben
+                ist_aussenring = (len(self.app.calib_points) == 16 and i >= 12) or (len(self.app.calib_points) == 20 and i >= 16)
+                farbe_innen = (255, 0, 0) if ist_aussenring else (0, 0, 255) # Rot für Außen, sonst Blau
+                
+                # 2. Zeichnen auf die LINKE Seite (panel_overview)
+                final_x_left = scaled_x + getattr(self.app, 'pad_x', 0)
+                cv2.circle(combined, (final_x_left, final_y), 4, (0, 0, 0), -1)
+                cv2.circle(combined, (final_x_left, final_y), 3, farbe_innen, -1)
+
+                # 3. Zeichnen auf die RECHTE Seite (panel_render)
+                final_x_right = final_x_left + self.app.current_img_w
+                cv2.circle(combined, (final_x_right, final_y), 4, (0, 0, 0), -1)
+                cv2.circle(combined, (final_x_right, final_y), 3, farbe_innen, -1)
+        
         # =========================================================================
         # ---> Optische Linsen-Mitte zur Kontrolle einzeichnen <---
         # =========================================================================

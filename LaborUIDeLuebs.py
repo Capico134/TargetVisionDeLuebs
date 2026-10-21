@@ -522,10 +522,10 @@ class LaborUIBuilder:
             try:
                 valid_classes = ('Entry', 'TCombobox', 'Text', 'Listbox', 'Scrollbar', 'TScrollbar')
                 if event.widget.winfo_class() not in valid_classes:
-                    # ---> DER FIX: Wir ignorieren das Hauptbild! Es kümmert sich selbst um seinen Fokus, 
-                    # damit die Drag-and-Drop / Zoom-Mechanik nicht abgewürgt wird. <---
                     if event.widget != self.app.lbl_image:
-                        self.app.root.focus_set()
+                        # ---> DER FIX: Fokus bleibt in dem Fenster (Toplevel), in das geklickt wurde! <---
+                        target_win = event.widget.winfo_toplevel()
+                        target_win.focus_set()
             except AttributeError:
                 pass
         self.app.root.bind_all('<Button-1>', release_focus, add="+")

@@ -42,6 +42,20 @@ class Kalibrator:
                         params = data.get("params", {})
                         
                     if len(pts) in [16, 20]:
+                        # ---> NEU: Sicherheits-Prüfung der Zielscheibe! <---
+                        d_config = self.app.package_data['config']
+                        aktuelle_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Unbekannt')
+                        gespeicherte_scheibe = params.get("zielscheibe", "Unbekannt")
+                        
+                        if gespeicherte_scheibe != "Unbekannt" and gespeicherte_scheibe != aktuelle_scheibe:
+                            msg = (f"⚠️ WARNUNG: Profil-Konflikt!\n\n"
+                                   f"Diese Kalibrierung wurde für die Scheibe '{gespeicherte_scheibe}' erstellt.\n"
+                                   f"Du nutzt aktuell jedoch '{aktuelle_scheibe}'.\n\n"
+                                   f"Die errechneten Distanzen (Ringe) werden voraussichtlich falsch sein.\n"
+                                   f"Trotzdem laden?")
+                            if not messagebox.askyesno("Profil-Konflikt", msg):
+                                return # Ladevorgang abbrechen!
+                                
                         self.app.calib_mode_active = True
                         self.app.calib_points = pts
                         
@@ -53,6 +67,13 @@ class Kalibrator:
                             if 'kurve' in params: self.app.calib_linsen_kurve_var.set(params['kurve'])
                             if 'off_x' in params: self.app.calib_lens_offset_x_var.set(params['off_x'])
                             if 'off_y' in params: self.app.calib_lens_offset_y_var.set(params['off_y'])
+                            
+                            # ---> NEU: Gespeichertes Zentrum merken! <---
+                            if 'cx' in params: self.loaded_cx = params['cx']
+                            if 'cy' in params: self.loaded_cy = params['cy']
+                            
+                            # ---> NEU: Verhindert, dass Auto-Fit die Werte gleich wieder plattmacht <---
+                            self.skip_initial_autofit = True
                             
                         self.finish_calibration() # Direkt in die Werkbank springen!
                         return
@@ -236,7 +257,10 @@ class Kalibrator:
         
         info_win = tk.Toplevel(self.app.root)
         info_win.title("Interaktive Kalibrierungs-Werkbank")
-        info_win.attributes('-topmost', True)
+        
+        # ---> NEU: Ein völlig normales, eigenständiges Fenster! <---
+        info_win.lift()
+        info_win.focus_force()
         
         sf = self.app.root.winfo_fpixels('1i') / 96.0
         info_win.geometry(f"{int(750 * sf)}x{int(850 * sf)}")
@@ -246,8 +270,17 @@ class Kalibrator:
         control_frame = tk.Frame(info_win)
         control_frame.pack(fill=tk.X, padx=15, pady=5)
         
-        var_cx = tk.DoubleVar(value=round(init_cx, 2))
-        var_cy = tk.DoubleVar(value=round(init_cy, 2))
+        # ---> DER FIX: Geladene cx/cy Werte nutzen, falls vorhanden! <---
+        if getattr(self, 'loaded_cx', None) is not None:
+            var_cx = tk.DoubleVar(value=round(self.loaded_cx, 2))
+            var_cy = tk.DoubleVar(value=round(self.loaded_cy, 2))
+            # Direkt aufräumen, damit der nächste Lauf sauber ist
+            self.loaded_cx = None
+            self.loaded_cy = None
+        else:
+            var_cx = tk.DoubleVar(value=round(init_cx, 2))
+            var_cy = tk.DoubleVar(value=round(init_cy, 2))
+            
         var_px_x = tk.DoubleVar(value=self.app.calib_x_var.get())
         var_px_y = tk.DoubleVar(value=self.app.calib_y_var.get())
         var_korr = tk.DoubleVar(value=self.app.calib_linsen_verzerrung_var.get())
@@ -306,12 +339,8 @@ class Kalibrator:
             
             lens_cx, lens_cy = Helfer.get_optical_center(cam_w, cam_h, cut_l, cut_t, off_x, off_y)
 
-            # =========================================================================
-            # ---> NEU: 100% ELA-KONFORME VALIDIERUNG (Zentrale Physik) <---
-            # =========================================================================
             def validate_point(pt, mm_real):
                 r_mm_base = mm_real / 2.0
-                # Wir mappen Zielscheibenzentrum UND den Klick auf die flache Papierwelt
                 true_cx, true_cy = Helfer.undistort_point_mm(cx, cy, lens_cx, lens_cy, px_mm_x, px_mm_y, avg_korrektur, kurve)
                 true_pt_x, true_pt_y = Helfer.undistort_point_mm(pt[0], pt[1], lens_cx, lens_cy, px_mm_x, px_mm_y, avg_korrektur, kurve)
                 dist_mm_true = math.hypot(true_pt_x - true_cx, true_pt_y - true_cy)
@@ -333,7 +362,7 @@ class Kalibrator:
 
             err_sum_9 = 0
             err_sum_s = 0
-            err_sum_6 = 0 # <--- GEÄNDERT
+            err_sum_6 = 0
             err_sum_a = 0
 
             def add_validation(section_name, mm_real, labels, points):
@@ -348,7 +377,7 @@ class Kalibrator:
                 avg = sum_err / len(points)
                 if section_name == "9er-Ring": err_sum_9 = avg
                 elif "Spiegel" in section_name: err_sum_s += avg * len(points) 
-                elif section_name == "6er-Ring": err_sum_6 = avg # <--- GEÄNDERT
+                elif section_name == "6er-Ring": err_sum_6 = avg
                 elif section_name == "Außenring": err_sum_a = avg
 
             add_validation("9er-Ring", neun_mm, ["Links", "Rechts", "Oben", "Unten"], [neun_l, neun_r, neun_o, neun_u])
@@ -356,7 +385,6 @@ class Kalibrator:
             add_validation("Spiegel (Diag)", spiegel_mm, ["Links-Oben", "Rechts-Unten", "Rechts-Oben", "Links-Unten"], [diag1_o, diag1_u, diag2_o, diag2_u])
             err_sum_s = err_sum_s / 8.0 
             
-            # ---> GEÄNDERT: 6er Ring Validation (falls vorhanden) <---
             if sechs_l is not None:
                 add_validation("6er-Ring", sechs_mm, ["Links", "Rechts", "Oben", "Unten"], [sechs_l, sechs_r, sechs_o, sechs_u])
                 
@@ -367,7 +395,7 @@ class Kalibrator:
             log_lines.append(f"  9er-Ring  : ± {err_sum_9:.2f} mm")
             log_lines.append(f"  Spiegel   : ± {err_sum_s:.2f} mm")
             if sechs_l is not None:
-                log_lines.append(f"  6er-Ring  : ± {err_sum_6:.2f} mm") # <--- GEÄNDERT
+                log_lines.append(f"  6er-Ring  : ± {err_sum_6:.2f} mm")
             log_lines.append(f"  Außenring : ± {err_sum_a:.2f} mm")
             
             txt_log.config(state=tk.NORMAL)
@@ -384,6 +412,11 @@ class Kalibrator:
             final_values['off_x'] = off_x
             final_values['off_y'] = off_y
             final_values['log'] = log_lines
+            
+            # ---> DER FIX GEGEN GEISTER-KLICKS BEI PFEILTASTEN <---
+            # Holt den Fokus sofort zurück, nachdem txt_log auf DISABLED gesetzt wurde!
+            info_win.lift()
+            info_win.focus_force()
 
         def do_auto_fit():
             kurve = var_kurve.get()
@@ -428,16 +461,32 @@ class Kalibrator:
             recalculate()
 
         def apply_preview():
-            self.app.calib_x_var.set(final_values['px_x'])
-            self.app.calib_y_var.set(final_values['px_y'])
-            self.app.calib_linsen_verzerrung_var.set(final_values['korr']) 
-            self.app.calib_linsen_kurve_var.set(final_values['kurve']) 
-            self.app.calib_lens_offset_x_var.set(final_values['off_x']) 
-            self.app.calib_lens_offset_y_var.set(final_values['off_y']) 
-            
-            side = self.app.active_camera_var.get()
+            # ---> DER FIX: Ladesperre aktivieren, damit die Slider im Hintergrund <---
+            # ---> keine heimlichen 300ms-Timer starten, die uns später den Fokus klauen! <---
+            self.app._is_loading = True
+            try:
+                self.app.calib_x_var.set(final_values['px_x'])
+                self.app.calib_y_var.set(final_values['px_y'])
+                self.app.calib_linsen_verzerrung_var.set(final_values['korr']) 
+                self.app.calib_linsen_kurve_var.set(final_values['kurve']) 
+                self.app.calib_lens_offset_x_var.set(final_values['off_x']) 
+                self.app.calib_lens_offset_y_var.set(final_values['off_y']) 
+                
+                # Werte auch direkt hart in den RAM-ConfigParser schreiben
+                side = self.app.active_camera_var.get()
+                seite_str = "links" if side == 'left' else "rechts"
+                if hasattr(self.app, 'package_data') and self.app.package_data and 'config' in self.app.package_data:
+                    d_config = self.app.package_data['config']
+                    d_config.set('Kameras', f'px_pro_mm_x_{seite_str}', str(final_values['px_x']))
+                    d_config.set('Kameras', f'px_pro_mm_y_{seite_str}', str(final_values['px_y']))
+                    d_config.set('Kameras', f'linsen_verzerrung_{seite_str}', str(final_values['korr']))
+                    d_config.set('Kameras', f'linsen_kurve_{seite_str}', str(final_values['kurve']))
+                    d_config.set('Kameras', f'lens_offset_x_{seite_str}', str(final_values['off_x']))
+                    d_config.set('Kameras', f'lens_offset_y_{seite_str}', str(final_values['off_y']))
+            finally:
+                self.app._is_loading = False
+                
             center_key = 'center_l' if side == 'left' else 'center_r'
-            
             if getattr(self.app, 'original_match_data', None) is None:
                 self.app.original_match_data = {}
             if 'metadata' not in self.app.original_match_data:
@@ -447,27 +496,36 @@ class Kalibrator:
             
             if hasattr(self.app, 'package_data') and self.app.package_data and 'config' in self.app.package_data:
                 d_config = self.app.package_data['config']
-                # Verhindert Circular Imports durch lokalen Import
                 from LaborDeLuebs import DummyDateiManager 
                 d_dm = DummyDateiManager(self.app)
                 d_sm = StateManager(d_config, d_dm)
                 d_sm.set_nullpunkt(side, final_values['cx'], final_values['cy'])
             
-            self.app.on_param_change(force=True)
+            # Einmalig synchron neu zeichnen (ohne Timer-Verzögerung!)
+            self.app.process_and_display()
+            
+            # ---> Fokus bleibt felsenfest auf der Werkbank! <---
+            info_win.lift()
+            info_win.focus_force()
 
         def apply_and_close():
+            # Rote Punkte zuerst leeren, damit process_and_display() in apply_preview() 
+            # das Bild direkt sauber ohne Punkte zeichnet (spart doppeltes Rendern!)
+            self.app.calib_points = []
             apply_preview()
             
-            def write_log_delayed():
-                self.app.print_log("KALIB", "="*70, show_gui=True)
-                self.app.print_log("KALIB", "🎯 FINAL GEWÄHLTES KALIBRIERUNGS-PROTOKOLL", show_gui=True)
-                self.app.print_log("KALIB", "="*70, show_gui=True)
-                for line in final_values['log']:
-                    self.app.print_log("KALIB", line, show_gui=True)
-                self.app.print_log("SYSTEM", "✅ Kalibrierungswerte erfolgreich übernommen!", show_gui=True)
-                
-            self.app.root.after(400, write_log_delayed)
+            # Kein zeitverzögertes Labor-Log-Relikt mehr nötig!
+            self.app.print_log("SYSTEM", "✅ Kalibrierungswerte aus der Werkbank übernommen!", show_gui=True)
             info_win.destroy()
+            
+        def cancel_and_close():
+            # ---> NEU: Wenn der User das X klickt oder abbricht, räumen wir auch auf! <---
+            self.app.calib_points = []
+            self.app.renderer.update_image_display()
+            info_win.destroy()
+            
+        # ---> NEU: Den X-Button des Werkbank-Fensters abfangen <---
+        info_win.protocol("WM_DELETE_WINDOW", cancel_and_close)
 
         def copy_to_clipboard():
             self.app.root.clipboard_clear()
@@ -492,7 +550,10 @@ class Kalibrator:
             )
             if filepath:
                 try:
-                    # ---> NEU: Dictionary mit Punkten UND aktuellen Parametern speichern! <---
+                    # ---> NEU: Zielscheibe als Meta-Info in params speichern! <---
+                    d_config = self.app.package_data['config']
+                    aktive_scheibe_str = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Unbekannt')
+                    
                     export_data = {
                         "points": self.app.calib_points,
                         "params": {
@@ -501,7 +562,10 @@ class Kalibrator:
                             "korr": var_korr.get(),
                             "kurve": var_kurve.get(),
                             "off_x": var_off_x.get(),
-                            "off_y": var_off_y.get()
+                            "off_y": var_off_y.get(),
+                            "cx": var_cx.get(),               # <--- NEU
+                            "cy": var_cy.get(),               # <--- NEU
+                            "zielscheibe": aktive_scheibe_str
                         }
                     }
                     with open(filepath, "w") as f:
@@ -523,5 +587,11 @@ class Kalibrator:
         tk.Button(btn_frame, text="✅ Schließen & Übernehmen", command=apply_and_close, bg="#27ae60", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="📋 Log kopieren", command=copy_to_clipboard, bg="#95a5a6", fg="white").pack(side=tk.LEFT, padx=5)
         
-        do_auto_fit()
+        # ---> DER FIX: Auto-Fit nur bei manuellen Klicks ausführen! <---
+        if getattr(self, 'skip_initial_autofit', False):
+            recalculate()  # Nutzt die geladenen Parameter und schreibt nur das Log
+            self.skip_initial_autofit = False  # Flag sofort wieder löschen
+        else:
+            do_auto_fit()  # Berechnet alles neu (gewollt, wenn man manuell geklickt hat)
+            
         self.app.renderer.update_image_display()
