@@ -26,29 +26,42 @@ class AsyncCamera:
         self.codec_str = "Unbekannt"
 
     def start(self):
-        """Öffnet die Kamera und startet den Auslese-Thread."""
-        self.cap = cv2.VideoCapture(self.cam_index, self.backend)
-        if not self.cap.isOpened():
-            self.log("SYSTEM", f"Kamera {self.name} -> ⚠️ FEHLER: Hardware antwortet nicht auf Index {self.cam_index}!", True)
+        """Öffnet die Kamera mit intelligentem Auto-Fallback (MSMF -> DSHOW)."""
+        import platform
+        
+        # Unter Windows testen wir erst MSMF (für echtes USB MJPEG), dann DSHOW (für OBS)
+        backends_to_try = [cv2.CAP_MSMF, cv2.CAP_DSHOW] if platform.system() == 'Windows' else [cv2.CAP_ANY]
+        
+        for current_backend in backends_to_try:
+            self.cap = cv2.VideoCapture(self.cam_index, current_backend)
+            
+            if not self.cap.isOpened():
+                continue # Klappt nicht? Nächstes Backend probieren!
+                
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+            self.cap.set(cv2.CAP_PROP_FPS, self.fps_target)
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+
+            self.cap.grab()
+            self.cap.retrieve()
+            
+            self.actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            self.actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            
+            # Sicherheitscheck: OBS unter MSMF meldet isOpened()=True, gibt aber 0x0 Pixel aus!
+            if self.actual_w > 0 and self.actual_h > 0:
+                self.backend = current_backend # Wir haben einen Gewinner!
+                break
+            else:
+                self.cap.release() # Fake-Verbindung trennen und weiter suchen
+                
+        # Wenn am Ende aller Versuche nichts geklappt hat:
+        if not self.cap or not self.cap.isOpened() or self.actual_w == 0:
+            self.log("SYSTEM", f"Kamera {self.name} -> ⚠️ FEHLER: Hardware antwortet auf Index {self.cam_index} nicht!", True)
             return False
 
-        # WICHTIG: Die Reihenfolge unter MSMF muss EXAKT so lauten: Auflösung -> FPS -> Codec
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-        self.cap.set(cv2.CAP_PROP_FPS, self.fps_target)
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-
-        # Fallback-Prüfung
-        if self.cap.get(cv2.CAP_PROP_FPS) < self.fps_target - 1:
-            self.cap.set(cv2.CAP_PROP_FPS, 30)
-            
-        # Warm-up (Erzwingt Aushandlung)
-        self.cap.grab()
-        self.cap.retrieve()
-        
-        # Status auslesen
-        self.actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self.actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        # Status auslesen für das Log
         self.actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
         self.actual_exp = self.cap.get(cv2.CAP_PROP_EXPOSURE)
         
@@ -61,7 +74,8 @@ class AsyncCamera:
         except Exception:
             pass
 
-        self.log("SYSTEM", f"Kamera {self.name} -> {self.actual_w}x{self.actual_h} | Codec: {self.codec_str} | FPS: {self.actual_fps} | Exp: {self.actual_exp}", True)
+        backend_name = "MSMF" if self.backend == cv2.CAP_MSMF else ("DSHOW" if self.backend == cv2.CAP_DSHOW else "ANY")
+        self.log("SYSTEM", f"Kamera {self.name} ({backend_name}) -> {self.actual_w}x{self.actual_h} | Codec: {self.codec_str} | FPS: {self.actual_fps} | Exp: {self.actual_exp}", True)
 
         self.running = True
         self.thread = threading.Thread(target=self._update, daemon=True)
