@@ -71,7 +71,8 @@ class TargetVisionRenderer:
             px_x = config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
             px_y = config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
             korrektur = self.linsen_verzerrung_links if side == 'left' else self.linsen_verzerrung_rechts
-            kurve = config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5)
+            # ---> FIX: r4 Term aus der Config auslesen <---
+            korr_r4 = config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}_r4', fallback=0.0)
             cam_w = config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
             cam_h = config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
             cut_l = config.getint(crop_sec, 'cut_left', fallback=0)
@@ -82,7 +83,7 @@ class TargetVisionRenderer:
             lens_cy = (cam_h / 2.0) - cut_t + off_y
             self.cam_settings[side] = {
                 'px_x': px_x, 'px_y': px_y,
-                'korrektur': korrektur, 'kurve': kurve,
+                'korrektur': korrektur, 'korr_r4': korr_r4, # ---> FIX: Name auf korr_r4 angepasst (war 'kurve') <---
                 'lens_cx': lens_cx, 'lens_cy': lens_cy
             }
 
@@ -365,6 +366,8 @@ class TargetVisionRenderer:
         # =========================================================================
         # ---> AB HIER WIRD AUFGERÄUMT GEZEICHNET! <---
         # =========================================================================
+        current_time = time.time()
+        
         for side in ['left', 'right']:
             if side not in camera_rois: continue 
             roi = camera_rois[side]
@@ -376,16 +379,25 @@ class TargetVisionRenderer:
                 kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
             else:
                 kaliber_mm = self.tracker.config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
+
+            # ---> NEU: Dynamisches Korsett (r_limit_mm) <---
+            r_limit_mm = 25.0
+            if aktive_scheibe in targets:
+                ringe_dict = targets[aktive_scheibe].get('ringe_durchmesser_mm', {})
+                if ringe_dict: 
+                    max_r = max([float(v) for v in ringe_dict.values()]) / 2.0
+                    r_limit_mm = max_r + 5.0
                 
-            # ---> Daten blitzschnell aus dem RAM holen <---
+            # ---> Daten blitzschnell aus dem RAM holen (NUR 1x PRO SEITE!) <---
             c_set = self.cam_settings[side]
             px_x, px_y = c_set['px_x'], c_set['px_y']
-            korrektur, kurve = c_set['korrektur'], c_set['kurve']
+            korrektur, korr_r4 = c_set['korrektur'], c_set['korr_r4']
             lens_cx, lens_cy = c_set['lens_cx'], c_set['lens_cy']
+            
+            z, ox, oy = zoom_params[side]
             
             # ---> Dezent ein kleines gelbes Kreuz für die Linsen-Mitte einzeichnen (beim "Ringe" Modus) <---
             if self.show_all_rings:
-                z, ox, oy = zoom_params[side]
                 lens_draw_cx = int(round((lens_cx * z + ox) * self.scale_x))
                 lens_draw_cy = int(round((lens_cy * z + oy) * self.scale_y))
                 cross_sz = 4
@@ -407,26 +419,17 @@ class TargetVisionRenderer:
                 Helfer.draw_smart_ellipse(
                     img=roi, center_x=x, center_y=y, 
                     radius_mm=kaliber_mm / 2.0, color=color, 
-                    px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                    px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
                     lens_cx=lens_cx, lens_cy=lens_cy,
                     thickness=2, dashed=False, text=id_str, text_color=text_color, 
                     is_hit=True, zoom_params=zoom_params[side],
-                    scale_x=self.scale_x, scale_y=self.scale_y
+                    scale_x=self.scale_x, scale_y=self.scale_y, r_limit=r_limit_mm
                 )
 
-        # 2. CALIBRATION FEEDBACK (15s Ansicht)
-        current_time = time.time()
-        for s, feedback in [('left', self.tracker.calib_feedback_left), ('right', self.tracker.calib_feedback_right)]:
-            if feedback and (current_time - feedback['time'] < 15.0) and s in camera_rois:
-                roi = camera_rois[s]
-                z, ox, oy = zoom_params[s]
-                
-                # ---> Daten blitzschnell aus dem RAM holen <---
-                c_set = self.cam_settings[s]
-                px_x, px_y = c_set['px_x'], c_set['px_y']
-                korrektur, kurve = c_set['korrektur'], c_set['kurve']
-                lens_cx, lens_cy = c_set['lens_cx'], c_set['lens_cy']
-
+            # 2. CALIBRATION FEEDBACK (15s Ansicht)
+            feedback = self.tracker.calib_feedback_left if side == 'left' else self.tracker.calib_feedback_right
+            
+            if feedback and (current_time - feedback['time'] < 15.0):
                 # ---> Das große gelbe Linsen-Kreuz für das Live-Tuning am Monitor! <---
                 lens_draw_cx = int(round((lens_cx * z + ox) * self.scale_x))
                 lens_draw_cy = int(round((lens_cy * z + oy) * self.scale_y))
@@ -449,20 +452,17 @@ class TargetVisionRenderer:
                         for angle in range(0, 360, 6):
                             cv2.ellipse(roi, (draw_red_cx, draw_red_cy), (fb_red_rx, fb_red_ry), 0, angle, angle + 2, (0, 0, 255), 1, cv2.LINE_AA)
                 
-                aktive_scheibe = self.tracker.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-                targets = self.tracker.dm.load_targets()
-                
                 if aktive_scheibe in targets:
                     target_data = targets[aktive_scheibe]
-                    
                     spiegel_mm = float(target_data.get('spiegel_durchmesser_mm', 30.5))
+                    
                     Helfer.draw_smart_ellipse(
                         img=roi, center_x=feedback['cx'], center_y=feedback['cy'], 
                         radius_mm=spiegel_mm / 2.0, color=(0, 255, 0), 
-                        px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                        px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
                         lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, 
                         thickness=1, dashed=True, is_hit=False, 
-                        zoom_params=zoom_params[s], scale_x=self.scale_x, scale_y=self.scale_y
+                        zoom_params=zoom_params[side], scale_x=self.scale_x, scale_y=self.scale_y, r_limit=r_limit_mm
                     )
                     
                     ringe = target_data.get('ringe_durchmesser_mm', {})
@@ -472,10 +472,10 @@ class TargetVisionRenderer:
                             Helfer.draw_smart_ellipse(
                                 img=roi, center_x=feedback['cx'], center_y=feedback['cy'], 
                                 radius_mm=d_mm / 2.0, color=(0, 255, 0), 
-                                px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                                px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
                                 lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, 
                                 thickness=1, dashed=True, is_hit=False, 
-                                zoom_params=zoom_params[s], scale_x=self.scale_x, scale_y=self.scale_y
+                                zoom_params=zoom_params[side], scale_x=self.scale_x, scale_y=self.scale_y, r_limit=r_limit_mm
                             )
                 else:
                     fb_ideal_rx = int(round(feedback['ideal_rx'] * z * self.scale_x))
@@ -488,45 +488,32 @@ class TargetVisionRenderer:
                 cv2.line(roi, (draw_cx - cross_size, draw_cy), (draw_cx + cross_size, draw_cy), (0, 255, 0), 1, cv2.LINE_AA)
                 cv2.line(roi, (draw_cx, draw_cy - cross_size), (draw_cx, draw_cy + cross_size), (0, 255, 0), 1, cv2.LINE_AA)
         
-        # 3. DAUERHAFTE ZIELSCHEIBEN-RINGE
-        if self.show_all_rings:
-            for s, fb in [('left', self.tracker.calib_feedback_left), ('right', self.tracker.calib_feedback_right)]:
-                if s in camera_rois and fb:
-                    roi = camera_rois[s]
-                    z, ox, oy = zoom_params[s]
+            # 3. DAUERHAFTE ZIELSCHEIBEN-RINGE
+            if self.show_all_rings and feedback:
+                if aktive_scheibe in targets:
+                    target_data = targets[aktive_scheibe]
+                    ringe = target_data.get('ringe_durchmesser_mm', {})
+                    innenzehner = target_data.get('innenzehner_mm', 0.0)
                     
-                    # ---> Daten blitzschnell aus dem RAM holen <---
-                    c_set = self.cam_settings[s]
-                    px_x, px_y = c_set['px_x'], c_set['px_y']
-                    korrektur, kurve = c_set['korrektur'], c_set['kurve']
-                    lens_cx, lens_cy = c_set['lens_cx'], c_set['lens_cy']
-
-                    aktive_scheibe = self.tracker.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-                    targets = self.tracker.dm.load_targets()
-                    if aktive_scheibe in targets:
-                        target_data = targets[aktive_scheibe]
-                        ringe = target_data.get('ringe_durchmesser_mm', {})
-                        innenzehner = target_data.get('innenzehner_mm', 0.0)
+                    for ring_name, d_mm in ringe.items():
+                        Helfer.draw_smart_ellipse(
+                            img=roi, center_x=feedback['cx'], center_y=feedback['cy'], 
+                            radius_mm=float(d_mm) / 2.0, color=(0, 255, 0), 
+                            px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
+                            lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, 
+                            thickness=1, dashed=True, is_hit=False, 
+                            zoom_params=zoom_params[side], scale_x=self.scale_x, scale_y=self.scale_y, r_limit=r_limit_mm
+                        )
                         
-                        for ring_name, d_mm in ringe.items():
-                            Helfer.draw_smart_ellipse(
-                                img=roi, center_x=fb['cx'], center_y=fb['cy'], 
-                                radius_mm=float(d_mm) / 2.0, color=(0, 255, 0), 
-                                px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
-                                lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, 
-                                thickness=1, dashed=True, is_hit=False, 
-                                zoom_params=zoom_params[s], scale_x=self.scale_x, scale_y=self.scale_y
-                            )
-                            
-                        if innenzehner > 0:
-                            Helfer.draw_smart_ellipse(
-                                img=roi, center_x=fb['cx'], center_y=fb['cy'], 
-                                radius_mm=float(innenzehner) / 2.0, color=(0, 255, 0), 
-                                px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
-                                lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, 
-                                thickness=1, dashed=True, is_hit=False, 
-                                zoom_params=zoom_params[s], scale_x=self.scale_x, scale_y=self.scale_y
-                            )
+                    if innenzehner > 0:
+                        Helfer.draw_smart_ellipse(
+                            img=roi, center_x=feedback['cx'], center_y=feedback['cy'], 
+                            radius_mm=float(innenzehner) / 2.0, color=(0, 255, 0), 
+                            px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
+                            lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, 
+                            thickness=1, dashed=True, is_hit=False, 
+                            zoom_params=zoom_params[side], scale_x=self.scale_x, scale_y=self.scale_y, r_limit=r_limit_mm
+                        )
 
         # =========================================================================
                             

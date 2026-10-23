@@ -607,6 +607,22 @@ treffer_anzeigedauer = 8
             print("🔧 Führe Auto-Patch aus: Füge 'kamera_bildrate = 9' hinzu...")
             self.update_ini_value('Timing', 'kamera_bildrate', '9')
             needs_reload = True  
+
+        # --- AUTO-PATCH: Linsen-Kurve (Legacy) restlos entfernen und r4 einführen ---
+        for seite in ['links', 'rechts']:
+            alte_kurve = f'linsen_kurve_{seite}'
+            neue_r4 = f'linsen_verzerrung_{seite}_r4'
+            
+            if config.has_option('Kameras', alte_kurve):
+                print(f"🔧 Führe Auto-Patch aus: Entferne obsoleten Parameter '{alte_kurve}'...")
+                self.remove_ini_value('Kameras', alte_kurve)
+                needs_reload = True
+                
+            if not config.has_option('Kameras', neue_r4):
+                print(f"🔧 Führe Auto-Patch aus: Füge '{neue_r4} = 0.0' hinzu...")
+                self.update_ini_value('Kameras', neue_r4, '0.0')
+                needs_reload = True
+
         
         if needs_reload:
             config.read(self.CONFIG_FILE, encoding='utf-8')

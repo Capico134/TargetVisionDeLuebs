@@ -373,17 +373,17 @@ class LaborUIBuilder:
         self.app.calib_x_var = tk.DoubleVar(value=5.0)
         self.app.calib_y_var = tk.DoubleVar(value=5.0)
         self.app.calib_linsen_verzerrung_var = tk.DoubleVar(value=0.0) 
-        self.app.calib_linsen_kurve_var = tk.DoubleVar(value=1.5)
-        # ---> NEU: Variablen für das Linsen-Offset <---
+        self.app.calib_linsen_verzerrung_r4_var = tk.DoubleVar(value=0.0)
         self.app.calib_lens_offset_x_var = tk.IntVar(value=0)
         self.app.calib_lens_offset_y_var = tk.IntVar(value=0)
+        
         self.make_slider(self.app.calib_outer_frame, "Pixel pro mm (X):", self.app.calib_x_var, 1.0, 15.0, 0.001, key=None, tooltip_key="px_pro_mm")
         self.make_slider(self.app.calib_outer_frame, "Pixel pro mm (Y):", self.app.calib_y_var, 1.0, 15.0, 0.001, key=None, tooltip_key="px_pro_mm")
         self.make_slider(self.app.calib_outer_frame, "Linsen-Verzerr.:", self.app.calib_linsen_verzerrung_var, -0.01, 0.01, 0.00000001, key=None, tooltip_key="linsen_verzerrung")
-        self.make_slider(self.app.calib_outer_frame, "Linsen-Kurve (Exp):", self.app.calib_linsen_kurve_var, 0.5, 3.0, 0.05, key=None, tooltip_key="linsen_kurve")
-        # ---> NEU: Die Slider für den Offset (z.B. von -300 bis +300 Pixel) <---
+        self.make_slider(self.app.calib_outer_frame, "Linsen-r4 (Rand):", self.app.calib_linsen_verzerrung_r4_var, -0.0005, 0.0005, 0.00000001, key=None, tooltip_key="linsen_verzerrung_r4")
         self.make_slider(self.app.calib_outer_frame, "Linsen-Offset X:", self.app.calib_lens_offset_x_var, -300, 300, 1, key=None, tooltip_key="lens_offset_x")
         self.make_slider(self.app.calib_outer_frame, "Linsen-Offset Y:", self.app.calib_lens_offset_y_var, -300, 300, 1, key=None, tooltip_key="lens_offset_y")
+        
         def sync_calib_config(*args):
             if getattr(self.app, 'package_data', None) and self.app.package_data.get('config'):
                 parser = self.app.package_data['config']
@@ -395,8 +395,7 @@ class LaborUIBuilder:
                 parser.set('Kameras', f'px_pro_mm_x_{seite_str}', str(self.app.calib_x_var.get()))
                 parser.set('Kameras', f'px_pro_mm_y_{seite_str}', str(self.app.calib_y_var.get()))
                 parser.set('Kameras', f'linsen_verzerrung_{seite_str}', str(self.app.calib_linsen_verzerrung_var.get()))
-                parser.set('Kameras', f'linsen_kurve_{seite_str}', str(self.app.calib_linsen_kurve_var.get()))
-                # ---> NEU: Offsets in Config schreiben <---
+                parser.set('Kameras', f'linsen_verzerrung_{seite_str}_r4', str(self.app.calib_linsen_verzerrung_r4_var.get()))
                 parser.set('Kameras', f'lens_offset_x_{seite_str}', str(self.app.calib_lens_offset_x_var.get()))
                 parser.set('Kameras', f'lens_offset_y_{seite_str}', str(self.app.calib_lens_offset_y_var.get()))
                 
@@ -405,7 +404,7 @@ class LaborUIBuilder:
         self.app.calib_x_var.trace_add("write", sync_calib_config)
         self.app.calib_y_var.trace_add("write", sync_calib_config)
         self.app.calib_linsen_verzerrung_var.trace_add("write", sync_calib_config) 
-        self.app.calib_linsen_kurve_var.trace_add("write", sync_calib_config)
+        self.app.calib_linsen_verzerrung_r4_var.trace_add("write", sync_calib_config)
         # ---> NEU: Traces für die Offsets binden <---
         self.app.calib_lens_offset_x_var.trace_add("write", sync_calib_config)
         self.app.calib_lens_offset_y_var.trace_add("write", sync_calib_config)
@@ -565,8 +564,8 @@ class LaborUIBuilder:
         ignore_keys = set(self.app.registered_sliders.keys())
         ignore_keys.add('caliber_radius') 
         ignore_keys.update([
-            'px_pro_mm_x_links', 'px_pro_mm_y_links', 'linsen_verzerrung_links', 'linsen_kurve_links',
-            'px_pro_mm_x_rechts', 'px_pro_mm_y_rechts', 'linsen_verzerrung_rechts', 'linsen_kurve_rechts'
+            'px_pro_mm_x_links', 'px_pro_mm_y_links', 'linsen_verzerrung_links', 'linsen_verzerrung_links_r4',
+            'px_pro_mm_x_rechts', 'px_pro_mm_y_rechts', 'linsen_verzerrung_rechts', 'linsen_verzerrung_rechts_r4'
         ])
 
         dialog = tk.Toplevel(self.app.root)

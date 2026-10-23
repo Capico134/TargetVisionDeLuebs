@@ -187,8 +187,8 @@ class LaborRenderer:
             px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
             px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
             korrektur = d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0)
-            kurve = d_config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5)
-            # ---> NEU: ELA-Linsen-Mittelpunkt aus Crop & Auflösung berechnen! <---
+            korr_r4 = d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}_r4', fallback=0.0)
+            
             crop_sec = "Crop_Links" if side == 'left' else "Crop_Rechts"
             cam_w = d_config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
             cam_h = d_config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
@@ -214,7 +214,16 @@ class LaborRenderer:
                 kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
             else:
                 kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
-                
+
+            # ---> NEU: Zentrale Definition des optischen Korsetts (r_limit) GANZ OBEN <---
+            r_limit_mm = 25.0 # Fallback
+            if aktive_scheibe in targets:
+                ringe_dict = targets[aktive_scheibe].get('ringe_durchmesser_mm', {})
+                if ringe_dict: 
+                    # Wir nehmen den allergrößten Ring und geben ihm 5mm Puffer!
+                    max_r = max([float(v) for v in ringe_dict.values()]) / 2.0
+                    r_limit_mm = max_r + 5.0
+            
             zoom_p = (1.0, self.app.current_img_w / self.app.current_scale, 0.0)
 
             # ---> RENDER-HELFER: Ringe zeichnen <---
@@ -225,23 +234,26 @@ class LaborRenderer:
                         ringe = target_data.get('ringe_durchmesser_mm', {})
                         innenzehner = target_data.get('innenzehner_mm', 0.0)
 
-                        #ring_color = (255, 255, 0) # Cyan (BGR)                        
-                        #ring_color = (255, 0, 0) # Blau (BGR)
                         ring_color = (0, 255, 0) # Grün (BGR)
                         
                         for ring_name, d_mm in ringe.items():
+                            r_mm = float(d_mm) / 2.0
+                            
+                            # ---> NEU: Print-Ausgabe für den grünen Ring <---
+                            print(f"🟢 [RENDERER] Zielscheibe Grüner-Ring '{ring_name}': Zentrum=({fb_cx:.2f}, {fb_cy:.2f}), Radius={r_mm:.2f} mm")
+                            
                             Helfer.draw_smart_ellipse(
-                                img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=float(d_mm)/2.0,
-                                color=ring_color, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                                img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm,
+                                color=ring_color, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
                                 lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=True, is_hit=False,
-                                zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
+                                zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
                             )
                         if innenzehner > 0:
                             Helfer.draw_smart_ellipse(
                                 img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=float(innenzehner)/2.0,
-                                color=ring_color, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                                color=ring_color, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
                                 lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=True, is_hit=False,
-                                zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
+                                zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
                             )
                             
                         if '10' in ringe:
@@ -261,9 +273,9 @@ class LaborRenderer:
                                     r_mm_base = r_outer_mm + (r_inner_mm - r_outer_mm) * fraction
                                     Helfer.draw_smart_ellipse(
                                         img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
-                                        color=color_outer, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                                        color=color_outer, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
                                         lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=True, dash_step=12, dash_length=2, is_hit=False,
-                                        zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
+                                        zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
                                     )
                             
                             d_10 = float(ringe['10'])
@@ -276,9 +288,9 @@ class LaborRenderer:
                                 if r_mm_base > 0:
                                     Helfer.draw_smart_ellipse(
                                         img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
-                                        color=color_inner, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                                        color=color_inner, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
                                         lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=True, dash_offset=6, dash_step=12, dash_length=2, is_hit=False,
-                                        zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
+                                        zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
                                     )
                         # 3. Bracket-Highlighting (durchgezogene 10tel-Ringe für den neuesten Schuss)                            
                         current_frame_num = self.app.current_index
@@ -304,9 +316,9 @@ class LaborRenderer:
                                         if r_mm_base >= 0:
                                             Helfer.draw_smart_ellipse(
                                                 img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
-                                                color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                                                color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
                                                 lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=False, is_hit=False,
-                                                zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
+                                                zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
                                             )
                             else:
                                 base_ring = int(math.floor(new_score))
@@ -329,9 +341,9 @@ class LaborRenderer:
                                         r_draw = r_outer + (r_inner - r_outer) * fraction
                                         Helfer.draw_smart_ellipse(
                                             img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_draw,
-                                            color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                                            color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
                                             lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=False, is_hit=False,
-                                            zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale
+                                            zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
                                         )
             
             if getattr(self.app, 'show_orig_hits_var', None) and self.app.show_orig_hits_var.get():
@@ -340,9 +352,9 @@ class LaborRenderer:
                     for s in orig_shots:
                         Helfer.draw_smart_ellipse(
                             img=combined, center_x=s['x'], center_y=s['y'], radius_mm=kaliber_mm/2.0,
-                            color=(0, 255, 255), px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                            color=(0, 255, 255), px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
                             lens_cx=lens_cx, lens_cy=lens_cy, thickness=1, dashed=False, is_hit=True,
-                            zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True
+                            zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True, r_limit=r_limit_mm
                         )
             
             self.app.cached_static_layer = combined.copy()
@@ -358,7 +370,7 @@ class LaborRenderer:
         px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
         px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
         korrektur = d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0)
-        kurve = d_config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5)
+        korr_r4 = d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}_r4', fallback=0.0)
         
         crop_sec = "Crop_Links" if side == 'left' else "Crop_Rechts"
         cam_w = d_config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
@@ -386,6 +398,13 @@ class LaborRenderer:
         else:
             kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
             
+        # ---> HIER EINFÜGEN: r_limit_mm auch für das schnelle Blinken definieren! <---
+        r_limit_mm = 25.0
+        if aktive_scheibe in targets:
+            ringe_dict = targets[aktive_scheibe].get('ringe_durchmesser_mm', {})
+            if '2' in ringe_dict: r_limit_mm = float(ringe_dict['2']) / 2.0
+            elif '1' in ringe_dict: r_limit_mm = float(ringe_dict['1']) / 2.0
+            
         zoom_p = (1.0, self.app.current_img_w / self.app.current_scale, 0.0)
         current_frame_num = self.app.current_index
 
@@ -407,9 +426,9 @@ class LaborRenderer:
                     if blink_on:
                         Helfer.draw_smart_ellipse(
                             img=combined, center_x=hx, center_y=hy, radius_mm=kaliber_mm/2.0,
-                            color=color_panel_render, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+                            color=color_panel_render, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
                             lens_cx=lens_cx, lens_cy=lens_cy, thickness=1, dashed=False, is_hit=True,
-                            zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True
+                            zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True, r_limit=r_limit_mm
                         )
         # ---> RENDER-HELFER: Angeklickter / Hervorgehobener Treffer <---
         hl = getattr(self.app, 'highlighted_shot', None)
@@ -542,31 +561,148 @@ class LaborRenderer:
                 cv2.circle(combined, (final_x, final_y), 3, (0, 0, 255), -1)
         
         # =====================================================================
-        # ---> RENDER-HELFER: Kalibrierungspunkte (in BEIDEN Hälften!) <---
+        # ---> RENDER-HELFER: Kalibrierungspunkte (Gelb = Klick, Rot = Soll-Modell) <---
         # =====================================================================
-        # Wir prüfen, ob Punkte da sind (egal ob der Assistent noch läuft oder die Werkbank schon offen ist)
         if hasattr(self.app, 'calib_points') and self.app.calib_points:
+            # 1. Zielscheiben-Daten & Linienstärke auslesen
+            aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+            targets = self.app.dm.load_targets()
+            linienstaerke_mm = 0.2
+            spiegel_mm = 30.5
+            neun_mm = 5.5
+            sechs_mm = 20.5
+            aussen_mm = 45.5
+            
+            if aktive_scheibe in targets:
+                t_data = targets[aktive_scheibe]
+                linienstaerke_mm = float(t_data.get('linienstaerke_mm', 0.2))
+                spiegel_mm = float(t_data.get('spiegel_durchmesser_mm', 30.5))
+                ringe_mm = t_data.get('ringe_durchmesser_mm', {})
+                neun_mm = float(ringe_mm.get('9', spiegel_mm * 0.5))
+                sechs_mm = float(ringe_mm.get('6', spiegel_mm * 1.5))
+                if '1' in ringe_mm:
+                    aussen_mm = float(ringe_mm['1'])
+                else:
+                    aussen_mm = max([float(v) for v in ringe_mm.values()]) if ringe_mm else spiegel_mm * 2.0
+
+            halbe_linie_mm = linienstaerke_mm / 2.0
+
+            # 2. Scheibenmittelpunkt als geometrisches Zentrum
+            ref_cx = fb_cx if fb_cx is not None else lens_cx
+            ref_cy = fb_cy if fb_cy is not None else lens_cy
+
+            # Radien für die 16 oder 20 Punkte (jeweilige Soll-Wertungsgrenze in mm)
+            # Index 0-7: Spiegel, 8-11: 9er, 12-15: 6er (oder Außen bei 16 Pkt), 16-19: Außen
+            num_pts = len(self.app.calib_points)
             for i, pt in enumerate(self.app.calib_points):
-                # 1. Koordinaten skalieren
+                # Bestimme den wahren physikalischen Soll-Radius in mm
+                if i < 8:
+                    r_soll_mm = spiegel_mm / 2.0
+                elif i < 12:
+                    r_soll_mm = (neun_mm / 2.0) + halbe_linie_mm
+                elif num_pts == 20 and i < 16:
+                    r_soll_mm = (sechs_mm / 2.0) + halbe_linie_mm
+                else:
+                    r_soll_mm = (aussen_mm / 2.0) + halbe_linie_mm
+
+                # A) Geklickter Punkt (Linienmitte) in GELB
                 scaled_x = round(pt[0] * self.app.current_scale)
                 scaled_y = round(pt[1] * self.app.current_scale)
-                
                 final_y = scaled_y + getattr(self.app, 'pad_y', 0)
                 
-                # Wenn wir im 16-Punkte Modus sind, überspringen wir die 6er-Ring Klicks beim Einfärben
-                ist_aussenring = (len(self.app.calib_points) == 16 and i >= 12) or (len(self.app.calib_points) == 20 and i >= 16)
-                farbe_innen = (255, 0, 0) if ist_aussenring else (0, 0, 255) # Rot für Außen, sonst Blau
-                
-                # 2. Zeichnen auf die LINKE Seite (panel_overview)
                 final_x_left = scaled_x + getattr(self.app, 'pad_x', 0)
-                cv2.circle(combined, (final_x_left, final_y), 4, (0, 0, 0), -1)
-                cv2.circle(combined, (final_x_left, final_y), 3, farbe_innen, -1)
-
-                # 3. Zeichnen auf die RECHTE Seite (panel_render)
                 final_x_right = final_x_left + self.app.current_img_w
-                cv2.circle(combined, (final_x_right, final_y), 4, (0, 0, 0), -1)
-                cv2.circle(combined, (final_x_right, final_y), 3, farbe_innen, -1)
-        
+
+                for fx in [final_x_left, final_x_right]:
+                    cv2.circle(combined, (fx, final_y), 5, (0, 0, 0), -1)      # Rand
+                    cv2.circle(combined, (fx, final_y), 3, (0, 255, 255), -1) # Gelb (Klick)
+
+                ## B) Berechneter Soll-Modellpunkt (Wertungsgrenze / Außenkante) in ROT
+                #if hasattr(self.app, 'package_data') and self.app.package_data and 'config' in self.app.package_data:
+                #    try:
+                #        dx_px = pt[0] - ref_cx
+                #        dy_px = pt[1] - ref_cy
+                #        dist_px = math.hypot(dx_px, dy_px)
+                #        
+                #        if dist_px > 0:
+                #            ux = dx_px / dist_px
+                #            uy = dy_px / dist_px
+                #            
+                #            # Spiegel hat keine Linienstärke (Index 0-7), Ringe 9, 6, 1 bekommen die halbe Linienstärke dazu
+                #            aktiver_linien_offset_mm = 0.0 if i < 8 else halbe_linie_mm
+                #            avg_px_mm = (px_x + px_y) / 2.0
+                #            
+                #            # Der rote Punkt liegt exakt auf dem Vektor nach außen vom Klick aus!
+                #            soll_px_x = pt[0] + ux * (aktiver_linien_offset_mm * avg_px_mm)
+                #            soll_px_y = pt[1] + uy * (aktiver_linien_offset_mm * avg_px_mm)
+                #            
+                #            # Durch das Linsenmodell jagen, um die optische Verzerrung zu berücksichtigen
+                #            dx_lens_mm = (soll_px_x - lens_cx) / px_x
+                #            dy_lens_mm = (soll_px_y - lens_cy) / px_y
+                #            r_obs = math.hypot(dx_lens_mm, dy_lens_mm)
+                #            
+                #            r_true = Helfer.undistort_radius(r_obs, korrektur, korr_r4)
+                #            r_model = Helfer.distort_radius(r_true, korrektur, korr_r4)
+                #            
+                #            if r_obs > 0:
+                #                scale_model = r_model / r_obs
+                #                model_sensor_x = lens_cx + dx_lens_mm * scale_model * px_x
+                #                model_sensor_y = lens_cy + dy_lens_mm * scale_model * px_y
+                #            else:
+                #                model_sensor_x = soll_px_x
+                #                model_sensor_y = soll_px_y
+                #            
+                #            m_scaled_x = round(model_sensor_x * self.app.current_scale) + getattr(self.app, 'pad_x', 0)
+                #            m_scaled_y = round(model_sensor_y * self.app.current_scale) + getattr(self.app, 'pad_y', 0)
+                #            m_scaled_x_right = m_scaled_x + self.app.current_img_w
+                #
+                #            for mx in [m_scaled_x, m_scaled_x_right]:
+                #                cv2.circle(combined, (mx, m_scaled_y), 3, (0, 0, 255), -1)
+                #    except Exception as e:
+                #        pass
+                
+                # B) Berechneter Soll-Modellpunkt (Wertungsgrenze / Außenkante) in ROT
+                if hasattr(self.app, 'package_data') and self.app.package_data and 'config' in self.app.package_data:
+                    try:
+                        aktiver_linien_offset_mm = 0.0 if i < 8 else halbe_linie_mm
+
+                        # 1. Beide Punkte in echte Millimeter relativ zur Linse entzerren
+                        true_cx, true_cy = Helfer.undistort_point_mm(ref_cx, ref_cy, lens_cx, lens_cy, px_x, px_y, korrektur, korr_r4, r_limit_mm)
+                        true_klick_x, true_klick_y = Helfer.undistort_point_mm(pt[0], pt[1], lens_cx, lens_cy, px_x, px_y, korrektur, korr_r4, r_limit_mm)
+
+                        dx_mm = true_klick_x - true_cx
+                        dy_mm = true_klick_y - true_cy
+                        dist_klick_mm = math.hypot(dx_mm, dy_mm)
+
+                        if dist_klick_mm > 0:
+                            ux = dx_mm / dist_klick_mm
+                            uy = dy_mm / dist_klick_mm
+
+                            # 2. Wahre Rote Position auf der Papierebene berechnen (Klick + Linienstärke)
+                            true_red_x = true_cx + ux * (dist_klick_mm + aktiver_linien_offset_mm)
+                            true_red_y = true_cy + uy * (dist_klick_mm + aktiver_linien_offset_mm)
+
+                            # 3. Vorwärts-Verzerrung des roten Punktes zurück auf den Sensor
+                            r_true_lens = math.hypot(true_red_x, true_red_y)
+                            r_obs_lens = Helfer.distort_radius(r_true_lens, korrektur, korr_r4, r_limit=r_limit_mm)
+
+                            scale_fwd = r_obs_lens / r_true_lens if r_true_lens > 0 else 1.0
+
+                            soll_px_x = lens_cx + true_red_x * scale_fwd * px_x
+                            soll_px_y = lens_cy + true_red_y * scale_fwd * px_y
+
+                            m_scaled_x = round(soll_px_x * self.app.current_scale) + getattr(self.app, 'pad_x', 0)
+                            m_scaled_y = round(soll_px_y * self.app.current_scale) + getattr(self.app, 'pad_y', 0)
+                            m_scaled_x_right = m_scaled_x + self.app.current_img_w
+
+                            ring_bez = "Spiegel" if i < 8 else ("9er-Ring" if i < 12 else ("6er-Ring" if i < 16 else "Außenring"))
+                            print(f"🔴 [RENDERER] Kalibrierung Roter-Punkt #{i} ({ring_bez}): Sensor-Pos=({soll_px_x:.2f}, {soll_px_y:.2f}) | UI-Render-Panel=(X:{m_scaled_x_right}, Y:{m_scaled_y})")
+
+                            for mx in [m_scaled_x, m_scaled_x_right]:
+                                cv2.circle(combined, (mx, m_scaled_y), 3, (0, 0, 255), -1)
+                    except Exception as e:
+                        print(f"⚠️ Render-Fehler bei Kalibrierungspunkt {i}: {e}")
+                
         # =========================================================================
         # ---> Optische Linsen-Mitte zur Kontrolle einzeichnen <---
         # =========================================================================
@@ -633,7 +769,7 @@ class LaborRenderer:
             px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
             px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
             korrektur = d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0)
-            kurve = d_config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5)
+            korr_r4 = d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}_r4', fallback=0.0) # <--- NEU
             
             crop_sec = "Crop_Links" if side == 'left' else "Crop_Rechts"
             cam_w = d_config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
@@ -660,10 +796,17 @@ class LaborRenderer:
                 kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
             else:
                 kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
+                
+            r_limit_mm = 25.0
+            if aktive_scheibe in targets:
+                ringe_dict = targets[aktive_scheibe].get('ringe_durchmesser_mm', {})
+                if '2' in ringe_dict: r_limit_mm = float(ringe_dict['2']) / 2.0
+                elif '1' in ringe_dict: r_limit_mm = float(ringe_dict['1']) / 2.0
         else:
-            px_x, px_y, korrektur = 5.0, 5.0, 0.0
+            px_x, px_y, korrektur, korr_r4 = 5.0, 5.0, 0.0, 0.0
             fb_cx, fb_cy = None, None
             kaliber_mm = 4.5
+            r_limit_mm = 25.0
 
         blue_rgb = (0, 0, 255) 
         
@@ -672,11 +815,11 @@ class LaborRenderer:
         
         Helfer.draw_smart_ellipse(
             img=temp_img, center_x=real_x, center_y=real_y, radius_mm=kaliber_mm/2.0,
-            color=blue_rgb, px_x=px_x, px_y=px_y, korrektur=korrektur, kurve=kurve,
+            color=blue_rgb, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
             lens_cx=lens_cx, lens_cy=lens_cy, thickness=2, dashed=False, 
             is_hit=True,          
             zoom_params=zoom_p, scale_x=self.app.current_scale, scale_y=self.app.current_scale, 
-            draw_center_dot=True  
+            draw_center_dot=True, r_limit=r_limit_mm  # <--- HIER übergeben!
         )
 
         img_pil = Image.fromarray(temp_img)

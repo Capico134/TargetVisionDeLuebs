@@ -59,12 +59,16 @@ class Kalibrator:
                         self.app.calib_mode_active = True
                         self.app.calib_points = pts
                         
-                        # ---> NEU: Parameter aus der JSON in die Slider laden <---
+                        # ---> NEU: Parameter aus der JSON in die Slider laden (mit r4-Abwärtskompatibilität) <---
                         if params:
                             if 'px_x' in params: self.app.calib_x_var.set(params['px_x'])
                             if 'px_y' in params: self.app.calib_y_var.set(params['px_y'])
                             if 'korr' in params: self.app.calib_linsen_verzerrung_var.set(params['korr'])
-                            if 'kurve' in params: self.app.calib_linsen_kurve_var.set(params['kurve'])
+                            
+                            # r4-Term auslesen (alte JSONs haben diesen Key noch nicht -> Fallback auf 0.0)
+                            korr_r4_val = params.get('korr_r4', 0.0)
+                            self.app.calib_linsen_verzerrung_r4_var.set(korr_r4_val)
+                            
                             if 'off_x' in params: self.app.calib_lens_offset_x_var.set(params['off_x'])
                             if 'off_y' in params: self.app.calib_lens_offset_y_var.set(params['off_y'])
                             
@@ -205,13 +209,18 @@ class Kalibrator:
             ringe_mm = target_data.get('ringe_durchmesser_mm', {})
             neun_mm = float(ringe_mm.get('9', spiegel_mm * 0.5))
             
-            # ---> GEÄNDERT: 6er Ring auslesen <---
+            # 6er Ring auslesen
             sechs_mm = float(ringe_mm.get('6', spiegel_mm * 1.5)) 
             
             if '1' in ringe_mm:
                 aussen_mm = float(ringe_mm['1'])
             else:
                  aussen_mm = max([float(v) for v in ringe_mm.values()]) if ringe_mm else spiegel_mm * 2.0
+
+            # ---> ELA: Linienstärke aus der zielscheiben.json auslesen (Default 0.2 mm) <---
+            linienstaerke_mm = float(target_data.get('linienstaerke_mm', 0.2))
+            halbe_linie = linienstaerke_mm / 2.0
+            
         except ValueError:
             messagebox.showerror("Fehler", "Ungültige Millimeter-Werte in der zielscheiben.json!")
             return
@@ -233,9 +242,12 @@ class Kalibrator:
         init_cx = (neun_l[0] + neun_r[0] + spiegel_l[0] + spiegel_r[0] + aussen_l[0] + aussen_r[0]) / 6.0
         init_cy = (neun_o[1] + neun_u[1] + spiegel_o[1] + spiegel_u[1] + aussen_o[1] + aussen_u[1]) / 6.0
         
-        r_9 = neun_mm / 2.0
-        r_s = spiegel_mm / 2.0
-        r_a = aussen_mm / 2.0
+        # WAHRE physikalische Wertungsgrenzen (Außenkante der Linie = Radius + halbe Linienstärke)
+        r_9 = (neun_mm / 2.0) + halbe_linie
+        r_s = (spiegel_mm / 2.0) # Der Spiegel ist eine Hell/Dunkel-Kante ohne dicke Linie
+        r_a = (aussen_mm / 2.0) + halbe_linie
+        if sechs_l is not None:
+            r_6 = (sechs_mm / 2.0) + halbe_linie
         
         p_9_x = abs(neun_r[0] - neun_l[0]) / 2.0
         p_s_x = abs(spiegel_r[0] - spiegel_l[0]) / 2.0
@@ -258,7 +270,6 @@ class Kalibrator:
         info_win = tk.Toplevel(self.app.root)
         info_win.title("Interaktive Kalibrierungs-Werkbank")
         
-        # ---> NEU: Ein völlig normales, eigenständiges Fenster! <---
         info_win.lift()
         info_win.focus_force()
         
@@ -270,11 +281,9 @@ class Kalibrator:
         control_frame = tk.Frame(info_win)
         control_frame.pack(fill=tk.X, padx=15, pady=5)
         
-        # ---> DER FIX: Geladene cx/cy Werte nutzen, falls vorhanden! <---
         if getattr(self, 'loaded_cx', None) is not None:
             var_cx = tk.DoubleVar(value=round(self.loaded_cx, 2))
             var_cy = tk.DoubleVar(value=round(self.loaded_cy, 2))
-            # Direkt aufräumen, damit der nächste Lauf sauber ist
             self.loaded_cx = None
             self.loaded_cy = None
         else:
@@ -284,20 +293,39 @@ class Kalibrator:
         var_px_x = tk.DoubleVar(value=self.app.calib_x_var.get())
         var_px_y = tk.DoubleVar(value=self.app.calib_y_var.get())
         var_korr = tk.DoubleVar(value=self.app.calib_linsen_verzerrung_var.get())
-        var_kurve = tk.DoubleVar(value=self.app.calib_linsen_kurve_var.get())
+        var_r4 = tk.DoubleVar(value=self.app.calib_linsen_verzerrung_r4_var.get())
         var_off_x = tk.IntVar(value=self.app.calib_lens_offset_x_var.get())
         var_off_y = tk.IntVar(value=self.app.calib_lens_offset_y_var.get())
+
+        # ---> NEU: Lock-Variablen für die UI <---
+        lock_cx = tk.BooleanVar(value=False)
+        lock_cy = tk.BooleanVar(value=False)
+        lock_px_x = tk.BooleanVar(value=False)
+        lock_px_y = tk.BooleanVar(value=False)
+        lock_korr = tk.BooleanVar(value=False)
+        lock_r4 = tk.BooleanVar(value=False)
+        lock_off_x = tk.BooleanVar(value=False)
+        lock_off_y = tk.BooleanVar(value=False)
         
-        def build_param_row(parent, label, tk_var, res, step):
+        def build_param_row(parent, label, tk_var, res, step, lock_var):
             row = tk.Frame(parent)
             row.pack(fill=tk.X, pady=2)
-            tk.Label(row, text=label, width=20, anchor="w").pack(side=tk.LEFT)
+            
+            def toggle_lock():
+                lock_var.set(not lock_var.get())
+                btn_lock.config(text="🔒" if lock_var.get() else "🔓")
+                recalculate()  # <--- HIER: Zwingt das Log zum sofortigen Update!
+                
+            btn_lock = tk.Button(row, text="🔒" if lock_var.get() else "🔓", command=toggle_lock, font=("Segoe UI Emoji", 8), width=3, relief=tk.FLAT)
+            btn_lock.pack(side=tk.LEFT, padx=(0, 2))
+            
+            tk.Label(row, text=label, width=17, anchor="w").pack(side=tk.LEFT)
             
             def nudge(amount):
                 if isinstance(tk_var, tk.IntVar):
                     tk_var.set(int(tk_var.get() + amount))
                 else:
-                    tk_var.set(round(tk_var.get() + amount, 6))
+                    tk_var.set(round(tk_var.get() + amount, 8))
                 recalculate()
                 
             tk.Button(row, text="◀", command=lambda: nudge(-step), font=("Arial", 8), padx=2, pady=0).pack(side=tk.LEFT)
@@ -308,14 +336,15 @@ class Kalibrator:
             entry.bind("<Return>", lambda e: recalculate())
             entry.bind("<FocusOut>", lambda e: recalculate())
 
-        build_param_row(control_frame, "Zentrum X (cx):", var_cx, 0.1, 0.2)
-        build_param_row(control_frame, "Zentrum Y (cy):", var_cy, 0.1, 0.2)
-        build_param_row(control_frame, "Pixel pro mm X:", var_px_x, 0.001, 0.01)
-        build_param_row(control_frame, "Pixel pro mm Y:", var_px_y, 0.001, 0.01)
-        build_param_row(control_frame, "Linsen-Verzerrung:", var_korr, 0.00001, 0.0001)
-        build_param_row(control_frame, "Linsen-Kurve (Exp):", var_kurve, 0.01, 0.05)
-        build_param_row(control_frame, "Linsen-Offset X:", var_off_x, 1, 5)
-        build_param_row(control_frame, "Linsen-Offset Y:", var_off_y, 1, 5)
+        # UI-Aufrufe mit zugeordnetem Lock
+        build_param_row(control_frame, "Zentrum X (cx):", var_cx, 0.1, 0.2, lock_cx)
+        build_param_row(control_frame, "Zentrum Y (cy):", var_cy, 0.1, 0.2, lock_cy)
+        build_param_row(control_frame, "Pixel pro mm X:", var_px_x, 0.001, 0.01, lock_px_x)
+        build_param_row(control_frame, "Pixel pro mm Y:", var_px_y, 0.001, 0.01, lock_px_y)
+        build_param_row(control_frame, "Linsen-Verzerr. (r2):", var_korr, 0.00001, 0.0001, lock_korr)
+        build_param_row(control_frame, "Linsen-Verzerr. (r4):", var_r4, 0.0000001, 0.000001, lock_r4)
+        build_param_row(control_frame, "Linsen-Offset X:", var_off_x, 1, 5, lock_off_x)
+        build_param_row(control_frame, "Linsen-Offset Y:", var_off_y, 1, 5, lock_off_y)
 
         txt_frame = tk.Frame(info_win)
         txt_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
@@ -333,29 +362,33 @@ class Kalibrator:
             px_mm_x = var_px_x.get()
             px_mm_y = var_px_y.get()
             avg_korrektur = var_korr.get()
-            kurve = var_kurve.get()
+            korr_r4 = var_r4.get()
             off_x = var_off_x.get()
             off_y = var_off_y.get()
             
             lens_cx, lens_cy = Helfer.get_optical_center(cam_w, cam_h, cut_l, cut_t, off_x, off_y)
 
-            def validate_point(pt, mm_real):
-                r_mm_base = mm_real / 2.0
-                true_cx, true_cy = Helfer.undistort_point_mm(cx, cy, lens_cx, lens_cy, px_mm_x, px_mm_y, avg_korrektur, kurve)
-                true_pt_x, true_pt_y = Helfer.undistort_point_mm(pt[0], pt[1], lens_cx, lens_cy, px_mm_x, px_mm_y, avg_korrektur, kurve)
-                dist_mm_true = math.hypot(true_pt_x - true_cx, true_pt_y - true_cy)
-                err_mm = dist_mm_true - r_mm_base
-                err_px = err_mm * ((px_mm_x + px_mm_y) / 2.0)
-                return err_px, err_mm
+            # Echte physikalische Soll-Radien aus der zielscheiben.json (Außenkanten)
+            r_s = spiegel_mm / 2.0
+            r_9 = neun_mm / 2.0
+            r_a = aussen_mm / 2.0
+            r_6 = sechs_mm / 2.0 if sechs_l is not None else 0.0
+
+            # Das dynamische optische Korsett (5 mm hinter dem Außenring)
+            r_limit_mm = r_a + 5.0
+
+            # Hilfsfunktion für die Log-Ausgabe
+            def lock_str(lock_var):
+                return " 🔒 (Fixiert)" if lock_var.get() else ""
 
             log_lines = []
             log_lines.append(f"AKTUELLE WERKZEUG-PARAMETER:")
-            log_lines.append(f"  Zentrum (X/Y) : {cx:.2f} / {cy:.2f}")
-            log_lines.append(f"  px_pro_mm (X) : {px_mm_x:.4f}")
-            log_lines.append(f"  px_pro_mm (Y) : {px_mm_y:.4f}")
-            log_lines.append(f"  Fischaugenkorr: {avg_korrektur:.6f}")
-            log_lines.append(f"  Linsen-Kurve  : {kurve:.2f}")
-            log_lines.append(f"  Linsen-Offset : X:{off_x} / Y:{off_y}\n")
+            log_lines.append(f"  Zentrum (X/Y) : {cx:.2f}{lock_str(lock_cx)} / {cy:.2f}{lock_str(lock_cy)}")
+            log_lines.append(f"  px_pro_mm (X) : {px_mm_x:.4f}{lock_str(lock_px_x)}")
+            log_lines.append(f"  px_pro_mm (Y) : {px_mm_y:.4f}{lock_str(lock_px_y)}")
+            log_lines.append(f"  Verzerrung r2 : {avg_korrektur:.6f}{lock_str(lock_korr)}")
+            log_lines.append(f"  Verzerrung r4 : {korr_r4:.8f}{lock_str(lock_r4)}")
+            log_lines.append(f"  Linsen-Offset : X:{off_x}{lock_str(lock_off_x)} / Y:{off_y}{lock_str(lock_off_y)}\n")
             
             log_lines.append("BEST-FIT VALIDIERUNG (Theorie vs. Klick):")
             log_lines.append("(Minus = Klick war näher am Zentrum als berechnet)")
@@ -365,12 +398,27 @@ class Kalibrator:
             err_sum_6 = 0
             err_sum_a = 0
 
-            def add_validation(section_name, mm_real, labels, points):
-                nonlocal err_sum_9, err_sum_s, err_sum_6, err_sum_a
+            # Validierung: Rechnet komplett in der WAHREN PHYSIKALISCHEN EBENE (mm)
+            def validate_target_point(pt, r_soll, index):
+                true_cx, true_cy = Helfer.undistort_point_mm(cx, cy, lens_cx, lens_cy, px_mm_x, px_mm_y, avg_korrektur, korr_r4, r_limit_mm)
+                true_klick_x, true_klick_y = Helfer.undistort_point_mm(pt[0], pt[1], lens_cx, lens_cy, px_mm_x, px_mm_y, avg_korrektur, korr_r4, r_limit_mm)
+
+                dist_klick_mm = math.hypot(true_klick_x - true_cx, true_klick_y - true_cy)
+                
+                offset_mm = 0.0 if index < 8 else halbe_linie
+                dist_red_mm = dist_klick_mm + offset_mm
+
+                err_mm = dist_red_mm - r_soll
+                err_px = err_mm * ((px_mm_x + px_mm_y) / 2.0)
+                return err_px, err_mm
+
+            def add_validation(section_name, mm_real, r_soll_val, labels, points, start_index):
+                nonlocal err_sum_9, err_sum_s, err_sum_6, err_sum_a, log_lines
                 log_lines.append(f"\n▶ {section_name} ({mm_real} mm):")
                 sum_err = 0
-                for lbl, pt in zip(labels, points):
-                    err_px, err_mm = validate_point(pt, mm_real)
+                for idx, (lbl, pt) in enumerate(zip(labels, points)):
+                    actual_index = start_index + idx
+                    err_px, err_mm = validate_target_point(pt, r_soll_val, actual_index)
                     sum_err += abs(err_mm)
                     log_lines.append(f"  {lbl:<12} -> Abweichung: {err_px:>+5.1f} px  |  {err_mm:>+6.2f} mm")
                 
@@ -380,16 +428,16 @@ class Kalibrator:
                 elif section_name == "6er-Ring": err_sum_6 = avg
                 elif section_name == "Außenring": err_sum_a = avg
 
-            add_validation("9er-Ring", neun_mm, ["Links", "Rechts", "Oben", "Unten"], [neun_l, neun_r, neun_o, neun_u])
-            add_validation("Spiegel (Achsen)", spiegel_mm, ["Links", "Rechts", "Oben", "Unten"], [spiegel_l, spiegel_r, spiegel_o, spiegel_u])
-            add_validation("Spiegel (Diag)", spiegel_mm, ["Links-Oben", "Rechts-Unten", "Rechts-Oben", "Links-Unten"], [diag1_o, diag1_u, diag2_o, diag2_u])
+            add_validation("9er-Ring", neun_mm, r_9, ["Links", "Rechts", "Oben", "Unten"], [neun_l, neun_r, neun_o, neun_u], 8)
+            add_validation("Spiegel (Achsen)", spiegel_mm, r_s, ["Links", "Rechts", "Oben", "Unten"], [spiegel_l, spiegel_r, spiegel_o, spiegel_u], 0)
+            add_validation("Spiegel (Diag)", spiegel_mm, r_s, ["Links-Oben", "Rechts-Unten", "Rechts-Oben", "Links-Unten"], [diag1_o, diag1_u, diag2_o, diag2_u], 4)
             err_sum_s = err_sum_s / 8.0 
             
             if sechs_l is not None:
-                add_validation("6er-Ring", sechs_mm, ["Links", "Rechts", "Oben", "Unten"], [sechs_l, sechs_r, sechs_o, sechs_u])
+                add_validation("6er-Ring", sechs_mm, r_6, ["Links", "Rechts", "Oben", "Unten"], [sechs_l, sechs_r, sechs_o, sechs_u], 12)
                 
-            add_validation("Außenring", aussen_mm, ["Links", "Rechts", "Oben", "Unten"], [aussen_l, aussen_r, aussen_o, aussen_u])
-            
+            add_validation("Außenring", aussen_mm, r_a, ["Links", "Rechts", "Oben", "Unten"], [aussen_l, aussen_r, aussen_o, aussen_u], 16)
+
             log_lines.append("\n" + "="*50)
             log_lines.append("Ø ABSOLUTE FEHLERABWEICHUNG:")
             log_lines.append(f"  9er-Ring  : ± {err_sum_9:.2f} mm")
@@ -408,71 +456,163 @@ class Kalibrator:
             final_values['px_x'] = px_mm_x
             final_values['px_y'] = px_mm_y
             final_values['korr'] = avg_korrektur
-            final_values['kurve'] = kurve
+            final_values['r4'] = korr_r4
             final_values['off_x'] = off_x
             final_values['off_y'] = off_y
             final_values['log'] = log_lines
             
-            # ---> DER FIX GEGEN GEISTER-KLICKS BEI PFEILTASTEN <---
-            # Holt den Fokus sofort zurück, nachdem txt_log auf DISABLED gesetzt wurde!
             info_win.lift()
             info_win.focus_force()
 
         def do_auto_fit():
-            kurve = var_kurve.get()
-            
-            # =========================================================================
-            # ---> ELA FIX: Der 9er-Ring ist toxisch für die Regression! <---
-            # Wir nutzen nur die großen, zuverlässigen Ringe für die physikalische Kurve.
-            # Ein 2px Blooming-Fehler beim winzigen 9er-Ring würde die Skalierung zerstören.
-            # =========================================================================
-            if sechs_l is not None:
-                # Neues 20-Punkte JSON (mit 6er Ring)
-                r_6 = sechs_mm / 2.0
-                p_6_x = abs(sechs_r[0] - sechs_l[0]) / 2.0
-                p_6_y = abs(sechs_u[1] - sechs_o[1]) / 2.0
-                
-                x_data = np.array([r_6**kurve, r_s**kurve, r_a**kurve])
-                y_data_x_fit = np.array([p_6_x / r_6, p_s_x / r_s, p_a_x / r_a])
-                y_data_y_fit = np.array([p_6_y / r_6, p_s_y / r_s, p_a_y / r_a])
-            else:
-                # Altes 16-Punkte JSON
-                x_data = np.array([r_s**kurve, r_a**kurve])
-                y_data_x_fit = np.array([p_s_x / r_s, p_a_x / r_a])
-                y_data_y_fit = np.array([p_s_y / r_s, p_a_y / r_a])
+            cx_center = var_cx.get()
+            cy_center = var_cy.get()
 
-            m_x, b_x = np.polyfit(x_data, y_data_x_fit, 1)
-            m_y, b_y = np.polyfit(x_data, y_data_y_fit, 1)
+            r_s = spiegel_mm / 2.0
+            r_9 = neun_mm / 2.0
+            r_a = aussen_mm / 2.0
+            r_6 = sechs_mm / 2.0 if sechs_l is not None else 0.0
+
+            r_limit_mm = r_a + 5.0  # Das Korsett darf erst hinter dem letzten Klick wirken!
+
+            locks = [
+                lock_cx.get(), lock_cy.get(),
+                lock_px_x.get(), lock_px_y.get(),
+                lock_korr.get(), lock_r4.get(),
+                lock_off_x.get(), lock_off_y.get()
+            ]
+
+            # ---> FIX: Startwerte IMMER vom aktuellen UI-Zustand nehmen! <---
+            params = [
+                float(var_cx.get()), 
+                float(var_cy.get()),
+                float(var_px_x.get()),
+                float(var_px_y.get()),
+                float(var_korr.get()),
+                float(var_r4.get()),
+                float(var_off_x.get()),
+                float(var_off_y.get())
+            ]
+
+            calib_targets = [
+                (neun_l, r_9, 8), (neun_r, r_9, 9), (neun_o, r_9, 10), (neun_u, r_9, 11),
+                (spiegel_l, r_s, 0), (spiegel_r, r_s, 1), (spiegel_o, r_s, 2), (spiegel_u, r_s, 3),
+                (diag1_o, r_s, 4), (diag1_u, r_s, 5), (diag2_o, r_s, 6), (diag2_u, r_s, 7),
+                (aussen_l, r_a, 16), (aussen_r, r_a, 17), (aussen_o, r_a, 18), (aussen_u, r_a, 19)
+            ]
+            if sechs_l is not None:
+                calib_targets.extend([
+                    (sechs_l, r_6, 12), (sechs_r, r_6, 13), (sechs_o, r_6, 14), (sechs_u, r_6, 15)
+                ])
+
+            def cost_function(p):
+                c_x, c_y, p_x, p_y, k2, k4, ox, oy = p
+                
+                # Weichere Physik-Schranke, die auf das dynamische r_limit_mm aufbaut
+                r_lim_sq = r_limit_mm ** 2
+                der_edge = 1.0 + 3.0 * k2 * r_lim_sq + 5.0 * k4 * (r_lim_sq ** 2)
+                if der_edge < 0.05: return 1e9  # Verhindert, dass die Linse sich umkehrt
+                
+                l_cx = (cam_w / 2.0) - cut_l + ox
+                l_cy = (cam_h / 2.0) - cut_t + oy
+                
+                true_cx, true_cy = Helfer.undistort_point_mm(c_x, c_y, l_cx, l_cy, p_x, p_y, k2, k4, r_limit_mm)
+                
+                total_loss = 0.0
+                for pt, r_target, index in calib_targets:
+                    true_klick_x, true_klick_y = Helfer.undistort_point_mm(pt[0], pt[1], l_cx, l_cy, p_x, p_y, k2, k4, r_limit_mm)
+                    dist_klick_mm = math.hypot(true_klick_x - true_cx, true_klick_y - true_cy)
+                    
+                    offset_mm = 0.0 if index < 8 else halbe_linie
+                    dist_red_mm = dist_klick_mm + offset_mm
+                    
+                    err_mm = dist_red_mm - r_target
+                    weight = 4.0 if 8 <= index <= 11 else (1.2 if 0 <= index <= 3 else (0.8 if 4 <= index <= 7 else 2.0))
+                    total_loss += weight * (err_mm ** 2)
+                
+                total_loss += 0.0000005 * (ox**2 + oy**2)
+                return total_loss
+
+            # Erhöhte Suchgeschwindigkeit für r4
+            steps = [0.4, 0.4, 0.05, 0.05, 0.0001, 0.000001, 8.0, 8.0]
+            best_loss = cost_function(params)
             
-            var_px_x.set(round(b_x, 4))
-            var_px_y.set(round(b_y, 4))
-            k_x = m_x / b_x if b_x != 0 else 0.0
-            k_y = m_y / b_y if b_y != 0 else 0.0
-            var_korr.set(round((k_x + k_y) / 2.0, 6))
-            
-            # ---> ELA FIX: Zentrum NUR aus dem 9er-Ring berechnen! <---
-            # Da äußere Ringe durch das Offset asymmetrisch verzerrt werden, 
-            # ist ihre Bounding-Box-Mitte verfälscht. Der winzige 9er-Ring ist davon unberührt!
-            cx_neu = (neun_l[0] + neun_r[0]) / 2.0
-            cy_neu = (neun_o[1] + neun_u[1]) / 2.0
-            var_cx.set(round(cx_neu, 2))
-            var_cy.set(round(cy_neu, 2))
+            print("\n" + "="*50)
+            print(f"🚀 AUTO-FIT START | Init-Loss: {best_loss:.4f}")
+            print("="*50)
+
+            for cascade in range(7):
+                improved = True
+                iters = 0
+                while improved and iters < 80:
+                    improved = False
+                    iters += 1
+                    
+                    for i in range(len(params)):
+                        if locks[i]: continue 
+                        
+                        orig_val = params[i]
+                        step = steps[i]
+                        
+                        for direction in (-1.0, 1.0):
+                            cand_val = orig_val + direction * step
+                            
+                            # Großzügigere Verzerrungs-Schranken
+                            if i == 4: cand_val = max(-0.01, min(0.01, cand_val))
+                            elif i == 5: cand_val = max(-0.0001, min(0.0001, cand_val))
+                            elif i in (6, 7): cand_val = max(-300.0, min(300.0, cand_val))
+                            
+                            params[i] = cand_val
+                            loss = cost_function(params)
+                            
+                            if loss < best_loss - 1e-10:
+                                best_loss = loss
+                                orig_val = cand_val
+                                improved = True
+                                break
+                            else:
+                                params[i] = orig_val
+
+                    for direction in (-1.0, 1.0):
+                        old_p = params[:]
+                        if not locks[2]: params[2] += direction * steps[2] * 0.5
+                        if not locks[3]: params[3] += direction * steps[3] * 0.5
+                        if not locks[4]: params[4] = max(-0.01, min(0.01, params[4] - direction * steps[4] * 0.8))
+                        if not locks[5]: params[5] = max(-0.0001, min(0.0001, params[5] + direction * steps[5] * 0.8))
+                        
+                        loss = cost_function(params)
+                        if loss < best_loss - 1e-10:
+                            best_loss = loss
+                            improved = True
+                        else:
+                            params = old_p
+
+                print(f"🏁 Cascade {cascade+1}/7: Loss={best_loss:.4f} | px={params[2]:.4f} | r2={params[4]:.7f} | r4={params[5]:.9f}")
+                steps = [s * 0.4 for s in steps]
+
+            print("="*50 + "\n")
+
+            var_cx.set(round(params[0], 2))
+            var_cy.set(round(params[1], 2))
+            var_px_x.set(round(params[2], 4))
+            var_px_y.set(round(params[3], 4))
+            var_korr.set(round(params[4], 7))
+            var_r4.set(round(params[5], 9))
+            var_off_x.set(int(round(params[6])))
+            var_off_y.set(int(round(params[7])))
             
             recalculate()
 
         def apply_preview():
-            # ---> DER FIX: Ladesperre aktivieren, damit die Slider im Hintergrund <---
-            # ---> keine heimlichen 300ms-Timer starten, die uns später den Fokus klauen! <---
             self.app._is_loading = True
             try:
                 self.app.calib_x_var.set(final_values['px_x'])
                 self.app.calib_y_var.set(final_values['px_y'])
                 self.app.calib_linsen_verzerrung_var.set(final_values['korr']) 
-                self.app.calib_linsen_kurve_var.set(final_values['kurve']) 
+                self.app.calib_linsen_verzerrung_r4_var.set(final_values['r4']) 
                 self.app.calib_lens_offset_x_var.set(final_values['off_x']) 
                 self.app.calib_lens_offset_y_var.set(final_values['off_y']) 
                 
-                # Werte auch direkt hart in den RAM-ConfigParser schreiben
                 side = self.app.active_camera_var.get()
                 seite_str = "links" if side == 'left' else "rechts"
                 if hasattr(self.app, 'package_data') and self.app.package_data and 'config' in self.app.package_data:
@@ -480,7 +620,7 @@ class Kalibrator:
                     d_config.set('Kameras', f'px_pro_mm_x_{seite_str}', str(final_values['px_x']))
                     d_config.set('Kameras', f'px_pro_mm_y_{seite_str}', str(final_values['px_y']))
                     d_config.set('Kameras', f'linsen_verzerrung_{seite_str}', str(final_values['korr']))
-                    d_config.set('Kameras', f'linsen_kurve_{seite_str}', str(final_values['kurve']))
+                    d_config.set('Kameras', f'linsen_verzerrung_{seite_str}_r4', str(final_values['r4']))
                     d_config.set('Kameras', f'lens_offset_x_{seite_str}', str(final_values['off_x']))
                     d_config.set('Kameras', f'lens_offset_y_{seite_str}', str(final_values['off_y']))
             finally:
@@ -501,30 +641,22 @@ class Kalibrator:
                 d_sm = StateManager(d_config, d_dm)
                 d_sm.set_nullpunkt(side, final_values['cx'], final_values['cy'])
             
-            # Einmalig synchron neu zeichnen (ohne Timer-Verzögerung!)
             self.app.process_and_display()
             
-            # ---> Fokus bleibt felsenfest auf der Werkbank! <---
             info_win.lift()
             info_win.focus_force()
 
         def apply_and_close():
-            # Rote Punkte zuerst leeren, damit process_and_display() in apply_preview() 
-            # das Bild direkt sauber ohne Punkte zeichnet (spart doppeltes Rendern!)
             self.app.calib_points = []
             apply_preview()
-            
-            # Kein zeitverzögertes Labor-Log-Relikt mehr nötig!
             self.app.print_log("SYSTEM", "✅ Kalibrierungswerte aus der Werkbank übernommen!", show_gui=True)
             info_win.destroy()
             
         def cancel_and_close():
-            # ---> NEU: Wenn der User das X klickt oder abbricht, räumen wir auch auf! <---
             self.app.calib_points = []
             self.app.renderer.update_image_display()
             info_win.destroy()
             
-        # ---> NEU: Den X-Button des Werkbank-Fensters abfangen <---
         info_win.protocol("WM_DELETE_WINDOW", cancel_and_close)
 
         def copy_to_clipboard():
@@ -550,7 +682,6 @@ class Kalibrator:
             )
             if filepath:
                 try:
-                    # ---> NEU: Zielscheibe als Meta-Info in params speichern! <---
                     d_config = self.app.package_data['config']
                     aktive_scheibe_str = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Unbekannt')
                     
@@ -560,11 +691,11 @@ class Kalibrator:
                             "px_x": var_px_x.get(),
                             "px_y": var_px_y.get(),
                             "korr": var_korr.get(),
-                            "kurve": var_kurve.get(),
+                            "korr_r4": var_r4.get(),
                             "off_x": var_off_x.get(),
                             "off_y": var_off_y.get(),
-                            "cx": var_cx.get(),               # <--- NEU
-                            "cy": var_cy.get(),               # <--- NEU
+                            "cx": var_cx.get(),               
+                            "cy": var_cy.get(),               
                             "zielscheibe": aktive_scheibe_str
                         }
                     }
@@ -579,19 +710,23 @@ class Kalibrator:
         tk.Button(btn_frame_top, text="🤖 Auto-Fit (aus Klicks) ausführen", command=do_auto_fit, bg="#e67e22", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT)
         tk.Button(btn_frame_top, text="💾 Speichern / Exportieren", command=export_points, bg="#8e44ad", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=10)
         
+        pin_var = tk.BooleanVar(value=False)
+        def toggle_pin():
+            info_win.attributes('-topmost', pin_var.get())
+            
+        tk.Checkbutton(btn_frame_top, text="📌 Oben anpinnen", variable=pin_var, command=toggle_pin, font=("Arial", 9)).pack(side=tk.RIGHT, padx=10)
+        
         btn_frame = tk.Frame(info_win)
         btn_frame.pack(pady=10)
         
-        # ---> NEU: Umbenennung der Buttons <---
         tk.Button(btn_frame, text="👁️ Übernehmen", command=apply_preview, bg="#3498db", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="✅ Schließen & Übernehmen", command=apply_and_close, bg="#27ae60", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="📋 Log kopieren", command=copy_to_clipboard, bg="#95a5a6", fg="white").pack(side=tk.LEFT, padx=5)
         
-        # ---> DER FIX: Auto-Fit nur bei manuellen Klicks ausführen! <---
         if getattr(self, 'skip_initial_autofit', False):
-            recalculate()  # Nutzt die geladenen Parameter und schreibt nur das Log
-            self.skip_initial_autofit = False  # Flag sofort wieder löschen
+            recalculate()
+            self.skip_initial_autofit = False
         else:
-            do_auto_fit()  # Berechnet alles neu (gewollt, wenn man manuell geklickt hat)
+            do_auto_fit()
             
         self.app.renderer.update_image_display()

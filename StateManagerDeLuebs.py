@@ -192,18 +192,26 @@ class StateManager:
             px_y = self.config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
             
             korrektur = self.config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0)
-            kurve = self.config.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5)
+            korr_r4 = self.config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}_r4', fallback=0.0)
             cx_linse, cy_linse = self._get_lens_center(side)
-            
-            # ---> ELA: Die Magie passiert in der Helper-Datei! <---
-            true_shot_x, true_shot_y = Helfer.undistort_point_mm(cx, cy, cx_linse, cy_linse, px_x, px_y, korrektur, kurve)
-            true_null_x, true_null_y = Helfer.undistort_point_mm(nullpunkt[0], nullpunkt[1], cx_linse, cy_linse, px_x, px_y, korrektur, kurve)
-            
-            # Reiner Pythagoras auf der perfekten Zielscheibe!
-            dist_mm = math.hypot(true_shot_x - true_null_x, true_shot_y - true_null_y)
             
             aktive_scheibe_id = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
             targets = self.dm.load_targets()
+            
+            # ---> NEU: Dynamisches Limit für die Entzerrung berechnen, BEVOR der Schuss gewertet wird <---
+            r_limit_mm = 25.0
+            if aktive_scheibe_id in targets:
+                ringe_dict = targets[aktive_scheibe_id].get('ringe_durchmesser_mm', {})
+                if ringe_dict:
+                    max_r = max([float(v) for v in ringe_dict.values()]) / 2.0
+                    r_limit_mm = max_r + 5.0
+            
+            # ---> FIX: r_limit_mm zwingend an den Helper übergeben! <---
+            true_shot_x, true_shot_y = Helfer.undistort_point_mm(cx, cy, cx_linse, cy_linse, px_x, px_y, korrektur, korr_r4, r_limit_mm)
+            true_null_x, true_null_y = Helfer.undistort_point_mm(nullpunkt[0], nullpunkt[1], cx_linse, cy_linse, px_x, px_y, korrektur, korr_r4, r_limit_mm)
+            
+            # Reiner Pythagoras auf der perfekten, flachen Zielscheibe!
+            dist_mm = math.hypot(true_shot_x - true_null_x, true_shot_y - true_null_y)
             
             if aktive_scheibe_id in targets:
                 target_data = targets[aktive_scheibe_id]

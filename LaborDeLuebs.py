@@ -246,27 +246,24 @@ class LaborApp:
             val_x = parser.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
             val_y = parser.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
             val_fisch = parser.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0) 
-            val_kurve = parser.getfloat('Kameras', f'linsen_kurve_{seite_str}', fallback=1.5) 
+            val_r4 = parser.getfloat('Kameras', f'linsen_verzerrung_{seite_str}_r4', fallback=0.0) 
             
-            # ---> DER BUGFIX FÜR DAS OFFSET-UPDATE BEIM KAMERA-WECHSEL <---
             val_off_x = parser.getint('Kameras', f'lens_offset_x_{seite_str}', fallback=0)
             val_off_y = parser.getint('Kameras', f'lens_offset_y_{seite_str}', fallback=0)
             
-            # ---> DER FIX: original_values ZUERST aktualisieren, bevor set() den Trace auslöst! <---
             if hasattr(self, 'orig_calib'):
                 self.original_values[str(self.calib_x_var)] = self.orig_calib[f"{side}_x"]
                 self.original_values[str(self.calib_y_var)] = self.orig_calib[f"{side}_y"]
                 self.original_values[str(self.calib_linsen_verzerrung_var)] = self.orig_calib.get(f"{side}_fisch", 0.0) 
-                self.original_values[str(self.calib_linsen_kurve_var)] = self.orig_calib.get(f"{side}_kurve", 1.5) 
-                # Auch die Offsets in die Undo-History packen
+                self.original_values[str(self.calib_linsen_verzerrung_r4_var)] = self.orig_calib.get(f"{side}_r4", 0.0) 
                 self.original_values[str(self.calib_lens_offset_x_var)] = self.orig_calib.get(f"{side}_off_x", 0)
                 self.original_values[str(self.calib_lens_offset_y_var)] = self.orig_calib.get(f"{side}_off_y", 0)
 
-            # Jetzt erst die GUI setzen, damit der Trace keinen falschen Alarm (Rot) schlägt
             self.calib_x_var.set(val_x)
             self.calib_y_var.set(val_y)
             self.calib_linsen_verzerrung_var.set(val_fisch)
-            self.calib_linsen_kurve_var.set(val_kurve) 
+            #self.calib_linsen_verzerrung_r4_var.set(val_r4)
+            self.calib_linsen_verzerrung_r4_var.set(val_r4) # <--- GEÄNDERT
             
             # ---> NEU: Jetzt werden die Slider auch wirklich bewegt! <---
             self.calib_lens_offset_x_var.set(val_off_x)
@@ -377,11 +374,11 @@ class LaborApp:
                 'left_x': parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0),
                 'left_y': parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0),
                 'left_fisch': parser.getfloat('Kameras', 'linsen_verzerrung_links', fallback=0.0),
-                'left_kurve': parser.getfloat('Kameras', 'linsen_kurve_links', fallback=1.5),
+                'left_r4': parser.getfloat('Kameras', 'linsen_verzerrung_links_r4', fallback=0.0),
                 'right_x': parser.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0),
                 'right_y': parser.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0),
                 'right_fisch': parser.getfloat('Kameras', 'linsen_verzerrung_rechts', fallback=0.0),
-                'right_kurve': parser.getfloat('Kameras', 'linsen_kurve_rechts', fallback=1.5),
+                'right_r4': parser.getfloat('Kameras', 'linsen_verzerrung_rechts_r4', fallback=0.0),
                 'left_off_x': parser.getint('Kameras', 'lens_offset_x_links', fallback=0),
                 'left_off_y': parser.getint('Kameras', 'lens_offset_y_links', fallback=0),
                 'right_off_x': parser.getint('Kameras', 'lens_offset_x_rechts', fallback=0),

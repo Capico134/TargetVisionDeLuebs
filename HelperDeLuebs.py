@@ -8,64 +8,72 @@ class Helfer:
     # =====================================================================
     @staticmethod
     def get_optical_center(cam_w, cam_h, cut_l, cut_t, off_x, off_y):
-        """Berechnet den physikalischen Linsenmittelpunkt im Kamerabild."""
         return (cam_w / 2.0) - cut_l + off_x, (cam_h / 2.0) - cut_t + off_y
 
     @staticmethod
-    def distort_radius(r_mm_true, korrektur, kurve):
-        """Vorwärts-Verzerrung: Berechnet, wie groß ein wahrer Radius auf dem Sensor erscheint."""
-        if korrektur == 0.0:
+    def distort_radius(r_mm_true, korrektur, korr_r4, r_limit=None):
+        if korrektur == 0.0 and korr_r4 == 0.0:
             return r_mm_true
-        return r_mm_true * (1.0 + (abs(r_mm_true)**kurve) * korrektur)
+            
+        r_clamp = min(r_mm_true, r_limit) if r_limit else r_mm_true
+        r2 = r_clamp ** 2
+        r4 = r2 ** 2
+        
+        factor = 1.0 + (korrektur * r2) + (korr_r4 * r4)
+        return r_mm_true * factor  # Lineare Fortsetzung außerhalb des Limits
 
     @staticmethod
-    def undistort_radius(d_obs, korrektur, kurve):
-        """Newton-Raphson Rückrechnung: Entzerrt einen Radius zurück auf die wahre Papierebene."""
-        if korrektur == 0.0 or d_obs <= 0:
+    def undistort_radius(d_obs, korrektur, korr_r4, r_limit=None):
+        if (korrektur == 0.0 and korr_r4 == 0.0) or d_obs <= 0:
             return d_obs
             
         d_true = d_obs
-        for _ in range(4):
-            d_abs = abs(d_true)
-            f = d_true + korrektur * (d_abs**(kurve + 1.0)) - d_obs
-            df = 1.0 + (kurve + 1.0) * korrektur * (d_abs**kurve)
+        for _ in range(5):
+            if r_limit is None or d_true <= r_limit:
+                r2 = d_true ** 2
+                r4 = r2 ** 2
+                factor = 1.0 + korrektur * r2 + korr_r4 * r4
+                df = 1.0 + 3.0 * korrektur * r2 + 5.0 * korr_r4 * r4
+            else:
+                r2 = r_limit ** 2
+                r4 = r2 ** 2
+                factor = 1.0 + korrektur * r2 + korr_r4 * r4
+                df = factor
+                
+            f = d_true * factor - d_obs
             if df == 0: break
             d_true = d_true - (f / df)
         return d_true
 
     @staticmethod
-    def undistort_point_mm(px_x, px_y, lens_cx, lens_cy, px_x_ratio, px_y_ratio, korrektur, kurve):
-        """Entzerrt einen Sensor-Punkt in Millimeter-Abstände zur Linsenachse."""
+    def undistort_point_mm(px_x, px_y, lens_cx, lens_cy, px_x_ratio, px_y_ratio, korrektur, korr_r4, r_limit=None):
         dx_mm_obs = (px_x - lens_cx) / px_x_ratio if px_x_ratio else 0
         dy_mm_obs = (px_y - lens_cy) / px_y_ratio if px_y_ratio else 0
         d_obs = math.hypot(dx_mm_obs, dy_mm_obs)
         
-        d_true = Helfer.undistort_radius(d_obs, korrektur, kurve)
+        d_true = Helfer.undistort_radius(d_obs, korrektur, korr_r4, r_limit)
         scale = d_true / d_obs if d_obs > 0 else 1.0
-        
         return dx_mm_obs * scale, dy_mm_obs * scale
 
     @staticmethod
-    def get_ellipse_scales(r_mm_center, korrektur, kurve):
-        """Gibt (scale_tangential, scale_radial) für die asymmetrische ovale Verzerrung zurück."""
-        scale_tan = 1.0 + (abs(r_mm_center)**kurve * korrektur)
-        scale_rad = 1.0 + ((kurve + 1.0) * abs(r_mm_center)**kurve * korrektur)
+    def get_ellipse_scales(r_mm_center, korrektur, korr_r4, r_limit=None):
+        r_clamp = min(r_mm_center, r_limit) if r_limit else r_mm_center
+        r2 = r_clamp ** 2
+        r4 = r2 ** 2
+        scale_tan = 1.0 + (korrektur * r2) + (korr_r4 * r4)
+        scale_rad = 1.0 + (3.0 * korrektur * r2) + (5.0 * korr_r4 * r4)
         return scale_tan, scale_rad
-
-    # =====================================================================
-    # ---> DER RENDERER (Nutzt nun die Single Source of Truth!) <---
-    # =====================================================================
 
     @staticmethod
     def draw_smart_ellipse(img, center_x, center_y, radius_mm, color, 
-                           px_x, px_y, korrektur, kurve=1.5,
+                           px_x, px_y, korrektur, korr_r4=0.0,
                            lens_cx=None, lens_cy=None,
                            thickness=1, dashed=False, dash_offset=0,
                            dash_step=6, dash_length=2, 
                            text=None, text_color=(0,0,0), 
                            is_hit=False, is_ring=False,
                            zoom_params=(1.0, 0.0, 0.0), 
-                           scale_x=1.0, scale_y=1.0, draw_center_dot=False):
+                           scale_x=1.0, scale_y=1.0, draw_center_dot=False, r_limit=None):
         
         z, ox, oy = zoom_params
         thickness_komp = (thickness / 2.0) if is_hit else 0.0
@@ -80,16 +88,16 @@ class Helfer:
             dy_mm_obs = dy_px / px_y
             d_obs = math.hypot(dx_mm_obs, dy_mm_obs)
             
-            # ---> ELA: Aufruf der zentralen Rückrechnung <---
-            d_true = Helfer.undistort_radius(d_obs, korrektur, kurve)
+            # ---> FIX: r_limit an undistort_radius übergeben! <---
+            d_true = Helfer.undistort_radius(d_obs, korrektur, korr_r4, r_limit=r_limit)
                     
-            if d_true > 0.01 and abs(korrektur) > 0.000001:
+            if d_true > 0.01 and (abs(korrektur) > 0.000001 or abs(korr_r4) > 0.000001):
                 d_out_true = d_true + radius_mm
                 d_in_true = d_true - radius_mm
                 
-                # ---> ELA: Aufruf der zentralen Vorwärts-Verzerrung <---
-                obs_out = Helfer.distort_radius(d_out_true, korrektur, kurve)
-                obs_in = Helfer.distort_radius(d_in_true, korrektur, kurve)
+                # ---> FIX: r_limit an distort_radius übergeben! <---
+                obs_out = Helfer.distort_radius(d_out_true, korrektur, korr_r4, r_limit=r_limit)
+                obs_in = Helfer.distort_radius(d_in_true, korrektur, korr_r4, r_limit=r_limit)
                 
                 new_d_obs = (obs_out + obs_in) / 2.0
                 shift_mm = (new_d_obs - d_obs)
@@ -101,7 +109,8 @@ class Helfer:
             else:
                 shift_x_px = 0.0
                 shift_y_px = 0.0
-                r_mm_draw = Helfer.distort_radius(radius_mm, korrektur, kurve)
+                # ---> FIX: r_limit an distort_radius übergeben! <---
+                r_mm_draw = Helfer.distort_radius(radius_mm, korrektur, korr_r4, r_limit=r_limit)
                 
             shifted_cx = center_x + shift_x_px
             shifted_cy = center_y + shift_y_px
@@ -125,42 +134,17 @@ class Helfer:
             draw_cx = int(round((center_x * z + ox) * scale_x))
             draw_cy = int(round((center_y * z + oy) * scale_y))
             
-            if r_mm_center > 0.05 and abs(korrektur) > 0.000001:
+            if r_mm_center > 0.05 and (abs(korrektur) > 0.000001 or abs(korr_r4) > 0.000001):
                 rad = math.atan2(dy_mm, dx_mm)
                 angle_deg = math.degrees(rad)
                 
-                ## ---> ELA: Die Punkt-Ableitung (Der "alte" Faktor) <---
-                #scale_tangential, scale_radial_approx = Helfer.get_ellipse_scales(r_mm_center, korrektur, kurve)
-                #scale_radial = scale_radial_approx
-                #
-                ## =================================================================
-                ## ---> DEIN FIX: Der perfekte Mittelwert für Treffer <---
-                ## =================================================================
-                #if is_hit:
-                #    # 1. Makroskopische Verzerrung (Wahre Kanten des Lochs)
-                #    d_out_true = r_mm_center + radius_mm
-                #    d_in_true = abs(r_mm_center - radius_mm)
-                #    
-                #    obs_out = Helfer.distort_radius(d_out_true, korrektur, kurve)
-                #    obs_in = Helfer.distort_radius(d_in_true, korrektur, kurve)
-                #    
-                #    # 2. Den neuen radialen Faktor aus der echten Bild-Ausdehnung berechnen
-                #    scale_radial_macro = ((obs_out - obs_in) / 2.0) / radius_mm
-                #    
-                #    # 3. Der Mittelwert aus Punkt-Verzerrung und Kanten-Verzerrung
-                #    scale_radial = (scale_radial_approx + scale_radial_macro) / 2.0
+                # ---> FIX: r_limit an get_ellipse_scales übergeben! <---
+                scale_tangential, scale_radial = Helfer.get_ellipse_scales(r_mm_center, korrektur, korr_r4, r_limit=r_limit)
                 
-
-                # ---> ELA: Die Punkt-Ableitung (Der "alte" Faktor) <---
-                scale_tangential, scale_radial = Helfer.get_ellipse_scales(r_mm_center, korrektur, kurve)
-                # =================================================================
-                # ---> DEIN FIX: Fokus auf die wertungsrelevante Innenkante <---
-                # =================================================================
                 if is_hit:
-                    # Wir werten die radiale Verzerrung leicht nach innen versetzt aus
                     r_eval = abs(r_mm_center - (radius_mm / 2.0))
-                    _, scale_radial = Helfer.get_ellipse_scales(r_eval, korrektur, kurve)
-
+                    # ---> FIX: r_limit an get_ellipse_scales übergeben! <---
+                    _, scale_radial = Helfer.get_ellipse_scales(r_eval, korrektur, korr_r4, r_limit=r_limit)
                 
                 cos_a = math.cos(rad)
                 sin_a = math.sin(rad)
@@ -171,7 +155,8 @@ class Helfer:
                 ry_raw = (radius_mm * scale_tangential * px_tangential) * z * scale_y
             else:
                 angle_deg = 0
-                r_mm_draw = Helfer.distort_radius(radius_mm, korrektur, kurve)
+                # ---> FIX: r_limit an distort_radius übergeben! <---
+                r_mm_draw = Helfer.distort_radius(radius_mm, korrektur, korr_r4, r_limit=r_limit)
                 rx_raw = (r_mm_draw * px_x) * z * scale_x
                 ry_raw = (r_mm_draw * px_y) * z * scale_y
                 
