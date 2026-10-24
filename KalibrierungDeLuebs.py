@@ -48,13 +48,29 @@ class Kalibrator:
                         gespeicherte_scheibe = params.get("zielscheibe", "Unbekannt")
                         
                         if gespeicherte_scheibe != "Unbekannt" and gespeicherte_scheibe != aktuelle_scheibe:
-                            msg = (f"⚠️ WARNUNG: Profil-Konflikt!\n\n"
+                            msg = (f"⚠️ PROFIL-KONFLIKT!\n\n"
                                    f"Diese Kalibrierung wurde für die Scheibe '{gespeicherte_scheibe}' erstellt.\n"
                                    f"Du nutzt aktuell jedoch '{aktuelle_scheibe}'.\n\n"
-                                   f"Die errechneten Distanzen (Ringe) werden voraussichtlich falsch sein.\n"
-                                   f"Trotzdem laden?")
-                            if not messagebox.askyesno("Profil-Konflikt", msg):
-                                return # Ladevorgang abbrechen!
+                                   f"• [Ja] = Zielscheibe automatisch auf '{gespeicherte_scheibe}' umstellen (Empfohlen)\n"
+                                   f"• [Nein] = Trotzdem laden, aber '{aktuelle_scheibe}' behalten (Ringe werden evtl. falsch)\n"
+                                   f"• [Abbrechen] = Ladevorgang abbrechen")
+                            
+                            wahl = messagebox.askyesnocancel("Profil-Konflikt", msg)
+                            
+                            if wahl is None:
+                                return # Ladevorgang abbrechen (Cancel)
+                                
+                            elif wahl is True:
+                                # Profil automatisch anpassen (Yes)
+                                d_config.set('Zielscheibe', 'aktive_scheibe', gespeicherte_scheibe)
+                                self.app.print_log("SYSTEM", f"🔄 Profil wurde aus dem Backup automatisch auf '{gespeicherte_scheibe}' umgestellt!", show_gui=True)
+                                
+                                # Versuchen, auch die Combobox im Laborfenster sanft visuell zu aktualisieren
+                                try:
+                                    if hasattr(self.app, 'ui_builder') and hasattr(self.app.ui_builder, 'target_combo'):
+                                        self.app.ui_builder.target_combo.set(gespeicherte_scheibe)
+                                except Exception:
+                                    pass
                                 
                         self.app.calib_mode_active = True
                         self.app.calib_points = pts
