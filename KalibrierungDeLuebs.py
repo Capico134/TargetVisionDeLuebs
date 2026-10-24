@@ -391,7 +391,8 @@ class Kalibrator:
             r_6 = sechs_mm / 2.0 if sechs_l is not None else 0.0
 
             # Das dynamische optische Korsett (5 mm hinter dem Außenring)
-            r_limit_mm = r_a + 5.0
+            #r_limit_mm = r_a + 5.0
+            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe)
 
             # Hilfsfunktion für die Log-Ausgabe
             def lock_str(lock_var):
@@ -489,7 +490,8 @@ class Kalibrator:
             r_a = aussen_mm / 2.0
             r_6 = sechs_mm / 2.0 if sechs_l is not None else 0.0
 
-            r_limit_mm = r_a + 5.0  # Das Korsett darf erst hinter dem letzten Klick wirken!
+            #r_limit_mm = r_a + 5.0  # Das Korsett darf erst hinter dem letzten Klick wirken!
+            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe)
 
             locks = [
                 lock_cx.get(), lock_cy.get(),
