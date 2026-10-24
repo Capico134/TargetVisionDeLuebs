@@ -199,12 +199,7 @@ class StateManager:
             targets = self.dm.load_targets()
             
             # ---> NEU: Dynamisches Limit für die Entzerrung berechnen, BEVOR der Schuss gewertet wird <---
-            r_limit_mm = 25.0
-            if aktive_scheibe_id in targets:
-                ringe_dict = targets[aktive_scheibe_id].get('ringe_durchmesser_mm', {})
-                if ringe_dict:
-                    max_r = max([float(v) for v in ringe_dict.values()]) / 2.0
-                    r_limit_mm = max_r + 5.0
+            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe_id)
             
             # ---> FIX: r_limit_mm zwingend an den Helper übergeben! <---
             true_shot_x, true_shot_y = Helfer.undistort_point_mm(cx, cy, cx_linse, cy_linse, px_x, px_y, korrektur, korr_r4, r_limit_mm)

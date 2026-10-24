@@ -6,44 +6,76 @@ class Helfer:
     # =====================================================================
     # ---> SINGLE SOURCE OF TRUTH: OPTIK & LINSEN-MATHEMATIK <---
     # =====================================================================
+    
     @staticmethod
     def get_optical_center(cam_w, cam_h, cut_l, cut_t, off_x, off_y):
         return (cam_w / 2.0) - cut_l + off_x, (cam_h / 2.0) - cut_t + off_y
 
     @staticmethod
+    def get_optical_center(cam_w, cam_h, cut_l, cut_t, off_x, off_y):
+        return (cam_w / 2.0) - cut_l + off_x, (cam_h / 2.0) - cut_t + off_y
+    
+    @staticmethod
     def distort_radius(r_mm_true, korrektur, korr_r4, r_limit=None):
         if korrektur == 0.0 and korr_r4 == 0.0:
             return r_mm_true
             
-        r_clamp = min(r_mm_true, r_limit) if r_limit else r_mm_true
-        r2 = r_clamp ** 2
-        r4 = r2 ** 2
+        sign = -1.0 if r_mm_true < 0 else 1.0
+        r_abs = abs(r_mm_true)
         
-        factor = 1.0 + (korrektur * r2) + (korr_r4 * r4)
-        return r_mm_true * factor  # Lineare Fortsetzung außerhalb des Limits
+        if r_limit is None or r_abs <= r_limit:
+            r2 = r_abs ** 2
+            r4 = r2 ** 2
+            factor = 1.0 + (korrektur * r2) + (korr_r4 * r4)
+            return sign * (r_abs * factor)
+        else:
+            # Tangenten-Fortsetzung: Hält den lokalen Ringabstand ab r_limit exakt konstant!
+            r2_lim = r_limit ** 2
+            r4_lim = r2_lim ** 2
+            
+            val_lim = r_limit * (1.0 + korrektur * r2_lim + korr_r4 * r4_lim)
+            slope_lim = 1.0 + 3.0 * korrektur * r2_lim + 5.0 * korr_r4 * r4_lim
+            
+            return sign * (val_lim + slope_lim * (r_abs - r_limit))
 
     @staticmethod
     def undistort_radius(d_obs, korrektur, korr_r4, r_limit=None):
-        if (korrektur == 0.0 and korr_r4 == 0.0) or d_obs <= 0:
+        if (korrektur == 0.0 and korr_r4 == 0.0) or d_obs == 0:
             return d_obs
             
-        d_true = d_obs
+        sign = -1.0 if d_obs < 0 else 1.0
+        d_abs = abs(d_obs)
+        
+        if r_limit is not None:
+            r2_lim = r_limit ** 2
+            r4_lim = r2_lim ** 2
+            val_lim = r_limit * (1.0 + korrektur * r2_lim + korr_r4 * r4_lim)
+            slope_lim = 1.0 + 3.0 * korrektur * r2_lim + 5.0 * korr_r4 * r4_lim
+            
+            if d_abs > val_lim and slope_lim != 0:
+                return sign * (r_limit + (d_abs - val_lim) / slope_lim)
+
+        d_true = d_abs
         for _ in range(5):
-            if r_limit is None or d_true <= r_limit:
-                r2 = d_true ** 2
-                r4 = r2 ** 2
-                factor = 1.0 + korrektur * r2 + korr_r4 * r4
-                df = 1.0 + 3.0 * korrektur * r2 + 5.0 * korr_r4 * r4
-            else:
-                r2 = r_limit ** 2
-                r4 = r2 ** 2
-                factor = 1.0 + korrektur * r2 + korr_r4 * r4
-                df = factor
+            r2 = d_true ** 2
+            r4 = r2 ** 2
+            factor = 1.0 + korrektur * r2 + korr_r4 * r4
+            df = 1.0 + 3.0 * korrektur * r2 + 5.0 * korr_r4 * r4
                 
-            f = d_true * factor - d_obs
+            f = d_true * factor - d_abs
             if df == 0: break
             d_true = d_true - (f / df)
-        return d_true
+        return sign * d_true
+
+    @staticmethod
+    def get_ellipse_scales(r_mm_center, korrektur, korr_r4, r_limit=None):
+        r_abs = abs(r_mm_center)
+        r_clamp = min(r_abs, r_limit) if r_limit else r_abs
+        r2 = r_clamp ** 2
+        r4 = r2 ** 2
+        scale_tan = 1.0 + (korrektur * r2) + (korr_r4 * r4)
+        scale_rad = 1.0 + (3.0 * korrektur * r2) + (5.0 * korr_r4 * r4)
+        return scale_tan, scale_rad
 
     @staticmethod
     def undistort_point_mm(px_x, px_y, lens_cx, lens_cy, px_x_ratio, px_y_ratio, korrektur, korr_r4, r_limit=None):
@@ -56,13 +88,17 @@ class Helfer:
         return dx_mm_obs * scale, dy_mm_obs * scale
 
     @staticmethod
-    def get_ellipse_scales(r_mm_center, korrektur, korr_r4, r_limit=None):
-        r_clamp = min(r_mm_center, r_limit) if r_limit else r_mm_center
-        r2 = r_clamp ** 2
-        r4 = r2 ** 2
-        scale_tan = 1.0 + (korrektur * r2) + (korr_r4 * r4)
-        scale_rad = 1.0 + (3.0 * korrektur * r2) + (5.0 * korr_r4 * r4)
-        return scale_tan, scale_rad
+    def get_r_limit(targets, aktive_scheibe, fallback=25.0):
+        """Zentrale Definition des optischen Korsetts (Primär 3er-Ring)."""
+        if aktive_scheibe in targets:
+            ringe_dict = targets[aktive_scheibe].get('ringe_durchmesser_mm', {})
+            if '3' in ringe_dict:
+                return float(ringe_dict['3']) / 2.0
+            elif '1' in ringe_dict:
+                return float(ringe_dict['1']) / 2.0
+            elif ringe_dict:
+                return max([float(v) for v in ringe_dict.values()]) / 2.0
+        return fallback
 
     @staticmethod
     def draw_smart_ellipse(img, center_x, center_y, radius_mm, color, 
@@ -74,6 +110,7 @@ class Helfer:
                            is_hit=False, is_ring=False,
                            zoom_params=(1.0, 0.0, 0.0), 
                            scale_x=1.0, scale_y=1.0, draw_center_dot=False, r_limit=None):
+        #print(f"r_limit: {r_limit}")
         
         z, ox, oy = zoom_params
         thickness_komp = (thickness / 2.0) if is_hit else 0.0
@@ -88,14 +125,12 @@ class Helfer:
             dy_mm_obs = dy_px / px_y
             d_obs = math.hypot(dx_mm_obs, dy_mm_obs)
             
-            # ---> FIX: r_limit an undistort_radius übergeben! <---
             d_true = Helfer.undistort_radius(d_obs, korrektur, korr_r4, r_limit=r_limit)
                     
             if d_true > 0.01 and (abs(korrektur) > 0.000001 or abs(korr_r4) > 0.000001):
                 d_out_true = d_true + radius_mm
                 d_in_true = d_true - radius_mm
                 
-                # ---> FIX: r_limit an distort_radius übergeben! <---
                 obs_out = Helfer.distort_radius(d_out_true, korrektur, korr_r4, r_limit=r_limit)
                 obs_in = Helfer.distort_radius(d_in_true, korrektur, korr_r4, r_limit=r_limit)
                 
@@ -109,7 +144,6 @@ class Helfer:
             else:
                 shift_x_px = 0.0
                 shift_y_px = 0.0
-                # ---> FIX: r_limit an distort_radius übergeben! <---
                 r_mm_draw = Helfer.distort_radius(radius_mm, korrektur, korr_r4, r_limit=r_limit)
                 
             shifted_cx = center_x + shift_x_px
@@ -122,6 +156,9 @@ class Helfer:
             rx_raw = (r_mm_draw * px_x) * z * scale_x
             ry_raw = (r_mm_draw * px_y) * z * scale_y
             
+            # ---> DIAGNOSE-PRINT FÜR DEN BILDSCHIRM-DURCHMESSER <---
+            #print(f"🔍 [DRAW-ELLIPSE] Ring-Radius(Soll): {radius_mm*2:.2f} mm | Nach Verzerrung(Draw): {r_mm_draw*2:.2f} mm | Pixel-Durchmesser(X): {rx_raw*2:.1f} px (r_limit={r_limit})")
+
             rx = int(round(rx_raw - thickness_komp))
             ry = int(round(ry_raw - thickness_komp))
 

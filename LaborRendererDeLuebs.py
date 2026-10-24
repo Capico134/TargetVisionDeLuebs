@@ -215,14 +215,16 @@ class LaborRenderer:
             else:
                 kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
 
-            # ---> NEU: Zentrale Definition des optischen Korsetts (r_limit) GANZ OBEN <---
-            r_limit_mm = 25.0 # Fallback
-            if aktive_scheibe in targets:
-                ringe_dict = targets[aktive_scheibe].get('ringe_durchmesser_mm', {})
-                if ringe_dict: 
-                    # Wir nehmen den allergrößten Ring und geben ihm 5mm Puffer!
-                    max_r = max([float(v) for v in ringe_dict.values()]) / 2.0
-                    r_limit_mm = max_r + 5.0
+            # ---> SAUBERES OPTISCHES KORSETT: Primär der 3er-Ring, mit sicheren Fallbacks <---
+            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe)
+            
+            #SOOOOOOOOOOOO NEEEEEEE SCHEIßE
+            #r_limit_mm = 25.0
+            #if aktive_scheibe in targets:
+            #    ringe_dict = targets[aktive_scheibe].get('ringe_durchmesser_mm', {})
+            #    if ringe_dict:
+            #        max_r = max([float(v) for v in ringe_dict.values()]) / 2.0
+            #        r_limit_mm = max_r - 20.0  # Äußerster Ring + 5 mm Puffer            
             
             zoom_p = (1.0, self.app.current_img_w / self.app.current_scale, 0.0)
 
@@ -240,7 +242,7 @@ class LaborRenderer:
                             r_mm = float(d_mm) / 2.0
                             
                             # ---> NEU: Print-Ausgabe für den grünen Ring <---
-                            print(f"🟢 [RENDERER] Zielscheibe Grüner-Ring '{ring_name}': Zentrum=({fb_cx:.2f}, {fb_cy:.2f}), Radius={r_mm:.2f} mm")
+                            #print(f"🟢 [RENDERER] Zielscheibe Grüner-Ring '{ring_name}': Zentrum=({fb_cx:.2f}, {fb_cy:.2f}), Radius={r_mm:.2f} mm, r_limit_mm={r_limit_mm}mm")
                             
                             Helfer.draw_smart_ellipse(
                                 img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm,
@@ -398,12 +400,15 @@ class LaborRenderer:
         else:
             kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
             
-        # ---> HIER EINFÜGEN: r_limit_mm auch für das schnelle Blinken definieren! <---
+        # ---> IDENTISCHES KORSETT AUCH FÜR DIE LIVE-SCHICHT <---
         r_limit_mm = 25.0
         if aktive_scheibe in targets:
-            ringe_dict = targets[aktive_scheibe].get('ringe_durchmesser_mm', {})
-            if '2' in ringe_dict: r_limit_mm = float(ringe_dict['2']) / 2.0
-            elif '1' in ringe_dict: r_limit_mm = float(ringe_dict['1']) / 2.0
+            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe)
+        else:
+            kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
+            
+        # ---> HIER EINFÜGEN: r_limit_mm auch für das schnelle Blinken definieren! <---
+        r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe)
             
         zoom_p = (1.0, self.app.current_img_w / self.app.current_scale, 0.0)
         current_frame_num = self.app.current_index
@@ -696,7 +701,7 @@ class LaborRenderer:
                             m_scaled_x_right = m_scaled_x + self.app.current_img_w
 
                             ring_bez = "Spiegel" if i < 8 else ("9er-Ring" if i < 12 else ("6er-Ring" if i < 16 else "Außenring"))
-                            print(f"🔴 [RENDERER] Kalibrierung Roter-Punkt #{i} ({ring_bez}): Sensor-Pos=({soll_px_x:.2f}, {soll_px_y:.2f}) | UI-Render-Panel=(X:{m_scaled_x_right}, Y:{m_scaled_y})")
+                            #print(f"🔴 [RENDERER] Kalibrierung Roter-Punkt #{i} ({ring_bez}): Sensor-Pos=({soll_px_x:.2f}, {soll_px_y:.2f}) | UI-Render-Panel=(X:{m_scaled_x_right}, Y:{m_scaled_y})")
 
                             for mx in [m_scaled_x, m_scaled_x_right]:
                                 cv2.circle(combined, (mx, m_scaled_y), 3, (0, 0, 255), -1)
@@ -797,11 +802,8 @@ class LaborRenderer:
             else:
                 kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
                 
-            r_limit_mm = 25.0
-            if aktive_scheibe in targets:
-                ringe_dict = targets[aktive_scheibe].get('ringe_durchmesser_mm', {})
-                if '2' in ringe_dict: r_limit_mm = float(ringe_dict['2']) / 2.0
-                elif '1' in ringe_dict: r_limit_mm = float(ringe_dict['1']) / 2.0
+            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe)
+
         else:
             px_x, px_y, korrektur, korr_r4 = 5.0, 5.0, 0.0, 0.0
             fb_cx, fb_cy = None, None
