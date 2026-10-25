@@ -1518,14 +1518,19 @@ class LaborApp:
         for i in range(start_idx, target_idx + 1):
             img = self.get_img(side_origs[i])
             
+            # ---> ELA FIX: Bei JEDEM Frame alte Diffs löschen, damit Geisterbilder nicht den Cache vergiften! <---
+            d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
+            d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
+            d_dm.debug_images.pop(f"letzte_abrisskante_{side}", None)
+            
             if i == target_idx:
                 self.log_text.insert(tk.END, "\n" + "▼"*70 + "\n", "mono")
                 self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR BILD-AUFNAHME ({i+1})  ███\n", "mono")
                 self.log_text.insert(tk.END, "▼"*70 + "\n", "mono")
                 
-                d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
-                d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
-                d_dm.debug_images.pop(f"letzte_abrisskante_{side}", None)
+                #d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
+                #d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
+                #d_dm.debug_images.pop(f"letzte_abrisskante_{side}", None)
                 
                 live_img = img.copy()
                 clean_live_img = img.copy()
@@ -1608,7 +1613,9 @@ class LaborApp:
             
         diff_img = d_dm.debug_images.get(f"diff_letzter_treffer_{side}")
         if diff_img is None:
-            diff_img = d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}", np.zeros_like(live_img))
+            diff_img = d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}")
+        if diff_img is None:
+            diff_img = np.zeros_like(live_img)
         
         if len(diff_img.shape) == 2:
             diff_img = cv2.cvtColor(diff_img, cv2.COLOR_GRAY2BGR)
