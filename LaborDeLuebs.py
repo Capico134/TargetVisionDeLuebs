@@ -12,6 +12,7 @@ import configparser
 import io
 from PIL import Image, ImageTk
 import shutil
+import copy
 from datetime import datetime
 
 # ---> HIER IMPORTIEREN WIR DEINE ECHTE ENGINE UND DEN MANAGER! <---
@@ -92,6 +93,7 @@ class LaborApp:
         self.dm = DateiManager() # <--- NEU: Unser zentraler ELA-Werkzeugkasten
         self.package_data = None # <--- NEU: Speichert das entpackte ZIP im RAM
         
+        self.frame_cache = {'left': {}, 'right': {}}
         self.current_zip_path = None
         self.all_files = []
         self.orig_files = []
@@ -428,6 +430,7 @@ class LaborApp:
         #            # Key fehlt -> mit GUI-Wert ergänzen
         #            parser.set('Erkennung', key, str(tk_var.get()))
         
+        self.frame_cache = {'left': {}, 'right': {}}
         self.package_data = {
             'config': parser,
             'images': {},
@@ -459,6 +462,7 @@ class LaborApp:
         if filepath:
             self._is_loading = True # <--- NEU: Ladesperre AKTIVIEREN
             
+            self.frame_cache = {'left': {}, 'right': {}}
             self.current_zip_path = filepath
             # Vorläufiger Titel (damit was dasteht, falls das Laden einer Riesen-ZIP kurz dauert)
             self.root.title(f"Labor & Einstellungen  -  {os.path.basename(filepath)}")
@@ -647,6 +651,7 @@ class LaborApp:
             if hasattr(self, '_param_timer') and self._param_timer is not None:
                 self.root.after_cancel(self._param_timer)
                 self._param_timer = None
+            self.frame_cache = {'left': {}, 'right': {}}
             self.process_and_display()
             return
             
@@ -658,6 +663,7 @@ class LaborApp:
     def _apply_param_change(self):
         """Die eigentliche Ausführung nach dem Zeitpuffer"""
         self._param_timer = None
+        self.frame_cache = {'left': {}, 'right': {}}
         self.process_and_display()
 
     def on_mouse_move(self, event):
@@ -1157,7 +1163,7 @@ class LaborApp:
 
     def center_on_last_shot(self, event=None):
         """Zentriert den letzten Schuss des aktuellen Bildes in der angeklickten Bildhälfte."""
-        if not getattr(self, 'current_engine_shots', None) or not hasattr(self, 'current_scale'):
+        if getattr(self, 'current_engine_shots', None) is None or not hasattr(self, 'current_scale'):
             return
             
         side = self.active_camera_var.get()
@@ -1167,12 +1173,14 @@ class LaborApp:
         valid_shots = [s for s in self.current_engine_shots if s.get('side') == side and s.get('labor_frame_num') == current_frame_num]
         
         if not valid_shots:
-            self.print_log("SYSTEM", "Mittelklick: Kein Treffer in diesem Bild gefunden, auf den zentriert werden könnte.")
+            self.print_log("SYSTEM", f"Mittelklick: Kein neuer Treffer in Bild #{current_frame_num} gefunden, auf den zentriert werden könnte.")
             return
             
         # Den absolut letzten Treffer aus der Liste schnappen
         latest_shot = valid_shots[-1]
         hx, hy = latest_shot['pos']
+        
+        self.print_log("SYSTEM", f"Mittelklick: Zentriere auf Treffer (X:{hx:.1f}, Y:{hy:.1f}) in Bild #{current_frame_num}")
         
         # Fenstermaße aktualisieren und abrufen
         self.root.update_idletasks()
@@ -1456,7 +1464,40 @@ class LaborApp:
             self.print_log("SYSTEM", f"Fortsetzung erkannt! Start-Maske für {side} geladen.")
         
         # 3. TIME-TRAVEL SIMULATION
-        for i in range(target_idx + 1):
+        start_idx = 0
+        
+        def safe_copy(img_obj):
+            return img_obj.copy() if img_obj is not None else None
+
+        # ---------------------------------------------------------
+        # ---> ELA: LAZY TIMELINE CACHE <---
+        # ---------------------------------------------------------
+        best_cached_idx = -1
+        for i in range(target_idx, -1, -1):
+            if i in self.frame_cache[side]:
+                best_cached_idx = i
+                break
+                
+        if best_cached_idx >= 0:
+            cached_data = self.frame_cache[side][best_cached_idx]
+            
+            d_sm.shots = copy.deepcopy(cached_data['shots'])
+            temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
+            temp_state.cumulative_mask = safe_copy(cached_data['mask'])
+            
+            d_dm.debug_images[f"diff_letzter_treffer_{side}"] = safe_copy(cached_data.get('diff_letzter_treffer'))
+            d_dm.debug_images[f"diff_letzte_verworfene_auswertung_{side}"] = safe_copy(cached_data.get('diff_letzte_verworfene'))
+            d_dm.debug_images[f"letzte_abrisskante_{side}"] = safe_copy(cached_data.get('letzte_abrisskante'))
+            
+            start_idx = best_cached_idx + 1
+            
+            if start_idx <= target_idx:
+                self.print_log("SYSTEM", f"⚡ Lazy-Cache: Überspringe die ersten {start_idx} Bilder, setze Zeitreise bei Bild #{start_idx + 1} fort...")
+
+        # ---------------------------------------------------------
+        # Dynamische Ausführungs-Schleife ab start_idx
+        # ---------------------------------------------------------
+        for i in range(start_idx, target_idx + 1):
             img = self.get_img(side_origs[i])
             
             if i == target_idx:
@@ -1464,10 +1505,9 @@ class LaborApp:
                 self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR BILD-AUFNAHME ({i+1})  ███\n", "mono")
                 self.log_text.insert(tk.END, "▼"*70 + "\n", "mono")
                 
-                # --- ELA: Alte Geister-Bilder aus der Zeitreise vor dem echten Frame löschen ---
                 d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
                 d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
-                d_dm.debug_images.pop(f"letzte_abrisskante_{side}", None) # <--- NEU
+                d_dm.debug_images.pop(f"letzte_abrisskante_{side}", None)
                 
                 live_img = img.copy()
                 clean_live_img = img.copy()
@@ -1477,21 +1517,56 @@ class LaborApp:
                     history_mask = temp_state.cumulative_mask.copy()
                 else:
                     history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
-            # =====================================================================
-            # ---> NEU: Kompakte Trennlinie für alle historischen Frames <---
-            # =====================================================================
             else:
                 self.log_text.insert(tk.END, f"\n--- BILD #{i+1} ".ljust(61, "-") + "\n", "mono")
                     
-            # ---> NEU: Zähle die Schüsse VOR der Erkennung <---
             shots_before = len(d_sm.shots)
-            
             detector.detect_new_shot(img, side)
-            
-            # ---> NEU: Stemple alle neu hinzugekommenen Schüsse mit der Bildnummer <---
             shots_after = len(d_sm.shots)
+            
             for j in range(shots_before, shots_after):
                 d_sm.shots[j]['labor_frame_num'] = i + 1
+                
+            # ---> DEN FRAME IN DEN CACHE LEGEN <---
+            temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
+            self.frame_cache[side][i] = {
+                'shots': copy.deepcopy(d_sm.shots),
+                'mask': safe_copy(temp_state.cumulative_mask),
+                'diff_letzter_treffer': safe_copy(d_dm.debug_images.get(f"diff_letzter_treffer_{side}")),
+                'diff_letzte_verworfene': safe_copy(d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}")),
+                'letzte_abrisskante': safe_copy(d_dm.debug_images.get(f"letzte_abrisskante_{side}")),
+                'log_text': self.log_text.get("1.0", tk.END)
+            }
+
+        # ---------------------------------------------------------
+        # Fallback für reine Cache-Ladevorgänge (0-ms-Render)
+        # ---------------------------------------------------------
+        if start_idx > target_idx:
+            img = self.get_img(side_origs[target_idx])
+            live_img = img.copy()
+            clean_live_img = img.copy()
+            
+            if target_idx in self.frame_cache[side]:
+                cached_log = self.frame_cache[side][target_idx].get('log_text', '')
+                if cached_log:
+                    self.log_text.insert(tk.END, cached_log.rstrip('\n') + '\n')
+            
+            if (target_idx - 1) >= 0 and (target_idx - 1) in self.frame_cache[side]:
+                prev_mask = self.frame_cache[side][target_idx - 1]['mask']
+                history_mask = safe_copy(prev_mask)
+                if history_mask is None:
+                    history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+            else:
+                temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
+                if temp_state.cumulative_mask is not None:
+                    history_mask = temp_state.cumulative_mask.copy()
+                else:
+                    history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+                    
+            self.log_text.insert(tk.END, "\n" + "▼"*70 + "\n", "mono")
+            self.log_text.insert(tk.END, f"███  BILD #{target_idx+1} DIREKT AUS DEM CACHE GELADEN (0 ms)  ███\n", "mono")
+            self.log_text.insert(tk.END, "▼"*70 + "\n", "mono")
+            self.log_text.see(tk.END)
 
         # 4. VISUALISIERUNG DER ENGINE-ERGEBNISSE
         # Hole das Diff-Bild direkt aus dem Dummy-DateiManager der Engine!
@@ -1515,7 +1590,11 @@ class LaborApp:
             
         diff_img = d_dm.debug_images.get(f"diff_letzter_treffer_{side}")
         if diff_img is None:
-            diff_img = d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}", np.zeros_like(live_img))
+            diff_img = d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}")
+            
+        # ---> DER FIX: Greift auch, wenn das Dictionary explizit 'None' gespeichert hat!
+        if diff_img is None:
+            diff_img = np.zeros_like(live_img)
         
         if len(diff_img.shape) == 2:
             diff_img = cv2.cvtColor(diff_img, cv2.COLOR_GRAY2BGR)
