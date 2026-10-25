@@ -376,6 +376,7 @@ class LaborUIBuilder:
         self.app.calib_linsen_verzerrung_r4_var = tk.DoubleVar(value=0.0)
         self.app.calib_lens_offset_x_var = tk.IntVar(value=0)
         self.app.calib_lens_offset_y_var = tk.IntVar(value=0)
+        self.app.calib_linsen_verzerrung_limit_var = tk.DoubleVar(value=0.0) # <--- NEU
         
         self.make_slider(self.app.calib_outer_frame, "Pixel pro mm (X):", self.app.calib_x_var, 1.0, 15.0, 0.001, key=None, tooltip_key="px_pro_mm")
         self.make_slider(self.app.calib_outer_frame, "Pixel pro mm (Y):", self.app.calib_y_var, 1.0, 15.0, 0.001, key=None, tooltip_key="px_pro_mm")
@@ -383,6 +384,7 @@ class LaborUIBuilder:
         self.make_slider(self.app.calib_outer_frame, "Linsen-r4 (Rand):", self.app.calib_linsen_verzerrung_r4_var, -0.0005, 0.0005, 0.00000001, key=None, tooltip_key="linsen_verzerrung_r4")
         self.make_slider(self.app.calib_outer_frame, "Linsen-Offset X:", self.app.calib_lens_offset_x_var, -300, 300, 1, key=None, tooltip_key="lens_offset_x")
         self.make_slider(self.app.calib_outer_frame, "Linsen-Offset Y:", self.app.calib_lens_offset_y_var, -300, 300, 1, key=None, tooltip_key="lens_offset_y")
+        self.make_slider(self.app.calib_outer_frame, "Optisches Limit (mm):", self.app.calib_linsen_verzerrung_limit_var, 0.0, 100.0, 0.1, key=None, tooltip_key="linsen_verzerrung_limit") # <--- NEU
         
         def sync_calib_config(*args):
             if getattr(self.app, 'package_data', None) and self.app.package_data.get('config'):
@@ -398,6 +400,7 @@ class LaborUIBuilder:
                 parser.set('Kameras', f'linsen_verzerrung_{seite_str}_r4', str(self.app.calib_linsen_verzerrung_r4_var.get()))
                 parser.set('Kameras', f'lens_offset_x_{seite_str}', str(self.app.calib_lens_offset_x_var.get()))
                 parser.set('Kameras', f'lens_offset_y_{seite_str}', str(self.app.calib_lens_offset_y_var.get()))
+                parser.set('Kameras', f'linsen_verzerrung_limit_{seite_str}', str(self.app.calib_linsen_verzerrung_limit_var.get())) # <--- NEU
                 
                 self.app.on_param_change()
                 
@@ -405,9 +408,9 @@ class LaborUIBuilder:
         self.app.calib_y_var.trace_add("write", sync_calib_config)
         self.app.calib_linsen_verzerrung_var.trace_add("write", sync_calib_config) 
         self.app.calib_linsen_verzerrung_r4_var.trace_add("write", sync_calib_config)
-        # ---> NEU: Traces für die Offsets binden <---
         self.app.calib_lens_offset_x_var.trace_add("write", sync_calib_config)
         self.app.calib_lens_offset_y_var.trace_add("write", sync_calib_config)
+        self.app.calib_linsen_verzerrung_limit_var.trace_add("write", sync_calib_config) # <--- NEU
         
         tk.Label(param_frame, text="--- Engine Parameter ---", fg="#3498db").pack(pady=(5, 5))
         

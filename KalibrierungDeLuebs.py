@@ -22,6 +22,11 @@ class Kalibrator:
             self.cancel_calibration()
             return
             
+        # ---> LUXUS-FEATURE: Automatisch auf Rohbild (5) und Ringe EIN schalten <---
+        self.app.view_mode_var.set(5)
+        self.app.show_target_rings_var.set(True)
+        self.app.renderer.update_image_display()
+        
         # =========================================================================
         # ---> Der erweiterte JSON-Import für Klick-Koordinaten & Parameter! <---
         # =========================================================================
@@ -84,6 +89,9 @@ class Kalibrator:
                             # r4-Term auslesen (alte JSONs haben diesen Key noch nicht -> Fallback auf 0.0)
                             korr_r4_val = params.get('korr_r4', 0.0)
                             self.app.calib_linsen_verzerrung_r4_var.set(korr_r4_val)
+                            
+                            limit_val = params.get('limit', 0.0) # <--- NEU
+                            self.app.calib_linsen_verzerrung_limit_var.set(limit_val) # <--- NEU
                             
                             if 'off_x' in params: self.app.calib_lens_offset_x_var.set(params['off_x'])
                             if 'off_y' in params: self.app.calib_lens_offset_y_var.set(params['off_y'])
@@ -310,6 +318,7 @@ class Kalibrator:
         var_px_y = tk.DoubleVar(value=self.app.calib_y_var.get())
         var_korr = tk.DoubleVar(value=self.app.calib_linsen_verzerrung_var.get())
         var_r4 = tk.DoubleVar(value=self.app.calib_linsen_verzerrung_r4_var.get())
+        var_limit = tk.DoubleVar(value=self.app.calib_linsen_verzerrung_limit_var.get()) # <--- NEU
         var_off_x = tk.IntVar(value=self.app.calib_lens_offset_x_var.get())
         var_off_y = tk.IntVar(value=self.app.calib_lens_offset_y_var.get())
 
@@ -318,8 +327,9 @@ class Kalibrator:
         lock_cy = tk.BooleanVar(value=False)
         lock_px_x = tk.BooleanVar(value=False)
         lock_px_y = tk.BooleanVar(value=False)
-        lock_korr = tk.BooleanVar(value=False)
+        lock_korr = tk.BooleanVar(value=False)  # <--- DIESE ZEILE HAT GEFEHLT!
         lock_r4 = tk.BooleanVar(value=False)
+        lock_limit = tk.BooleanVar(value=False) # <--- NEU
         lock_off_x = tk.BooleanVar(value=False)
         lock_off_y = tk.BooleanVar(value=False)
         
@@ -359,6 +369,7 @@ class Kalibrator:
         build_param_row(control_frame, "Pixel pro mm Y:", var_px_y, 0.001, 0.01, lock_px_y)
         build_param_row(control_frame, "Linsen-Verzerr. (r2):", var_korr, 0.00001, 0.0001, lock_korr)
         build_param_row(control_frame, "Linsen-Verzerr. (r4):", var_r4, 0.0000001, 0.000001, lock_r4)
+        build_param_row(control_frame, "Optisches Limit (mm):", var_limit, 0.5, 1.0, lock_limit) # <--- NEU
         build_param_row(control_frame, "Linsen-Offset X:", var_off_x, 1, 5, lock_off_x)
         build_param_row(control_frame, "Linsen-Offset Y:", var_off_y, 1, 5, lock_off_y)
 
@@ -381,6 +392,13 @@ class Kalibrator:
             korr_r4 = var_r4.get()
             off_x = var_off_x.get()
             off_y = var_off_y.get()
+            limit_val = var_limit.get() # <--- NEU
+            
+            # 1. Immer durch die Single Source of Truth schleusen:
+            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe, config_limit_mm=var_limit.get())
+            # 2. Falls das UI-Feld vorher noch auf 0.0 stand, direkt mit dem ermittelten Anker-Wert füllen:
+            if var_limit.get() <= 0.0:
+                var_limit.set(r_limit_mm)
             
             lens_cx, lens_cy = Helfer.get_optical_center(cam_w, cam_h, cut_l, cut_t, off_x, off_y)
 
@@ -392,7 +410,7 @@ class Kalibrator:
 
             # Das dynamische optische Korsett (5 mm hinter dem Außenring)
             #r_limit_mm = r_a + 5.0
-            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe)
+            #r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe)
 
             # Hilfsfunktion für die Log-Ausgabe
             def lock_str(lock_var):
@@ -427,6 +445,12 @@ class Kalibrator:
 
                 err_mm = dist_red_mm - r_soll
                 err_px = err_mm * ((px_mm_x + px_mm_y) / 2.0)
+
+                # ---> DIAGNOSE-PRINT: Wahrer Linsen-Abstand des Klicks vs. r_limit <---
+                r_lens_klick = math.hypot(true_klick_x, true_klick_y)
+                print(f"📐 [LOG-CHECK #{index:02d}] r_soll={r_soll:.2f}mm | dist_red={dist_red_mm:.2f}mm | "
+                      f"err={err_mm:+.2f}mm ({err_px:+.1f}px) | Abstand_zur_Linse={r_lens_klick:.2f}mm (Limit={r_limit_mm}mm)")
+
                 return err_px, err_mm
 
             def add_validation(section_name, mm_real, r_soll_val, labels, points, start_index):
@@ -474,6 +498,8 @@ class Kalibrator:
             final_values['px_y'] = px_mm_y
             final_values['korr'] = avg_korrektur
             final_values['r4'] = korr_r4
+            #final_values['limit'] = limit_val     # <--- DIESE ZEILE HINZUFÜGEN!
+            final_values['limit'] = r_limit_mm  # <--- HIER MUSS r_limit_mm STEHEN (nicht limit_val)!
             final_values['off_x'] = off_x
             final_values['off_y'] = off_y
             final_values['log'] = log_lines
@@ -490,8 +516,11 @@ class Kalibrator:
             r_a = aussen_mm / 2.0
             r_6 = sechs_mm / 2.0 if sechs_l is not None else 0.0
 
-            #r_limit_mm = r_a + 5.0  # Das Korsett darf erst hinter dem letzten Klick wirken!
-            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe)
+            # 1. Immer durch die Single Source of Truth schleusen:
+            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe, config_limit_mm=var_limit.get())
+            # 2. Falls das UI-Feld vorher noch auf 0.0 stand, direkt mit dem ermittelten Anker-Wert füllen:
+            if var_limit.get() <= 0.0:
+                var_limit.set(r_limit_mm)
 
             locks = [
                 lock_cx.get(), lock_cy.get(),
@@ -624,12 +653,17 @@ class Kalibrator:
         def apply_preview():
             self.app._is_loading = True
             try:
+                # ---> LUXUS-FEATURE: Ansicht erzwingen, damit man das Ergebnis sofort sieht <---
+                #self.app.view_mode_var.set(5)
+                #self.app.show_target_rings_var.set(True)
+                
                 self.app.calib_x_var.set(final_values['px_x'])
                 self.app.calib_y_var.set(final_values['px_y'])
                 self.app.calib_linsen_verzerrung_var.set(final_values['korr']) 
                 self.app.calib_linsen_verzerrung_r4_var.set(final_values['r4']) 
                 self.app.calib_lens_offset_x_var.set(final_values['off_x']) 
                 self.app.calib_lens_offset_y_var.set(final_values['off_y']) 
+                self.app.calib_linsen_verzerrung_limit_var.set(final_values['limit'])
                 
                 side = self.app.active_camera_var.get()
                 seite_str = "links" if side == 'left' else "rechts"
@@ -641,6 +675,7 @@ class Kalibrator:
                     d_config.set('Kameras', f'linsen_verzerrung_{seite_str}_r4', str(final_values['r4']))
                     d_config.set('Kameras', f'lens_offset_x_{seite_str}', str(final_values['off_x']))
                     d_config.set('Kameras', f'lens_offset_y_{seite_str}', str(final_values['off_y']))
+                    d_config.set('Kameras', f'linsen_verzerrung_limit_{seite_str}', str(final_values['limit']))
             finally:
                 self.app._is_loading = False
                 
@@ -710,6 +745,7 @@ class Kalibrator:
                             "px_y": var_px_y.get(),
                             "korr": var_korr.get(),
                             "korr_r4": var_r4.get(),
+                            "limit": var_limit.get(),
                             "off_x": var_off_x.get(),
                             "off_y": var_off_y.get(),
                             "cx": var_cx.get(),               

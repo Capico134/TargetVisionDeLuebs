@@ -216,7 +216,8 @@ class LaborRenderer:
                 kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
 
             # ---> SAUBERES OPTISCHES KORSETT: Primär der 3er-Ring, mit sicheren Fallbacks <---
-            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe)
+            config_limit = d_config.getfloat('Kameras', f'linsen_verzerrung_limit_{seite_str}', fallback=0.0)
+            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe, config_limit_mm=config_limit)
             
             #SOOOOOOOOOOOO NEEEEEEE SCHEIßE
             #r_limit_mm = 25.0
@@ -403,12 +404,14 @@ class LaborRenderer:
         # ---> IDENTISCHES KORSETT AUCH FÜR DIE LIVE-SCHICHT <---
         r_limit_mm = 25.0
         if aktive_scheibe in targets:
-            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe)
+            config_limit = d_config.getfloat('Kameras', f'linsen_verzerrung_limit_{seite_str}', fallback=0.0)
+            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe, config_limit_mm=config_limit)
         else:
             kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
             
         # ---> HIER EINFÜGEN: r_limit_mm auch für das schnelle Blinken definieren! <---
-        r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe)
+        config_limit = d_config.getfloat('Kameras', f'linsen_verzerrung_limit_{seite_str}', fallback=0.0)
+        r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe, config_limit_mm=config_limit)
             
         zoom_p = (1.0, self.app.current_img_w / self.app.current_scale, 0.0)
         current_frame_num = self.app.current_index
@@ -802,7 +805,8 @@ class LaborRenderer:
             else:
                 kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
                 
-            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe)
+            config_limit = d_config.getfloat('Kameras', f'linsen_verzerrung_limit_{seite_str}', fallback=0.0)
+            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe, config_limit_mm=config_limit)
 
         else:
             px_x, px_y, korrektur, korr_r4 = 5.0, 5.0, 0.0, 0.0

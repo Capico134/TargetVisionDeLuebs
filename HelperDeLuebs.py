@@ -6,6 +6,24 @@ class Helfer:
     # =====================================================================
     # ---> SINGLE SOURCE OF TRUTH: OPTIK & LINSEN-MATHEMATIK <---
     # =====================================================================
+
+    @staticmethod
+    def get_r_limit(targets=None, aktive_scheibe=None, config_limit_mm=0.0, fallback=25.0):
+        """Zentrale Definition des optischen Korsetts. 
+           Nutzt primär den hardware-verankerten Config-Wert. 
+           (Fallback auf 3er-Ring, falls noch nicht in Config gespeichert)."""
+        if config_limit_mm > 0.0:
+            return config_limit_mm
+            
+        if targets and aktive_scheibe and aktive_scheibe in targets:
+            ringe_dict = targets[aktive_scheibe].get('ringe_durchmesser_mm', {})
+            if '3' in ringe_dict:
+                return float(ringe_dict['3']) / 2.0
+            elif '1' in ringe_dict:
+                return float(ringe_dict['1']) / 2.0
+            elif ringe_dict:
+                return max([float(v) for v in ringe_dict.values()]) / 2.0
+        return fallback
     
     @staticmethod
     def get_optical_center(cam_w, cam_h, cut_l, cut_t, off_x, off_y):
@@ -35,6 +53,21 @@ class Helfer:
             
             val_lim = r_limit * (1.0 + korrektur * r2_lim + korr_r4 * r4_lim)
             slope_lim = 1.0 + 3.0 * korrektur * r2_lim + 5.0 * korr_r4 * r4_lim
+
+            if slope_lim <= 0:
+                print(
+                    "\n"
+                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+                    "!!! WARNUNG: distort_radius NICHT-MONOTONE LINSENFUNKTION ERKANNT !!!\n"
+                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+                    f"slope_lim = {slope_lim:.12f}\n"
+                    f"r_limit   = {r_limit:.6f}\n"
+                    f"korrektur = {korrektur:.12e}\n"
+                    f"korr_r4   = {korr_r4:.12e}\n"
+                    "Die Verzerrungsfunktion ist am r_limit nicht mehr streng steigend.\n"
+                    "Distort/Undistort sind damit eventuell nicht mehr eindeutig.\n"
+                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+                )
             
             return sign * (val_lim + slope_lim * (r_abs - r_limit))
 
@@ -52,6 +85,41 @@ class Helfer:
             val_lim = r_limit * (1.0 + korrektur * r2_lim + korr_r4 * r4_lim)
             slope_lim = 1.0 + 3.0 * korrektur * r2_lim + 5.0 * korr_r4 * r4_lim
             
+            if slope_lim <= 0:
+                print(
+                    "\n"
+                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+                    "!!! WARNUNG: undistort_radius NICHT-MONOTONE LINSENFUNKTION ERKANNT !!!\n"
+                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+                    f"slope_lim = {slope_lim:.12f}\n"
+                    f"r_limit   = {r_limit:.6f}\n"
+                    f"korrektur = {korrektur:.12e}\n"
+                    f"korr_r4   = {korr_r4:.12e}\n"
+                    "Die Verzerrungsfunktion ist am r_limit nicht mehr streng steigend.\n"
+                    "Distort/Undistort sind damit eventuell nicht mehr eindeutig.\n"
+                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+                )            
+
+            #############PRINT############            
+            r_test = r_limit * 0.999
+            r2 = r_test ** 2
+            r4 = r2 ** 2
+            max_poly_near_limit = r_test * (
+                1.0 + korrektur * r2 + korr_r4 * r4
+            )
+            if max_poly_near_limit > val_lim:
+                print(
+                    "\n"
+                    "########################################################\n"
+                    "### KENNLINIE ÜBERSCHREITET val_lim BEREITS INNEN !!! ###\n"
+                    "########################################################\n"
+                    f"max_poly_near_limit = {max_poly_near_limit:.6f}\n"
+                    f"val_lim             = {val_lim:.6f}\n"
+                    "Die Annahme des Umschaltpunktes könnte verletzt sein.\n"
+                    "########################################################\n"
+                )            
+            #############PRINT############            
+            
             if d_abs > val_lim and slope_lim != 0:
                 return sign * (r_limit + (d_abs - val_lim) / slope_lim)
 
@@ -65,6 +133,35 @@ class Helfer:
             f = d_true * factor - d_abs
             if df == 0: break
             d_true = d_true - (f / df)
+        
+        #############PRINT############                    
+        test_obs = Helfer.distort_radius(
+            d_true,
+            korrektur,
+            korr_r4,
+            r_limit
+        )
+        err = abs(test_obs - d_abs)
+        if err > 0.001:      # Schwellwert anpassen
+            print(
+                "\n"
+                "********************************************************\n"
+                "*** DISTORT/UNDISTORT NICHT MEHR INVERSE !!! ***********\n"
+                "********************************************************\n"
+                f"d_obs      = {d_abs:.6f}\n"
+                f"d_true     = {d_true:.6f}\n"
+                f"re_distort = {test_obs:.6f}\n"
+                f"error      = {err:.6f}\n"
+                f"r_limit    = {r_limit}\n"
+                f"korrektur  = {korrektur}\n"
+                f"korr_r4    = {korr_r4}\n"
+                "********************************************************\n"
+            )        
+        #############PRINT############                    
+        
+        
+        
+        
         return sign * d_true
 
     @staticmethod
@@ -88,19 +185,6 @@ class Helfer:
         return dx_mm_obs * scale, dy_mm_obs * scale
 
     @staticmethod
-    def get_r_limit(targets, aktive_scheibe, fallback=25.0):
-        """Zentrale Definition des optischen Korsetts (Primär 3er-Ring)."""
-        if aktive_scheibe in targets:
-            ringe_dict = targets[aktive_scheibe].get('ringe_durchmesser_mm', {})
-            if '3' in ringe_dict:
-                return float(ringe_dict['3']) / 2.0
-            elif '1' in ringe_dict:
-                return float(ringe_dict['1']) / 2.0
-            elif ringe_dict:
-                return max([float(v) for v in ringe_dict.values()]) / 2.0
-        return fallback
-
-    @staticmethod
     def draw_smart_ellipse(img, center_x, center_y, radius_mm, color, 
                            px_x, px_y, korrektur, korr_r4=0.0,
                            lens_cx=None, lens_cy=None,
@@ -116,51 +200,157 @@ class Helfer:
         thickness_komp = (thickness / 2.0) if is_hit else 0.0
         rx, ry, angle_deg = 0, 0, 0
         
-        # 1. ZIELSCHEIBEN-RINGE (Symmetrisch, aber leicht verschoben)
+#        # 1. ZIELSCHEIBEN-RINGE (Symmetrisch, aber leicht verschoben)
+#        if is_ring and lens_cx is not None and lens_cy is not None:
+#            dx_px = center_x - lens_cx
+#            dy_px = center_y - lens_cy
+#            
+#            dx_mm_obs = dx_px / px_x
+#            dy_mm_obs = dy_px / px_y
+#            d_obs = math.hypot(dx_mm_obs, dy_mm_obs)
+#            
+#            d_true = Helfer.undistort_radius(d_obs, korrektur, korr_r4, r_limit=r_limit)
+#                    
+#            if d_true > 0.01 and (abs(korrektur) > 0.000001 or abs(korr_r4) > 0.000001):
+#                d_out_true = d_true + radius_mm
+#                d_in_true = d_true - radius_mm
+#               
+#                obs_out = Helfer.distort_radius(d_out_true, korrektur, korr_r4, r_limit=r_limit)
+#                obs_in = Helfer.distort_radius(d_in_true, korrektur, korr_r4, r_limit=r_limit)
+#                
+#                new_d_obs = (obs_out + obs_in) / 2.0
+#                shift_mm = (new_d_obs - d_obs)
+#                r_mm_draw = (obs_out - obs_in) / 2.0
+#
+#                if radius_mm > 22.0:
+#                    print(f"🔍 [RING-CHECK] r_soll={radius_mm:.2f}mm | r_limit={r_limit} | "
+#                          f"d_true={d_true:.2f}mm | d_in={d_in_true:.2f}mm -> obs_in={obs_in:.2f}mm | "
+#                          f"d_out={d_out_true:.2f}mm -> obs_out={obs_out:.2f}mm | "
+#                          f"r_draw={r_mm_draw:.2f}mm (Shift={shift_mm:.2f}mm)")
+#                
+#                shift_x_px = (dx_mm_obs / d_obs) * shift_mm * px_x
+#                shift_y_px = (dy_mm_obs / d_obs) * shift_mm * px_y
+#                
+#                #r_mm_draw = (obs_out - obs_in) / 2.0
+#
+#                ## ==========================================================
+#                ## DEBUG 1: Ring überschreitet die Grenze zwischen
+#                ## Polynom-Bereich und Tangenten-Fortsetzung
+#                ## ==========================================================
+#                #if (
+#                #    r_limit is not None
+#                #    and d_in_true < r_limit
+#                #    and d_out_true > r_limit
+#                #):
+#                #    print(
+#                #        "\n"
+#                #        "🚨🚨🚨 RING ÜBERQUERT r_limit 🚨🚨🚨\n"
+#                #        f"d_true     = {d_true:.3f}\n"
+#                #        f"radius_mm  = {radius_mm:.3f}\n"
+#                #        f"d_in_true  = {d_in_true:.3f}\n"
+#                #        f"d_out_true = {d_out_true:.3f}\n"
+#                #        f"r_limit    = {r_limit:.3f}\n"
+#                #        "Innenrand im Polynomteil\n"
+#                #        "Außenrand im Tangententeil\n"
+#                #        "🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨\n"
+#                #    )                
+#                #
+#                ## ==========================================================
+#                ## DEBUG 2: Mittelpunkt-Drift
+#                ## Prüft ob die Randkonstruktion den Ringmittelpunkt
+#                ## verschiebt gegenüber distort_radius(d_true)
+#                ## ==========================================================
+#                #obs_center = Helfer.distort_radius(
+#                #    d_true,
+#                #    korrektur,
+#                #    korr_r4,
+#                #    r_limit=r_limit
+#                #)
+#                #center_error = abs(new_d_obs - obs_center)
+#                #if center_error > 0.05:      # Schwellwert evtl. 0.02 .. 0.10
+#                #    print(
+#                #        "\n"
+#                #        "🔥🔥🔥 RINGMITTELPUNKT-DRIFT 🔥🔥🔥\n"
+#                #        f"d_true        = {d_true:.6f}\n"
+#                #        f"obs_center    = {obs_center:.6f}\n"
+#                #        f"new_d_obs     = {new_d_obs:.6f}\n"
+#                #        f"delta         = {center_error:.6f} mm\n"
+#                #        f"shift_mm      = {shift_mm:.6f}\n"
+#                #        f"obs_in        = {obs_in:.6f}\n"
+#                #        f"obs_out       = {obs_out:.6f}\n"
+#                #        f"draw_radius   = {r_mm_draw:.6f}\n"
+#                #        f"r_limit       = {r_limit:.6f}\n"
+#                #        "🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥\n"
+#                #    )
+#                
+#                
+#            else:
+#                shift_x_px = 0.0
+#                shift_y_px = 0.0
+#                r_mm_draw = Helfer.distort_radius(radius_mm, korrektur, korr_r4, r_limit=r_limit)
+#                
+#            shifted_cx = center_x + shift_x_px
+#            shifted_cy = center_y + shift_y_px
+#            
+#            draw_cx = int(round((shifted_cx * z + ox) * scale_x))
+#            draw_cy = int(round((shifted_cy * z + oy) * scale_y))
+#            
+#            angle_deg = 0
+#            rx_raw = (r_mm_draw * px_x) * z * scale_x
+#            ry_raw = (r_mm_draw * px_y) * z * scale_y
+#            
+#            # ---> DIAGNOSE-PRINT FÜR DEN BILDSCHIRM-DURCHMESSER <---
+#            #print(f"🔍 [DRAW-ELLIPSE] Ring-Radius(Soll): {radius_mm*2:.2f} mm | Nach Verzerrung(Draw): {r_mm_draw*2:.2f} mm | Pixel-Durchmesser(X): {rx_raw*2:.1f} px (r_limit={r_limit})")
+#
+#            rx = int(round(rx_raw - thickness_komp))
+#            ry = int(round(ry_raw - thickness_komp))
+#
+
+        # 1. ZIELSCHEIBEN-RINGE (Exakte 2D-Scheitelprojektion, 100% synchron mit Log & Roten Punkten)
         if is_ring and lens_cx is not None and lens_cy is not None:
-            dx_px = center_x - lens_cx
-            dy_px = center_y - lens_cy
-            
-            dx_mm_obs = dx_px / px_x
-            dy_mm_obs = dy_px / px_y
-            d_obs = math.hypot(dx_mm_obs, dy_mm_obs)
-            
-            d_true = Helfer.undistort_radius(d_obs, korrektur, korr_r4, r_limit=r_limit)
-                    
-            if d_true > 0.01 and (abs(korrektur) > 0.000001 or abs(korr_r4) > 0.000001):
-                d_out_true = d_true + radius_mm
-                d_in_true = d_true - radius_mm
+            if abs(korrektur) > 0.000001 or abs(korr_r4) > 0.000001:
+                # 1. Scheibenzentrum in wahre physikalische Millimeter (relativ zur Linse) entzerren
+                true_cx, true_cy = Helfer.undistort_point_mm(
+                    center_x, center_y, lens_cx, lens_cy, px_x, px_y, korrektur, korr_r4, r_limit=r_limit
+                )
                 
-                obs_out = Helfer.distort_radius(d_out_true, korrektur, korr_r4, r_limit=r_limit)
-                obs_in = Helfer.distort_radius(d_in_true, korrektur, korr_r4, r_limit=r_limit)
-                
-                new_d_obs = (obs_out + obs_in) / 2.0
-                shift_mm = (new_d_obs - d_obs)
-                
-                shift_x_px = (dx_mm_obs / d_obs) * shift_mm * px_x
-                shift_y_px = (dy_mm_obs / d_obs) * shift_mm * px_y
-                
-                r_mm_draw = (obs_out - obs_in) / 2.0
+                # Hilfsfunktion: Projiziert einen wahren Punkt (mm) exakt wie die roten Punkte auf den Sensor (px)
+                def project_to_sensor(tx_mm, ty_mm):
+                    r_true = math.hypot(tx_mm, ty_mm)
+                    if r_true > 0.0:
+                        r_obs = Helfer.distort_radius(r_true, korrektur, korr_r4, r_limit=r_limit)
+                        scale_fwd = r_obs / r_true
+                    else:
+                        scale_fwd = 1.0
+                    return lens_cx + tx_mm * scale_fwd * px_x, lens_cy + ty_mm * scale_fwd * px_y
+
+                # 2. Die 4 wahren Scheitelpunkte (Links, Rechts, Oben, Unten) auf den Sensor projizieren
+                x_left, _  = project_to_sensor(true_cx - radius_mm, true_cy)
+                x_right, _ = project_to_sensor(true_cx + radius_mm, true_cy)
+                _, y_top   = project_to_sensor(true_cx, true_cy - radius_mm)
+                _, y_bot   = project_to_sensor(true_cx, true_cy + radius_mm)
+
+                # 3. Exaktes Zentrum und Halbachsen (X/Y separat!) auf dem Sensor bestimmen
+                shifted_cx = (x_left + x_right) / 2.0
+                shifted_cy = (y_top + y_bot) / 2.0
+                r_px_x = abs(x_right - x_left) / 2.0
+                r_px_y = abs(y_bot - y_top) / 2.0
             else:
-                shift_x_px = 0.0
-                shift_y_px = 0.0
-                r_mm_draw = Helfer.distort_radius(radius_mm, korrektur, korr_r4, r_limit=r_limit)
+                shifted_cx = center_x
+                shifted_cy = center_y
+                r_px_x = radius_mm * px_x
+                r_px_y = radius_mm * px_y
                 
-            shifted_cx = center_x + shift_x_px
-            shifted_cy = center_y + shift_y_px
-            
             draw_cx = int(round((shifted_cx * z + ox) * scale_x))
             draw_cy = int(round((shifted_cy * z + oy) * scale_y))
             
             angle_deg = 0
-            rx_raw = (r_mm_draw * px_x) * z * scale_x
-            ry_raw = (r_mm_draw * px_y) * z * scale_y
-            
-            # ---> DIAGNOSE-PRINT FÜR DEN BILDSCHIRM-DURCHMESSER <---
-            #print(f"🔍 [DRAW-ELLIPSE] Ring-Radius(Soll): {radius_mm*2:.2f} mm | Nach Verzerrung(Draw): {r_mm_draw*2:.2f} mm | Pixel-Durchmesser(X): {rx_raw*2:.1f} px (r_limit={r_limit})")
+            rx_raw = r_px_x * z * scale_x
+            ry_raw = r_px_y * z * scale_y
 
             rx = int(round(rx_raw - thickness_komp))
             ry = int(round(ry_raw - thickness_komp))
+
 
         # 2. SCHUSSLÖCHER (Treffer - Ovale Form)
         elif lens_cx is not None and lens_cy is not None:

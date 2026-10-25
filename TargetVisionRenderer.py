@@ -381,7 +381,9 @@ class TargetVisionRenderer:
                 kaliber_mm = self.tracker.config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
 
             # ---> NEU: Dynamisches Korsett (r_limit_mm) <---
-            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe)
+            seite_str = "links" if side == 'left' else "rechts"
+            config_limit = self.tracker.config.getfloat('Kameras', f'linsen_verzerrung_limit_{seite_str}', fallback=0.0)
+            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe, config_limit_mm=config_limit)
                 
             # ---> Daten blitzschnell aus dem RAM holen (NUR 1x PRO SEITE!) <---
             c_set = self.cam_settings[side]

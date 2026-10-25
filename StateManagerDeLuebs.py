@@ -199,7 +199,9 @@ class StateManager:
             targets = self.dm.load_targets()
             
             # ---> NEU: Dynamisches Limit für die Entzerrung berechnen, BEVOR der Schuss gewertet wird <---
-            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe_id)
+            # Lade den festen Config-Wert (Fallback 0.0)
+            config_limit = self.config.getfloat('Kameras', f'linsen_verzerrung_limit_{seite_str}', fallback=0.0)
+            r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe_id, config_limit_mm=config_limit)
             
             # ---> FIX: r_limit_mm zwingend an den Helper übergeben! <---
             true_shot_x, true_shot_y = Helfer.undistort_point_mm(cx, cy, cx_linse, cy_linse, px_x, px_y, korrektur, korr_r4, r_limit_mm)
