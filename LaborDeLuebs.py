@@ -154,6 +154,18 @@ class LaborApp:
         
         self.ui_builder.setup_ui()
         
+        # =========================================================================
+        # ---> FIX: Navigation auch auf dem grauen Hintergrund erlauben! <---
+        # =========================================================================
+        if hasattr(self, 'img_container'):
+            # 1. Rechtsklick (Auto-Fit) auf dem nackten Hintergrund
+            self.img_container.bind("<Button-3>", self.reset_view)
+            
+            # 2. Panning-Rettungsanker: Erlaubt das "Zurückziehen" des Bildes ins Sichtfeld!
+            self.img_container.bind("<ButtonPress-1>", self.on_drag_start)
+            self.img_container.bind("<B1-Motion>", self.on_drag_motion)
+            self.img_container.bind("<ButtonRelease-1>", self.on_drag_stop)
+        
         # ---> NEU: Initialisierung für das Blink-Overlay <---
         self.blink_state = True
         self._toggle_blink()
@@ -1305,16 +1317,28 @@ class LaborApp:
             mx = self._scroll_mouse_x
             my = self._scroll_mouse_y
             
-            # Verschiebung berechnen
-            self.pan_x -= int(mx * scale_change - mx)
-            self.pan_y -= int(my * scale_change - my)
+            # =====================================================================
+            # ---> FIX: DIE KORREKTE KAMERA-ZOOM-MATHEMATIK <---
+            # =====================================================================
+            # 1. Wo liegt die Maus absolut auf dem riesigen virtuellen Bild?
+            abs_mx = mx - self.pan_x
+            abs_my = my - self.pan_y
+            
+            # 2. Wo liegt dieser Punkt NACH der Skalierung?
+            new_abs_mx = abs_mx * scale_change
+            new_abs_my = abs_my * scale_change
+            
+            # 3. Den Kamera-Nullpunkt (pan) so verschieben, dass der Punkt 
+            #    wieder exakt unter der fixen Maus (mx/my) auf dem Monitor landet!
+            self.pan_x = int(mx - new_abs_mx)
+            self.pan_y = int(my - new_abs_my)
+            # =====================================================================
             
         # =========================================================================
         # ---> DER FIX: Absolut atomares Tkinter-Update <---
         # =========================================================================
         # 1. Bild STUMM rendern lassen
         self.renderer.update_image_display(push_to_gui=True)
-        
         
         # Koordinaten-Anzeige manuell triggern, damit sie nach dem Zoom sofort stimmt
         self.on_mouse_move(event)
