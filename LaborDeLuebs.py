@@ -219,6 +219,12 @@ class LaborApp:
         is_panning = getattr(self, 'drag_start_x', None) is not None
         is_tweaking = getattr(self, '_param_timer', None) is not None
         return is_zooming or is_panning or is_tweaking
+
+    #def toggle_orig_hits(self):
+    #    """Schaltet die Original-Treffer ohne Engine-Neuberechnung um."""
+    #    if hasattr(self, 'renderer'):
+    #        self.renderer.update_image_display(full_rebuild=True)
+
         
     def validate_float_chars(self, P):
         """Erlaubt nur Ziffern, Punkt, Minus, Plus und E (für wissenschaftliche Notation)"""
@@ -1531,8 +1537,9 @@ class LaborApp:
                 
         self.last_orig_shots_to_draw = [] 
         
-        # --- LAYER 2: Original-Treffer aus match.json (Gelb) ---
-        if getattr(self, 'show_orig_hits_var', None) and self.show_orig_hits_var.get() and getattr(self, 'original_match_data', None):
+
+        # --- LAYER 2: Original-Treffer aus match.json immer vorbereiten ---
+        if getattr(self, 'original_match_data', None):
             side_char = 'l' if side == 'left' else 'r'
             orig_shots_side = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
             curr_shots_side = [s for s in d_sm.shots if s.get('side') == side]
@@ -1549,6 +1556,8 @@ class LaborApp:
                         shots_to_draw.append(orig_shots_side[o_idx])
             
             self.last_orig_shots_to_draw = shots_to_draw 
+        else:
+            self.last_orig_shots_to_draw = []
             
             for s in shots_to_draw:
                 hx = int(round(s['x']))

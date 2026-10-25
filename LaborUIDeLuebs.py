@@ -483,9 +483,13 @@ class LaborUIBuilder:
                        variable=self.app.export_images_var, fg="#00aaff").pack(anchor=tk.W, pady=(15, 0))
 
         self.app.show_target_rings_var = tk.BooleanVar(value=False)
+        #tk.Checkbutton(param_frame, text="🎯 Zielscheibe (Ringe) einblenden", 
+        #               variable=self.app.show_target_rings_var, fg="#27ae60", 
+        #               command=lambda: self.app.on_param_change(force=True)).pack(anchor=tk.W, pady=(5, 0))
+        #
         tk.Checkbutton(param_frame, text="🎯 Zielscheibe (Ringe) einblenden", 
                        variable=self.app.show_target_rings_var, fg="#27ae60", 
-                       command=lambda: self.app.on_param_change(force=True)).pack(anchor=tk.W, pady=(5, 0))
+                       command=lambda: self.app.renderer.update_image_display(full_rebuild=True)).pack(anchor=tk.W, pady=(5, 0))
 
         def _on_mousewheel(event):
             if event.num == 4 or getattr(event, 'delta', 0) > 0:
@@ -515,10 +519,18 @@ class LaborUIBuilder:
         # ---> NEU: Backspace global binden für saubere Struktur <---
         self.app.root.bind('<BackSpace>', lambda e: self.app.undo_calibration_click())
     
+        #self.app.show_orig_hits_var = tk.BooleanVar(value=False)
+        #tk.Checkbutton(param_frame, text="🟡 Original-Treffer (match.json) einblenden", 
+        #               variable=self.app.show_orig_hits_var, fg="#f1c40f", 
+        #               command=lambda: self.app.on_param_change(force=True)).pack(anchor=tk.W, pady=(5, 0))
         self.app.show_orig_hits_var = tk.BooleanVar(value=False)
         tk.Checkbutton(param_frame, text="🟡 Original-Treffer (match.json) einblenden", 
                        variable=self.app.show_orig_hits_var, fg="#f1c40f", 
-                       command=lambda: self.app.on_param_change(force=True)).pack(anchor=tk.W, pady=(5, 0))
+                       command= lambda: self.app.renderer.update_image_display(full_rebuild=True)).pack(anchor=tk.W, pady=(5, 0))
+        # Für die Original-Treffer:
+        #tk.Checkbutton(param_frame, text="🟡 Original-Treffer (match.json) einblenden", 
+        #               variable=self.app.show_orig_hits_var, fg="#f1c40f", 
+        #               command=self.app.toggle_orig_hits).pack(anchor=tk.W, pady=(5, 0))
 
         def release_focus(event):
             try:
