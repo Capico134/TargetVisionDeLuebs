@@ -195,10 +195,15 @@ class Kalibrator:
         img_h, img_w = self.app.base_combined_img.shape[:2]
         if x < 0 or y < 0 or x >= img_w or y >= img_h: return
 
-        is_left = (x < self.app.current_img_w)
-        raw_x = x if is_left else (x - self.app.current_img_w)
+        # ---> FIX: Viewport-Offset (vp_x/vp_y) auf die Event-Koordinaten addieren! <---
+        abs_x = x + getattr(self.app, 'last_vp_x', 0)
+        abs_y = y + getattr(self.app, 'last_vp_y', 0)
+
+        is_left = (abs_x < self.app.current_img_w)
+        raw_x = abs_x if is_left else (abs_x - self.app.current_img_w)
+        
         real_x = round(raw_x / self.app.current_scale, 4)
-        real_y = round(y / self.app.current_scale, 4)
+        real_y = round(abs_y / self.app.current_scale, 4)
         
         self.app.calib_points.append((real_x, real_y))
         
