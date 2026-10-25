@@ -268,7 +268,8 @@ class LaborUIBuilder:
         self.app.lbl_image.bind('<Button-3>', self.app.reset_view)
         self.app.lbl_image.bind('<Button-2>', self.app.center_on_last_shot)
         
-        self.app.log_text = tk.Text(self.app.paned_window, height=12, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
+        self.app.log_container = tk.Frame(self.app.paned_window)
+        self.app.log_text = tk.Text(self.app.log_container, height=12, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
         # =====================================================================
         # ---> DER FIX: Monospace-Schriftart erzwingen (für saubere Tabellen) <---
         # =====================================================================
@@ -287,8 +288,95 @@ class LaborUIBuilder:
             return "break" # Blockiert das sture Standard-Verhalten von Tkinter
         self.app.log_text.bind("<Control-a>", select_all_log)
         self.app.log_text.bind("<Control-A>", select_all_log)
+        
+        # =====================================================================
+        # ---> ELA FIX: Log-Scrollen per Mausrad/Bild-Tasten <---
+        # =====================================================================
+        def scroll_log_mouse(event):
+            # Prüfen ob der Fokus im Textfeld ist, ansonsten ignorieren
+            if self.app.root.focus_get() != self.app.log_text:
+                return
+            if event.num == 4 or getattr(event, 'delta', 0) > 0:
+                self.app.log_text.yview_scroll(-1, "units")
+            elif event.num == 5 or getattr(event, 'delta', 0) < 0:
+                self.app.log_text.yview_scroll(1, "units")
+            return "break"
+            
+        def scroll_log_page(event, direction):
+            if self.app.root.focus_get() != self.app.log_text:
+                return
+            self.app.log_text.yview_scroll(direction, "pages")
+            return "break"
+            
+        def scroll_log_home_end(event, position):
+            if self.app.root.focus_get() != self.app.log_text:
+                return
+            # Tkinter Text widgets need a specific format, we can use the 'see' method
+            # but yview_moveto is more direct. 0.0 is top, 1.0 is bottom.
+            self.app.log_text.yview_moveto(position)
+            return "break"
+
+        # Mausrad (Windows/Mac)
+        self.app.log_text.bind("<MouseWheel>", scroll_log_mouse)
+        # Mausrad (Linux X11)
+        self.app.log_text.bind("<Button-4>", scroll_log_mouse)
+        self.app.log_text.bind("<Button-5>", scroll_log_mouse)
+        
+        # Bild-Auf/Bild-Ab
+        self.app.log_text.bind("<Prior>", lambda e: scroll_log_page(e, -1))
+        self.app.log_text.bind("<Next>", lambda e: scroll_log_page(e, 1))
+        
+        # Pos1/Ende
+        self.app.log_text.bind("<Home>", lambda e: scroll_log_home_end(e, 0.0))
+        self.app.log_text.bind("<End>", lambda e: scroll_log_home_end(e, 1.0))
+        
+        # =====================================================================
+        # ---> ELA FIX: Der dunkle ttk-Scrollbalken (Windows überlisten) <---
+        # =====================================================================
+        style = ttk.Style()
+        if "clam" in style.theme_names():
+            style.theme_use("clam")
+            
+        style.configure("Dark.Vertical.TScrollbar",
+            background="#444444",       # Dunkelgrauer Griff
+            troughcolor="#1e1e1e",      # Schiene (wie Textfeld)
+            bordercolor="#1e1e1e",      # Kein Rahmen
+            arrowcolor="white",         # Weiße Pfeile
+            width=11                    # Schmaler
+        )
+        
+        # ---> NEU: Dropdowns im Einstellungs-Fenster wieder hell machen! <---
+        style.configure("TCombobox",
+            fieldbackground="white",    # Innenfeld weiß
+            background="#e0e0e0",       # Dropdown-Button hellgrau
+            foreground="black",         # Schrift schwarz
+            arrowcolor="black"          # Pfeil schwarz
+        )
+        
+        # =====================================================================
+        # ---> DER FIX: Den hartnäckigen Readonly-Zustand überschreiben! <---
+        # =====================================================================
+        style.map("TCombobox",
+            fieldbackground=[("readonly", "white")],
+            selectbackground=[("readonly", "white"), ("focus", "#0078D7")],
+            selectforeground=[("readonly", "black"), ("focus", "white")]
+        )
+        
+        self.app.log_scrollbar = ttk.Scrollbar(
+            self.app.log_container,
+            orient="vertical",
+            command=self.app.log_text.yview,
+            style="Dark.Vertical.TScrollbar"
+        )
+        self.app.log_text.config(yscrollcommand=self.app.log_scrollbar.set)
+        
+        # Packen von Log und Scrollbar in den gemeinsamen log_container
+        self.app.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.app.log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Dem PanedWindow die Container hinzufügen
         self.app.paned_window.add(self.app.img_container, stretch="always")
-        self.app.paned_window.add(self.app.log_text, stretch="never")
+        self.app.paned_window.add(self.app.log_container, stretch="never")
         
         # RECHTS: Steuerpult
         control_frame = tk.Frame(main_frame, width=400)

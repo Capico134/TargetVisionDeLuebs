@@ -1490,8 +1490,14 @@ class LaborApp:
         # ---------------------------------------------------------
         # ---> ELA: LAZY TIMELINE CACHE <---
         # ---------------------------------------------------------
+        detail_export = d_config.getboolean('Erkennung', 'detail_export_aktiv', fallback=False)
+        
         best_cached_idx = -1
-        for i in range(target_idx, -1, -1):
+        # ---> ELA FIX: Wenn Detail-Export an ist, dürfen wir max. das BILD DAVOR aus dem Cache laden.
+        # So wird das Zielbild IMMER einmal frisch und MIT Details berechnet! <---
+        start_search_idx = target_idx - 1 if detail_export else target_idx
+        
+        for i in range(start_search_idx, -1, -1):
             if i in self.frame_cache[side]:
                 best_cached_idx = i
                 break
@@ -1528,10 +1534,6 @@ class LaborApp:
                 self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR BILD-AUFNAHME ({i+1})  ███\n", "mono")
                 self.log_text.insert(tk.END, "▼"*70 + "\n", "mono")
                 
-                #d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
-                #d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
-                #d_dm.debug_images.pop(f"letzte_abrisskante_{side}", None)
-                
                 live_img = img.copy()
                 clean_live_img = img.copy()
                 
@@ -1540,8 +1542,14 @@ class LaborApp:
                     history_mask = temp_state.cumulative_mask.copy()
                 else:
                     history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+                    
+                # ---> ZIEL-BILD: Details aktivieren (falls vom Nutzer gewünscht) <---
+                detector.detail_export_aktiv = detail_export
             else:
                 self.log_text.insert(tk.END, f"\n--- BILD #{i+1} ".ljust(61, "-") + "\n", "mono")
+                
+                # ---> FAST-FORWARD: Striktes Verbot für Monsterdaten! <---
+                detector.detail_export_aktiv = False
                     
             shots_before = len(d_sm.shots)
             detector.detect_new_shot(img, side)
@@ -1552,8 +1560,14 @@ class LaborApp:
                 
             # ---> DEN FRAME IN DEN CACHE LEGEN <---
             temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
+            
+            # ---> ELA RAM-DIÄT: Wir schneiden die Monsterdaten rigoros ab, BEVOR sie in den Cache gehen! <---
+            cache_shots = copy.deepcopy(d_sm.shots)
+            for s in cache_shots:
+                s.pop('score_export_details', None)
+                
             self.frame_cache[side][i] = {
-                'shots': copy.deepcopy(d_sm.shots),
+                'shots': cache_shots,
                 'mask': safe_copy(temp_state.cumulative_mask),
                 'diff_letzter_treffer': safe_copy(d_dm.debug_images.get(f"diff_letzter_treffer_{side}")),
                 'diff_letzte_verworfene': safe_copy(d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}")),
