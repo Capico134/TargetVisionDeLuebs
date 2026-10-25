@@ -697,18 +697,17 @@ class LaborApp:
             
             x, y = event.x, event.y
             img_h, img_w = self.base_combined_img.shape[:2]
-            
             # Sicherheits-Check: Befindet sich die Maus überhaupt innerhalb des Bildes?
             if x < 0 or y < 0 or x >= img_w or y >= img_h:
                 self.on_mouse_leave(event)
                 return
-                
+            abs_x = x + getattr(self, 'last_vp_x', 0)
+            abs_y = y + getattr(self, 'last_vp_y', 0)
             # 1. Ermitteln, in welcher Bildhälfte wir sind und die Basis-Koordinaten rechnen
-            is_left = (x < self.current_img_w)
-            raw_x = x if is_left else (x - self.current_img_w)
-            
+            is_left = (abs_x < self.current_img_w)
+            raw_x = abs_x if is_left else (abs_x - self.current_img_w)
             real_x = int(raw_x / self.current_scale)
-            real_y = int(y / self.current_scale)
+            real_y = int(abs_y / self.current_scale)
             
             # Schutzplanken gegen Out-of-Bounds
             if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
@@ -795,7 +794,7 @@ class LaborApp:
             self.renderer.draw_zoom_box(
                 self.zoom_box_start_x, self.zoom_box_start_y, 
                 event.x, event.y, 
-                getattr(self, 'pan_x', 0), getattr(self, 'pan_y', 0)
+                getattr(self, 'viewport_place_x', getattr(self, 'pan_x', 0)), getattr(self, 'viewport_place_y', getattr(self, 'pan_y', 0))
             )
         return "break"
 
@@ -865,7 +864,10 @@ class LaborApp:
         self.pan_x = self.start_pan_x + dx
         self.pan_y = self.start_pan_y + dy
         
-        self.lbl_image.place(x=self.pan_x, y=self.pan_y)
+        if getattr(self, 'zoom_factor', 1.0) > 4.0:
+            self.renderer.update_image_display(full_rebuild=False, push_to_gui=True)
+        else:
+            self.lbl_image.place(x=self.pan_x, y=self.pan_y)
 
     def on_drag_stop(self, event):
         """Normales Loslassen (Verschieben beenden oder Röntgen-Klick)"""
@@ -929,23 +931,17 @@ class LaborApp:
         center_x = (min_x + max_x) / 2.0
         center_y = (min_y + max_y) / 2.0
         
-        # Den Ausschnitt exakt auf die Mitte des Monitors mappen
-        self.pan_x = int((container_w / 2.0) - (center_x / old_scale) * new_scale)
-        self.pan_y = int((container_h / 2.0) - (center_y / old_scale) * new_scale)
+        abs_center_x = center_x + getattr(self, 'last_vp_x', 0)
+        abs_center_y = center_y + getattr(self, 'last_vp_y', 0)
+        
+        self.pan_x = int((container_w / 2.0) - (abs_center_x / old_scale) * new_scale)
+        self.pan_y = int((container_h / 2.0) - (abs_center_y / old_scale) * new_scale)
         
         # =========================================================================
         # ---> DER FIX: Absolut atomares Tkinter-Update <---
         # =========================================================================
         # 1. Bild STUMM rendern lassen (ohne es der GUI zu geben)
-        self.renderer.update_image_display(push_to_gui=False)
-        
-        # 2. Tkinter-Bild selbst erzeugen
-        img_pil = Image.fromarray(self.base_combined_img_rgb)
-        self.tk_image = ImageTk.PhotoImage(img_pil)
-        
-        # 3. Bild und Position in exakt demselben CPU-Tick an die GUI feuern!
-        self.lbl_image.config(image=self.tk_image)
-        self.lbl_image.place(x=self.pan_x, y=self.pan_y)
+        self.renderer.update_image_display(push_to_gui=True)
         
                 
         self.update_frame_title()
@@ -968,12 +964,13 @@ class LaborApp:
         x, y = event.x, event.y
         img_h, img_w = self.base_combined_img.shape[:2]
         if x < 0 or y < 0 or x >= img_w or y >= img_h: return
-
+        abs_x = x + getattr(self, 'last_vp_x', 0)
+        abs_y = y + getattr(self, 'last_vp_y', 0)
         # Koordinaten exakt wie beim Maus-Hover ausrechnen
-        is_left = (x < self.current_img_w)
-        raw_x = x if is_left else (x - self.current_img_w)
+        is_left = (abs_x < self.current_img_w)
+        raw_x = abs_x if is_left else (abs_x - self.current_img_w)
         real_x = int(raw_x / self.current_scale)
-        real_y = int(y / self.current_scale)
+        real_y = int(abs_y / self.current_scale)
 
         if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
             orig_h, orig_w = self.last_clean_live_img.shape[:2]
@@ -1022,10 +1019,12 @@ class LaborApp:
         """Sucht den Treffer unter der Maus und blendet die Frame-Info ein (oder springt dorthin)"""
         if getattr(self, 'base_combined_img', None) is None: return
             
-        is_left = (x < self.current_img_w)
-        raw_x = x if is_left else (x - self.current_img_w)
+        abs_x = x + getattr(self, 'last_vp_x', 0)
+        abs_y = y + getattr(self, 'last_vp_y', 0)
+        is_left = (abs_x < self.current_img_w)
+        raw_x = abs_x if is_left else (abs_x - self.current_img_w)
         real_x = int(raw_x / self.current_scale)
-        real_y = int(y / self.current_scale)
+        real_y = int(abs_y / self.current_scale)
 
         radius = getattr(self, 'current_radius_px', 15)
         best_shot = None
@@ -1188,7 +1187,8 @@ class LaborApp:
         container_h = self.img_container.winfo_height()
         
         # Auf welche der beiden Hälften (Links oder Rechts) wurde geklickt?
-        is_left = (event.x < getattr(self, 'current_img_w', 0))
+        abs_x = event.x + getattr(self, 'last_vp_x', 0)
+        is_left = (abs_x < getattr(self, 'current_img_w', 0))
         
         if is_left:
             # X-Koordinate im skalierten Bild
@@ -1209,8 +1209,10 @@ class LaborApp:
         self.pan_x = int(target_container_x - shot_img_x)
         self.pan_y = int(target_container_y - shot_img_y)
         
-        # Bild verschieben
-        self.lbl_image.place(x=self.pan_x, y=self.pan_y)
+        if getattr(self, 'zoom_factor', 1.0) > 4.0:
+            self.renderer.update_image_display(full_rebuild=False, push_to_gui=True)
+        else:
+            self.lbl_image.place(x=self.pan_x, y=self.pan_y)
         
         # Falls die Maus nach dem Klick liegen bleibt, triggern wir kurz ein Move-Event, 
         # damit auch das Fadenkreuz und die Koordinaten sofort aktualisiert werden
@@ -1311,15 +1313,7 @@ class LaborApp:
         # ---> DER FIX: Absolut atomares Tkinter-Update <---
         # =========================================================================
         # 1. Bild STUMM rendern lassen
-        self.renderer.update_image_display(push_to_gui=False)
-        
-        # 2. Tkinter-Bild selbst erzeugen
-        img_pil = Image.fromarray(self.base_combined_img_rgb)
-        self.tk_image = ImageTk.PhotoImage(img_pil)
-        
-        # 3. Bild und Position in exakt demselben CPU-Tick an die GUI feuern!
-        self.lbl_image.config(image=self.tk_image)
-        self.lbl_image.place(x=self.pan_x, y=self.pan_y)
+        self.renderer.update_image_display(push_to_gui=True)
         
         
         # Koordinaten-Anzeige manuell triggern, damit sie nach dem Zoom sofort stimmt
@@ -1590,34 +1584,19 @@ class LaborApp:
             
         diff_img = d_dm.debug_images.get(f"diff_letzter_treffer_{side}")
         if diff_img is None:
-            diff_img = d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}")
-            
-        # ---> DER FIX: Greift auch, wenn das Dictionary explizit 'None' gespeichert hat!
-        if diff_img is None:
-            diff_img = np.zeros_like(live_img)
+            diff_img = d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}", np.zeros_like(live_img))
         
         if len(diff_img.shape) == 2:
             diff_img = cv2.cvtColor(diff_img, cv2.COLOR_GRAY2BGR)
             
-        # ====================================================================
-        # ---> ELA-Render-Pipeline: Optische Schichten (Layers) <---
-        # ====================================================================
+        # ---> Die Zeichen-Logik wurde komplett in LaborRendererDeLuebs verlagert! <---
+        
+        # 1. Radius berechnen
         r_erkennung = round(detector.get_caliber_radius(side))
         r_offiziell = round(self.official_radius_px)
         self.current_radius_px = r_erkennung
-
-        # --- LAYER 1: Alte Treffer (Grün) ---
-        for shot in d_sm.shots:
-            # DER FIX: Ein Schuss ist alt, wenn seine Frame-Nummer kleiner ist als das aktuelle Bild!
-            is_current_frame_shot = (shot.get('labor_frame_num') == self.current_index)
-            if shot['side'] == side and not is_current_frame_shot:
-                draw_pos = (int(round(shot['pos'][0])), int(round(shot['pos'][1])))
-                cv2.circle(live_img, draw_pos, r_erkennung, (0, 255, 0), 1)
-                
-        self.last_orig_shots_to_draw = [] 
         
-
-        # --- LAYER 2: Original-Treffer aus match.json immer vorbereiten ---
+        # 2. Original-Treffer filtern
         if getattr(self, 'original_match_data', None):
             side_char = 'l' if side == 'left' else 'r'
             orig_shots_side = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
@@ -1631,20 +1610,12 @@ class LaborApp:
                     curr_shot = curr_shots_side[c_idx]
                     frame_num = curr_shot.get('labor_frame_num', 0)
                     
-                    if frame_num <= self.current_index:
+                    if frame_num < self.current_index:
                         shots_to_draw.append(orig_shots_side[o_idx])
             
             self.last_orig_shots_to_draw = shots_to_draw 
         else:
             self.last_orig_shots_to_draw = []
-            
-            for s in shots_to_draw:
-                hx = int(round(s['x']))
-                hy = int(round(s['y']))
-                cv2.circle(live_img, (hx, hy), r_offiziell, (0, 255, 255), 1)
-                cv2.circle(live_img, (hx, hy), 1, (0, 255, 255), 0)
-        
-        # --- LAYER 3 ENTFERNT ---
         # (Wird wieder butterweich und hochauflösend vom Renderer übernommen)
         
         
