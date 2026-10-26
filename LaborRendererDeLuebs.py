@@ -296,49 +296,48 @@ class LaborRenderer:
                                 lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=True, dash_offset=6, dash_step=12, dash_length=2, is_hit=False,
                                 zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
                             )
-                        # 3. Bracket-Highlighting (durchgezogene 10tel-Ringe für den neuesten Schuss)                            
+                # 3. Bracket-Highlighting (durchgezogene 10tel-Ringe für ALLE Treffer des Frames)
                 current_frame_num = self.app.current_index
-                new_score = None
                 if hasattr(self.app, 'current_engine_shots'):
                     for shot in self.app.current_engine_shots:
                         if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num:
                             new_score = shot.get('score', 0.0)
-                            break
-                if new_score is not None and new_score >= 1.0:
-                    highlight_color = (255, 110, 255)
-                    if new_score >= 10.0:
-                        if '10' in ringe:
-                            radius_10_score = (float(ringe['10']) + kaliber_mm) / 2.0
-                            for step in range(1, 10):
-                                prozent = (10.0 + (step / 10.0) - 10.0) / 0.99
-                                r_mm_base = radius_10_score * (1.0 - prozent)
-                                if r_mm_base >= 0:
-                                    Helfer.draw_smart_ellipse(
-                                        img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
-                                        color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
-                                        lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=False, is_hit=False,
-                                        zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
-                                    )
-                    else:
-                        base_ring = int(math.floor(new_score))
-                        str_base, str_next = str(base_ring), str(base_ring + 1)
-                        if str_base in ringe:
-                            r_outer = float(ringe[str_base]) / 2.0
-                            if str_next in ringe:
-                                r_inner = float(ringe[str_next]) / 2.0
-                            else:
-                                if str(base_ring - 1) in ringe:
-                                    r_inner = max(0.0, r_outer - ((float(ringe[str(base_ring - 1)]) / 2.0) - r_outer))
+                            
+                            if new_score is not None and new_score >= 1.0:
+                                highlight_color = (255, 110, 255)
+                                if new_score >= 10.0:
+                                    if '10' in ringe:
+                                        radius_10_score = (float(ringe['10']) + kaliber_mm) / 2.0
+                                        for step in range(1, 10):
+                                            prozent = (10.0 + (step / 10.0) - 10.0) / 0.99
+                                            r_mm_base = radius_10_score * (1.0 - prozent)
+                                            if r_mm_base >= 0:
+                                                Helfer.draw_smart_ellipse(
+                                                    img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
+                                                    color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
+                                                    lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=False, is_hit=False,
+                                                    zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
+                                                )
                                 else:
-                                    r_inner = 0.0
-                            for i in range(1,10):
-                                r_draw = r_outer + (r_inner - r_outer) * (i / 10.0)
-                                Helfer.draw_smart_ellipse(
-                                    img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_draw,
-                                    color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
-                                    lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=False, is_hit=False,
-                                    zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
-                                )
+                                    base_ring = int(math.floor(new_score))
+                                    str_base, str_next = str(base_ring), str(base_ring + 1)
+                                    if str_base in ringe:
+                                        r_outer = float(ringe[str_base]) / 2.0
+                                        if str_next in ringe:
+                                            r_inner = float(ringe[str_next]) / 2.0
+                                        else:
+                                            if str(base_ring - 1) in ringe:
+                                                r_inner = max(0.0, r_outer - ((float(ringe[str(base_ring - 1)]) / 2.0) - r_outer))
+                                            else:
+                                                r_inner = 0.0
+                                        for i in range(1,10):
+                                            r_draw = r_outer + (r_inner - r_outer) * (i / 10.0)
+                                            Helfer.draw_smart_ellipse(
+                                                img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_draw,
+                                                color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
+                                                lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=False, is_hit=False,
+                                                zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
+                                            )
 
         current_frame_num = self.app.current_index
         base_r = getattr(self.app, 'current_radius_px', 15)

@@ -186,8 +186,8 @@ class LaborApp:
         """Kippt das Blink-Flag alle 1000ms und erzwingt einen GUI-Redraw."""
         old_state = getattr(self, 'blink_state', True)
         
-        # Dauer-Leuchten bei Zoom >= 5.0, normales Blinken bei < 5.0
-        if getattr(self, 'zoom_factor', 1.0) >= 5.0:
+        # Dauer-Leuchten bei Zoom >= 4.0, normales Blinken bei < 4.0
+        if getattr(self, 'zoom_factor', 1.0) >= 4.0:
             new_state = True
         else:
             new_state = not old_state

@@ -225,7 +225,6 @@ class TargetDetector:
             
         return total_score, coverage_new, coverage_raw
             
-        return total_score, coverage_new, coverage_raw
 
     def resolve_tie_breaker(self, candidates, anker_x, anker_y):
         """
@@ -624,24 +623,44 @@ class TargetDetector:
                     if circles is not None:
                         found_circles = circles[0, :]
                         self.log(side, f"🔎 Hough hat {len(found_circles)} Kandidaten gefunden. Evaluiere den Besten...")
-                        # 1. Alle gefundenen Hough-Kreise in das einheitliche Kandidaten-Format pressen
+                        
+                        # Vorberechnung für den ultraschnellen Einschluss-Check
+                        cnt_pts = cnt.reshape(-1, 2)
+                        max_r_sq = (current_caliber_radius + 1.0) ** 2
+                        
+                        # 1. Alle lokal verankerten Hough-Kreise in das Kandidaten-Format pressen
                         hough_cands = []
                         for (hx, hy, hr) in found_circles:
+                            # A) Option 1 (C++ PointPolygonTest): Liegt (hx, hy) überhaupt nah genug 
+                            # an der Kontur 'cnt', damit der Kaliber-Kreis sie signifikant erreicht?
+                            dist_to_cnt = cv2.pointPolygonTest(cnt, (float(hx), float(hy)), True)
+                            if dist_to_cnt < -(current_caliber_radius * 0.85):
+                                continue
+                                
+                            # B) Konkavitäts-Schutz: Wenn der Mittelpunkt außerhalb von 'cnt' liegt, 
+                            # müssen mind. 25% der Konturpunkte von 'cnt' im Kaliber-Kreis liegen 
+                            # (verhindert, dass ein Kreis nur die Spitze streift und beim Nachbarn klaut).
+                            if dist_to_cnt < 0:
+                                pts_inside = np.count_nonzero(((cnt_pts[:, 0] - hx) ** 2 + (cnt_pts[:, 1] - hy) ** 2) <= max_r_sq)
+                                if pts_inside < max(3, int(len(cnt_pts) * 0.25)):
+                                    continue
+
                             h_score, _, _ = self.calculate_hole_score(hx, hy, current_caliber_radius, thresh_new, thresh_raw)
                             hough_cands.append({'cx': float(hx), 'cy': float(hy), 'score': h_score})
-                        # 2. Die neue Tie-Breaker-Jury rufen!
-                        best_hough, tied_hough = self.resolve_tie_breaker(hough_cands, anker_x, anker_y)
-                        # 2. Die neue Tie-Breaker-Jury rufen!
-                        best_hough, tied_hough = self.resolve_tie_breaker(hough_cands, anker_x, anker_y)
-                        # 3. Logging
-                        if len(tied_hough) > 1:
-                            # ---> DER FIX: Wieder "GLEICHSTAND" nennen! <---
-                            self.log(side, f"   ⚖️ GLEICHSTAND (Hough): {len(tied_hough)} Kreise mit Top-Score ({round(best_hough['score'], 1)}).")
-                            for i, cand in enumerate(tied_hough):
-                                is_winner = (cand['cx'] == best_hough['cx'] and cand['cy'] == best_hough['cy'])
-                                marker = "👑 SIEGER" if is_winner else "❌"
-                                self.log(side, f"      -> Opt {i+1}: X:{cand['cx']:.2f} Y:{cand['cy']:.2f} | Distanz zum Anker ({anker_name}): {cand['_dist']:.2f}px {marker}")
-                        add_candidate("Hough-Sieger", best_hough['cx'], best_hough['cy'], min_coverage=self.grenzwert_hough)
+                            
+                        # 2. Die Tie-Breaker-Jury rufen (nur wenn valide lokale Kreise übrig sind!)
+                        if hough_cands:
+                            best_hough, tied_hough = self.resolve_tie_breaker(hough_cands, anker_x, anker_y)
+                            # 3. Logging
+                            if len(tied_hough) > 1:
+                                self.log(side, f"   ⚖️ GLEICHSTAND (Hough): {len(tied_hough)} Kreise mit Top-Score ({round(best_hough['score'], 1)}).")
+                                for i, cand in enumerate(tied_hough):
+                                    is_winner = (cand['cx'] == best_hough['cx'] and cand['cy'] == best_hough['cy'])
+                                    marker = "👑 SIEGER" if is_winner else "❌"
+                                    self.log(side, f"      -> Opt {i+1}: X:{cand['cx']:.2f} Y:{cand['cy']:.2f} | Distanz zum Anker ({anker_name}): {cand['_dist']:.2f}px {marker}")
+                            add_candidate("Hough-Sieger", best_hough['cx'], best_hough['cy'], min_coverage=self.grenzwert_hough)
+                        else:
+                            self.log(side, f"   🚫 Alle {len(found_circles)} Hough-Kreise verworfen (kein Kreis schließt die aktuelle Fläche sinnvoll ein).")
 
                     # --- ABRISSKANTEN KANDIDATEN ---
                     if state.cumulative_mask is not None and cv2.countNonZero(state.cumulative_mask) > 0:
@@ -868,8 +887,6 @@ class TargetDetector:
                         cand['_prio'] = prio
                         cand['_dist'] = dist_to_anker
                         return (rounded_score, -prio, -dist_to_anker)
-                    # Den Sieger ermitteln
-                    winner = max(valid_candidates, key=tie_breaker_key)
                     # Den Sieger ermitteln
                     winner = max(valid_candidates, key=tie_breaker_key)
                     # ---> NEU: Detaillierte Liste bei Battle-Royale Gleichständen <---
