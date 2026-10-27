@@ -1655,7 +1655,8 @@ class LaborApp:
                     curr_shot = curr_shots_side[c_idx]
                     frame_num = curr_shot.get('labor_frame_num', 0)
                     
-                    if frame_num < self.current_index:
+                    #if frame_num < self.current_index: #NUR BILD VORHER
+                    if frame_num <= self.current_index:
                         shots_to_draw.append(orig_shots_side[o_idx])
             
             self.last_orig_shots_to_draw = shots_to_draw 

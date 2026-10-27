@@ -429,9 +429,8 @@ class TargetDetector:
         ## ---> NEU: Leere Leinwand für die siegreichen Abrisskanten dieses Frames <---
         #frame_abrisskanten = np.zeros_like(thresh_raw)
 
-        # 1. ERST die alten Treffer abziehen (Stanzt den Riss aus)
+        # 1. ERST die alten Treffer vom rohen Live-Diff abziehen
         if state.cumulative_mask is not None:
-            # ---> NEU: Schutzschild für die Maske <---
             if thresh_raw.shape != state.cumulative_mask.shape:
                 self.log(side, "⚠️ Maskengröße inkompatibel (Crop)! Setze Maske zurück.", True)
                 state.cumulative_mask = np.zeros_like(thresh_raw)
@@ -441,16 +440,14 @@ class TargetDetector:
             # =========================================================================
             # 1. Alte Masken (oft JPGs aus der 480p-Zeit) absolut sauber auf Schwarz/Weiß zwingen
             _, pure_mask = cv2.threshold(state.cumulative_mask, 127, 255, cv2.THRESH_BINARY)
-            
             # 2. Den "Schutzrand": Maske aufblähen, um Kameraverschiebungen abzufangen
             # VORERST AUSKOMMENTIERT: Idee für später, vor dem Derby kein Risiko!
             # kernel_wobble = np.ones((5, 5), np.uint8)
             # safe_mask = cv2.dilate(pure_mask, kernel_wobble, iterations=1)
             safe_mask = pure_mask # <--- Wir nutzen einfach direkt die desinfizierte Maske!
-                
+
             # Jetzt stanzen wir mit der massiven, abgedichteten Maske!
             thresh_new = cv2.subtract(thresh_raw, safe_mask)
-            
             # Zerstört alle restlichen grauen Schlieren
             _, thresh_new = cv2.threshold(thresh_new, 127, 255, cv2.THRESH_BINARY)
         else:
@@ -460,9 +457,12 @@ class TargetDetector:
         # 2. DANN den Morph-Filter auf die rohen NEUEN Fragmente anwenden!
         k_size = self.morph_kernel_size
         if k_size > 0:
-            #print(f"k_size {k_size}")
             kernel = np.ones((k_size, k_size), np.uint8)
             thresh_new = cv2.morphologyEx(thresh_new, cv2.MORPH_CLOSE, kernel)
+
+        # ---> DEIN GENIALER STREICH: Ab hier wird thresh_raw zum kompletten "Diff-Gesamt" <---
+        # Enthält garantiert alle historischen Pixel (inkl. alter Morph-Brücken) + den neuen gemorphten Riss!
+        thresh_raw = cv2.bitwise_or(state.cumulative_mask, thresh_new)
 
         changed_pixels = cv2.countNonZero(thresh_new)
         total_pixels = thresh_new.shape[0] * thresh_new.shape[1]
@@ -1127,18 +1127,16 @@ class TargetDetector:
                 self.log(side, f"🛡️ Masken-Update (Ohne Treffer): {len(contours)} Kontur(en) / {pixels_added} Pixel in die Basismaske integriert.")
             
             # Maske für BEIDE Fälle (Treffer & Discard-Risse) updaten
-            state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, thresh_new)
-            
-            # Der "Panzer-Sticker" (randaufschlag_cumulative als PIXEL)
             if self.randaufschlag_cumulative > 0:
                 k_size = (self.randaufschlag_cumulative * 2) + 1
                 kernel_sticker = np.ones((k_size, k_size), np.uint8)
                 sticker_to_add = cv2.dilate(thresh_new, kernel_sticker, iterations=1)
+                state.cumulative_mask = cv2.bitwise_or(thresh_raw, sticker_to_add)
             else:
-                sticker_to_add = thresh_new
+                state.cumulative_mask = thresh_raw
                 
             # Maske für BEIDE Fälle (Treffer & Discard-Risse) updaten
-            state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, sticker_to_add)
+            #state.cumulative_mask = cv2.bitwise_or(state.cumulative_mask, sticker_to_add)
             
             self.save_debug_image(f"diff_gesamt_{side}", state.cumulative_mask)
             self.save_debug_image(f"diff_letzter_treffer_{side}", thresh_new)

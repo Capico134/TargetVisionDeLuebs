@@ -117,14 +117,7 @@ class LaborRenderer:
             side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
             current_frame_num = self.app.current_index
             
-            if hasattr(self.app, 'current_engine_shots') and hasattr(self.app, 'current_radius_px'):
-                r_erkennung = self.app.current_radius_px
-                for shot in self.app.current_engine_shots:
-                    is_current_frame_shot = (shot.get('labor_frame_num') == current_frame_num)
-                    if shot.get('side') == side and not is_current_frame_shot:
-                        draw_pos = (int(round(shot['pos'][0])), int(round(shot['pos'][1])))
-                        cv2.circle(overview_img, draw_pos, r_erkennung, (0, 255, 0), 1)
-                        
+            # 1. ZUERST die gelben Original-Treffer auf die Übersicht zeichnen (Hintergrund)
             if getattr(self.app, 'show_orig_hits_var', None) and self.app.show_orig_hits_var.get():
                 r_offiziell = getattr(self.app, 'official_radius_px', 15)
                 orig_shots = getattr(self.app, 'last_orig_shots_to_draw', [])
@@ -132,6 +125,15 @@ class LaborRenderer:
                     hx, hy = int(round(s['x'])), int(round(s['y']))
                     cv2.circle(overview_img, (hx, hy), int(round(r_offiziell)), (0, 255, 255), 1)
                     cv2.circle(overview_img, (hx, hy), 1, (0, 255, 255), 0)
+
+            # 2. DANACH die grünen Engine-Kreise darüber zeichnen (Vordergrund)
+            if hasattr(self.app, 'current_engine_shots') and hasattr(self.app, 'current_radius_px'):
+                r_erkennung = self.app.current_radius_px
+                for shot in self.app.current_engine_shots:
+                    is_current_frame_shot = (shot.get('labor_frame_num') == current_frame_num)
+                    if shot.get('side') == side and not is_current_frame_shot:
+                        draw_pos = (int(round(shot['pos'][0])), int(round(shot['pos'][1])))
+                        cv2.circle(overview_img, draw_pos, r_erkennung, (0, 255, 0), 1)
 
             # Combined base layer at ORIGINAL resolution
             combined_orig = np.hstack((overview_img, panel_render_img))
@@ -296,8 +298,14 @@ class LaborRenderer:
                                 lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=True, dash_offset=6, dash_step=12, dash_length=2, is_hit=False,
                                 zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
                             )
+                
+                
                 # 3. Bracket-Highlighting (durchgezogene 10tel-Ringe für ALLE Treffer des Frames)
                 current_frame_num = self.app.current_index
+                
+                
+                
+                
                 if hasattr(self.app, 'current_engine_shots'):
                     for shot in self.app.current_engine_shots:
                         if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num:
@@ -342,6 +350,17 @@ class LaborRenderer:
         current_frame_num = self.app.current_index
         base_r = getattr(self.app, 'current_radius_px', 15)
 
+# GELBE KREISE?
+        if getattr(self.app, 'show_orig_hits_var', None) and self.app.show_orig_hits_var.get():
+            for s in getattr(self.app, 'last_orig_shots_to_draw', []):
+                Helfer.draw_smart_ellipse(
+                    img=combined, center_x=s['x'], center_y=s['y'], radius_mm=kaliber_mm/2.0,
+                    color=(0, 255, 255), px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
+                    lens_cx=lens_cx, lens_cy=lens_cy, thickness=1, dashed=False, is_hit=True,
+                    zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True, r_limit=r_limit_mm
+                )        
+
+
         if hasattr(self.app, 'current_engine_shots'):
             blink_on = getattr(self.app, 'blink_state', True)
             color_panel_overview = (0, 0, 255) if blink_on else (255, 0, 0)
@@ -362,15 +381,7 @@ class LaborRenderer:
                             lens_cx=lens_cx, lens_cy=lens_cy, thickness=1, dashed=False, is_hit=True,
                             zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True, r_limit=r_limit_mm
                         )
-# GELBE KREISE?
-        if getattr(self.app, 'show_orig_hits_var', None) and self.app.show_orig_hits_var.get():
-            for s in getattr(self.app, 'last_orig_shots_to_draw', []):
-                Helfer.draw_smart_ellipse(
-                    img=combined, center_x=s['x'], center_y=s['y'], radius_mm=kaliber_mm/2.0,
-                    color=(0, 255, 255), px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
-                    lens_cx=lens_cx, lens_cy=lens_cy, thickness=1, dashed=False, is_hit=True,
-                    zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True, r_limit=r_limit_mm
-                )
+
         # ---> RENDER-HELFER: Angeklickter / Hervorgehobener Treffer <---
         hl = getattr(self.app, 'highlighted_shot', None)
         if hl is not None and time.time() - hl['time'] < 5.0:
