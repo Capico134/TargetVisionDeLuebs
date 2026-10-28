@@ -308,28 +308,33 @@ class TargetVisionRenderer:
             rect = cv2.getWindowImageRect(self.tracker.window_name)
             if rect[2] > 0 and rect[3] > 0:
                 win_w, win_h = rect[2], rect[3]
-                scale = min(win_w / orig_w, win_h / orig_h)
+                
+                # =========================================================================
+                # ---> ELA FIX: Schutzzonen für UI (Oben & Unten) <---
+                # =========================================================================
+                ui_margin_top = 0     # Platz für die oberen Buttons
+                ui_margin_bottom = 40  # Platz für die Kamera-Steuerung und den Serien-Footer
+                
+                safe_h = max(10, win_h - ui_margin_top - ui_margin_bottom)
+                
+                # Skalierung wird nur noch für den sicheren, verbleibenden Platz berechnet
+                scale = min(win_w / orig_w, safe_h / orig_h)
                 
                 new_w = int(orig_w * scale)
                 new_h = int(orig_h * scale)
                 
-                #resized_view = cv2.resize(combined_view, (new_w, new_h))
-                #canvas = np.full((win_h, win_w, 3), (35, 35, 35), dtype=np.uint8)
-                #x_offset = (win_w - new_w) // 2
-                #y_offset = (win_h - new_h) // 2
-                #canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized_view
-                #combined_view = canvas
-                #self.scale_x = scale
-                #self.scale_y = scale
-                #self.pad_x = x_offset 
-                #self.pad_y = y_offset
-                
                 resized_view = cv2.resize(combined_view, (new_w, new_h))
+                
+                # X wird normal zentriert
                 x_offset = (win_w - new_w) // 2
-                y_offset = (win_h - new_h) // 2
-                # --- NEU: Rasend schnelles C++ Padding statt np.full ---
+                
+                # Y wird innerhalb der "Safe Zone" zentriert und um den oberen Margin nach unten geschoben
+                y_offset = ui_margin_top + (safe_h - new_h) // 2
+                
+                # --- Rasend schnelles C++ Padding ---
                 pad_bottom = win_h - new_h - y_offset
                 pad_right = win_w - new_w - x_offset
+                
                 combined_view = cv2.copyMakeBorder(
                     resized_view, 
                     y_offset, pad_bottom, x_offset, pad_right, 
@@ -515,10 +520,11 @@ class TargetVisionRenderer:
         # =========================================================================
                             
         # ---> CAMERA OVERLAY ZEICHNEN <---
+        cv_h, cv_w = combined_view.shape[:2]
         if self.tracker.nutze_kamera_links:
-            self.draw_camera_overlay(combined_view, 'left', self.pad_x, scaled_w_left, self.pad_y + new_h)
+            self.draw_camera_overlay(combined_view, 'left', self.pad_x, scaled_w_left, cv_h)
         if self.tracker.nutze_kamera_rechts:
-            self.draw_camera_overlay(combined_view, 'right', self.pad_x + scaled_w_left, int((orig_w - self.w_left_displayed) * self.scale_x), self.pad_y + new_h)
+            self.draw_camera_overlay(combined_view, 'right', self.pad_x + scaled_w_left, int((orig_w - self.w_left_displayed) * self.scale_x), cv_h)
 
         # --- BUTTON-LEISTE OBEN RECHTS ---
         gap = 10     
@@ -643,8 +649,8 @@ class TargetVisionRenderer:
 
         # ---> Serien-Balken (Footer) <---
         if self.ringwertung_aktiv and self.serien_gruppierung > 0:
-            scaled_h = int(orig_h * self.scale_y)
-            footer_y = getattr(self, 'pad_y', 0) + scaled_h - 65
+            cv_h = combined_view.shape[0]
+            footer_y = cv_h - 65
             
             for side in ['left', 'right']:
                 if side == 'left' and not self.tracker.nutze_kamera_links: continue
