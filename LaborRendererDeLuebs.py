@@ -144,9 +144,9 @@ class LaborRenderer:
         
         # Scaling variables
         self.app.current_scale = (550 / h) * self.app.zoom_factor
-        self.app.current_img_w = int(w * self.app.current_scale)
+        self.app.current_img_w = int(round(w * self.app.current_scale))
         W_scaled = 2 * self.app.current_img_w
-        H_scaled = int(h * self.app.current_scale)
+        H_scaled = int(round(h * self.app.current_scale))
         
         # Viewport Crop
         container_w = self.app.img_container.winfo_width() if hasattr(self.app, 'img_container') else 1200
@@ -154,6 +154,7 @@ class LaborRenderer:
         pan_x = getattr(self.app, 'pan_x', 0)
         pan_y = getattr(self.app, 'pan_y', 0)
         
+        orig_x1, orig_y1 = 0, 0
         is_hybrid_mode = self.app.zoom_factor > 4.0
         
         if is_hybrid_mode:
@@ -168,30 +169,28 @@ class LaborRenderer:
                 self.app.viewport_place_x = pan_x
                 self.app.viewport_place_y = pan_y
             else:
-                orig_x1 = int(crop_x1 / self.app.current_scale)
-                orig_y1 = int(crop_y1 / self.app.current_scale)
-                orig_x2 = int(math.ceil(crop_x2 / self.app.current_scale))
-                orig_y2 = int(math.ceil(crop_y2 / self.app.current_scale))
-                
-                orig_x1 = max(0, min(orig_x1, 2 * w - 1))
-                orig_y1 = max(0, min(orig_y1, h - 1))
-                orig_x2 = max(0, min(orig_x2, 2 * w))
-                orig_y2 = max(0, min(orig_y2, h))
+                orig_x1 = max(0, min(int(crop_x1 / self.app.current_scale), 2 * w - 1))
+                orig_y1 = max(0, min(int(crop_y1 / self.app.current_scale), h - 1))
+                orig_x2 = max(orig_x1 + 1, min(int(math.ceil(crop_x2 / self.app.current_scale)), 2 * w))
+                orig_y2 = max(orig_y1 + 1, min(int(math.ceil(crop_y2 / self.app.current_scale)), h))
                 
                 orig_crop = combined_orig[orig_y1:orig_y2, orig_x1:orig_x2]
                 
-                target_w = crop_x2 - crop_x1
-                target_h = crop_y2 - crop_y1
+                # ---> DER FIX: Exakte Zielgröße proportional zu den gesliceten Original-Pixeln! <---
+                # Verhindert das Stauch-Zittern von INTER_NEAREST beim Panning!
+                target_w = int(round((orig_x2 - orig_x1) * self.app.current_scale))
+                target_h = int(round((orig_y2 - orig_y1) * self.app.current_scale))
                 
                 if target_w > 0 and target_h > 0:
                     combined = cv2.resize(orig_crop, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
                 else:
                     combined = np.full((10, 10, 3), 40, dtype=np.uint8)
                     
-                vp_x = crop_x1
-                vp_y = crop_y1
-                self.app.viewport_place_x = pan_x + crop_x1
-                self.app.viewport_place_y = pan_y + crop_y1
+                # Der wahre Viewport-Startpunkt in skalierten Pixeln ist exakt an orig_x1 gekoppelt:
+                vp_x = int(round(orig_x1 * self.app.current_scale))
+                vp_y = int(round(orig_y1 * self.app.current_scale))
+                self.app.viewport_place_x = pan_x + vp_x
+                self.app.viewport_place_y = pan_y + vp_y
         else:
             combined = cv2.resize(combined_orig, (W_scaled, H_scaled), interpolation=cv2.INTER_NEAREST)
             vp_x, vp_y = 0, 0
@@ -426,6 +425,15 @@ class LaborRenderer:
                     self._draw_candidate_vector(combined, shot.get('base_pos'), shot.get('end_pos'), shot['pos'], offset_x=self.app.current_img_w, vp_x=vp_x, vp_y=vp_y)
 
         if (mode == 1 or mode == 2) and hasattr(self.app, 'current_engine_shots'):
+            # Reale Skalierungsfaktoren des aktuellen 'combined'-Arrays ermitteln
+            # (Garantiert 100% Deckungsgleichheit mit cv2.resize INTER_NEAREST!)
+            curr_h, curr_w = combined.shape[:2]
+            src_w = (orig_x2 - orig_x1) if is_hybrid_mode and (crop_x1 < crop_x2 and crop_y1 < crop_y2) else (2 * w)
+            src_h = (orig_y2 - orig_y1) if is_hybrid_mode and (crop_x1 < crop_x2 and crop_y1 < crop_y2) else h
+            
+            real_scale_x = curr_w / float(src_w) if src_w > 0 else self.app.current_scale
+            real_scale_y = curr_h / float(src_h) if src_h > 0 else self.app.current_scale
+
             for shot in self.app.current_engine_shots:
                 if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num:    
                     details = shot.get('score_export_details')
@@ -434,19 +442,28 @@ class LaborRenderer:
                         off_x = details.get('offset_x', 0)
                         off_y = details.get('offset_y', 0)
                         
+                        def draw_subpixel_box(sx_val, sy_val, color_bgr):
+                            # 1. Globale Koordinate im Doppelbild (Rechtes Panel startet bei +w)
+                            gx1 = w + off_x + (sx_val / float(scale))
+                            gy1 = off_y + (sy_val / float(scale))
+                            gx2 = w + off_x + ((sx_val + 1) / float(scale))
+                            gy2 = off_y + ((sy_val + 1) / float(scale))
+                            
+                            # 2. Exakte INTER_NEAREST-Kantenformel: ceil(coord * scale) statt Python-round()!
+                            # (-1e-9 verhindert, dass glatte Ganzzahlen durch Float-Ungenauigkeit um +1 aufgerundet werden)
+                            ui_x1 = int(math.ceil((gx1 - orig_x1) * real_scale_x - 1e-9))
+                            ui_y1 = int(math.ceil((gy1 - orig_y1) * real_scale_y - 1e-9))
+                            ui_x2 = int(math.ceil((gx2 - orig_x1) * real_scale_x - 1e-9)) - 1
+                            ui_y2 = int(math.ceil((gy2 - orig_y1) * real_scale_y - 1e-9)) - 1
+                            
+                            if ui_x2 >= ui_x1 and ui_y2 >= ui_y1:
+                                cv2.rectangle(combined, (ui_x1, ui_y1), (ui_x2, ui_y2), color_bgr, -1)
+
                         for sx, sy in details.get('subpixels_raw', []):
-                            ui_x1 = int(round((off_x + (sx / scale)) * self.app.current_scale)) + self.app.current_img_w - vp_x
-                            ui_y1 = int(round((off_y + (sy / scale)) * self.app.current_scale)) - vp_y
-                            ui_x2 = int(round((off_x + ((sx + 1) / scale)) * self.app.current_scale)) + self.app.current_img_w - vp_x
-                            ui_y2 = int(round((off_y + ((sy + 1) / scale)) * self.app.current_scale)) - vp_y
-                            cv2.rectangle(combined, (ui_x1, ui_y1), (ui_x2, ui_y2), (0, 0, 150), -1)
+                            draw_subpixel_box(sx, sy, (0, 0, 150))
 
                         for sx, sy in details.get('subpixels_new', []):
-                            ui_x1 = int(round((off_x + (sx / scale)) * self.app.current_scale)) + self.app.current_img_w - vp_x
-                            ui_y1 = int(round((off_y + (sy / scale)) * self.app.current_scale)) - vp_y
-                            ui_x2 = int(round((off_x + ((sx + 1) / scale)) * self.app.current_scale)) + self.app.current_img_w - vp_x
-                            ui_y2 = int(round((off_y + ((sy + 1) / scale)) * self.app.current_scale)) - vp_y
-                            cv2.rectangle(combined, (ui_x1, ui_y1), (ui_x2, ui_y2), (0, 165, 255), -1)
+                            draw_subpixel_box(sx, sy, (0, 165, 255))
 
         if getattr(self.app, 'candidate_view_active', False) and hasattr(self.app, 'var_shots'):
             shift, mult = 4, 16

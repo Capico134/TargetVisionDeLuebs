@@ -304,18 +304,16 @@ class LaborApp:
 
 
     def print_log(self, side, msg, show_gui=False):
-        """Simuliert den Log-Output der Engine in der GUI"""
-        # ---> DER FIX: Wir filtern versehentlich doppelte Zeilenumbrüche heraus
+        """Zentrale Log-Ausgabe für Engine und UI (optional ohne Seiten-Präfix bei side=None)"""
         clean_msg = msg.rstrip('\n')
+        prefix = f"[{side.upper()}] " if side else ""
         
-        self.log_text.insert(tk.END, f"[{side.upper()}] {clean_msg}\n", "mono")
+        self.log_text.insert(tk.END, f"{prefix}{clean_msg}\n", "mono")
         
-        # ---> DER FIX: Wir zwingen Tkinter, exakt den letzten echten Buchstaben zu 
-        # fokussieren ("end-2c") und ignorieren die unsichtbaren Leerzeilen am Ende!
-        #self.log_text.see("end-2c")
+        if not getattr(self, '_is_batch_calculating', False):
+            self.log_text.see(tk.END)
 
-        #Erstmal wieder mit Leerzeile unten:
-        self.log_text.see(tk.END)
+
 
     def apply_config_to_ui(self, parser):
         """Zentrale Methode: Füttert alle UI-Slider mit den Werten eines ConfigParsers."""
@@ -599,8 +597,12 @@ class LaborApp:
             target_shot = int(self.shot_jump_var.get().strip())
             target_shot = max(0, min(target_shot, max_idx))
             self.current_index = target_shot
+            
+
+            
             self.process_and_display()
-            self.root.focus()
+            # ---> HIER GEZOGEN: Fokus sofort weg vom Eingabefeld <---
+            #self.root.focus_set() 
         except ValueError:
             self.shot_jump_var.set(str(self.current_index))
 
@@ -1153,8 +1155,8 @@ class LaborApp:
             self.renderer.update_image_display(full_rebuild=False)
 
 
-    def update_frame_title(self):
-        """Aktualisiert die Überschrift des Bild-Bereichs mit dynamischem Zoom und Shortcuts."""
+    def update_frame_title(self, status=None):
+        """Aktualisiert die Überschrift des Bild-Bereichs mit dynamischem Zoom, Shortcuts und optionalem Status."""
         if not getattr(self, 'current_zip_path', None):
             return
             
@@ -1162,6 +1164,15 @@ class LaborApp:
         zoom_str = f"Zoom: {self.zoom_factor:.1f}x"
         controls = "Rad: Zoom  |  L-Klick: Bewegen  |  R-Klick: Reset  |  M-Klick: Zentrieren  |  Strg+Ziehen: Rahmen"
         
+        # Wenn ein Status übergeben wurde -> Text setzen und auf Blau (#3498db) umschalten!
+        if status:
+            self.image_frame.config(text=status, fg="#00BEFF")
+            self.root.update_idletasks() # Erzwingt sofortiges Neuladen der GUI
+            return
+
+        # Normaler Zustand -> Wieder auf Weiß zurückschalten
+        self.image_frame.config(fg="white")
+
         if self.current_index == 0:
             self.image_frame.config(text=f" {zoom_str}  |  {controls}  |  📷 Referenz {side.upper()} ")
         else:
@@ -1171,7 +1182,7 @@ class LaborApp:
             else:
                 orig_name = "Unbekannt"
             self.image_frame.config(text=f" {zoom_str}  |  {controls}  |  📄 {orig_name} ")
-
+            
     def center_on_last_shot(self, event=None):
         """Zentriert den letzten Schuss des aktuellen Bildes in der angeklickten Bildhälfte."""
         if getattr(self, 'current_engine_shots', None) is None or not hasattr(self, 'current_scale'):
@@ -1344,432 +1355,470 @@ class LaborApp:
         self.on_mouse_move(event)
 
     def process_and_display(self):
-        #self.root.focus()
         self.update_frame_title()
-        if not self.current_zip_path: return
+        if not self.current_zip_path: 
+            return
 
-        # ---> NEU: VAR-Modus beim Bildwechsel killen <--- ACHTUNG GEHÖRT DAS HIER HIN???????????????
-        if getattr(self, 'candidate_view_active', False):
-            self.clear_var_mode()
-        
-        side = self.active_camera_var.get()
-        
-        # =====================================================================
-        # ---> ELA-FIX: Zustand direkt am Anfang unbestechlich synchronisieren!
-        # =====================================================================
-        self.current_side = side 
-        
-        # ---> DER FIX: Alte Treffer-Merkliste sofort löschen, damit bei Kamerawechsel 
-        # oder Referenzbildern (Bild 0) keine alten Geister-Kreise übrig bleiben! <---
-        self.last_orig_shots_to_draw = []
-        
-        side_origs = self.get_current_side_origs()
-        
-        # =========================================================================
-        # ---> NEU: ELA-Optimierung! Wir berechnen den offiziellen Wettkampf-Radius
-        # genau EINMAL pro Frame-Wechsel und speichern ihn im RAM.
-        # =========================================================================
-        # ---> ELA FIX: Der Dummy ist tot! Wir nutzen direkt den echten Parser <---
-        d_config = self.package_data['config']
-        
+        # 1. Warte-Cursor einmalig vorab setzen (inkl. Sprung-Textfeld!)
+        self.root.config(cursor="watch")
+        self.lbl_image.config(cursor="watch")
+        if hasattr(self, 'img_container'):
+            self.img_container.config(cursor="watch")
+        if hasattr(self, 'entry_shot_jump'):
+            self.entry_shot_jump.config(cursor="watch")
+            
+        self._is_batch_calculating = True   
 
-        ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
-        aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-        targets = self.dm.load_targets()
-        
-        decimals = d_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
-        
-        # 1. Fallback-Weiche: Wettkampf-Modus vs. Freies Schießen
-        if ringwertung_aktiv and aktive_scheibe in targets:
-            offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
-        else:
-            offizielles_kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
-        
-        seite_str = "links" if side == 'left' else "rechts"
-        px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-        px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-        avg_px = (px_x + px_y) / 2.0
-        
-        self.official_radius_px = (offizielles_kaliber_mm / 2.0) * avg_px
-        # =========================================================================
-        
-        # UI updaten
-        self.shot_jump_var.set(str(self.current_index))
-        self.lbl_shot_total.config(text=f" / {len(side_origs)}")
-        self.log_text.delete(1.0, tk.END)
-        
-        # ==========================================================
-        # ---> SONDERFALL: INDEX 0 = DAS REFERENZBILD <---
-        # ==========================================================
-        if self.current_index == 0:
+        try:
+
+                
+            # ---> NEU: VAR-Modus beim Bildwechsel killen <--- ACHTUNG GEHÖRT DAS HIER HIN???????????????
+            if getattr(self, 'candidate_view_active', False):
+                self.clear_var_mode()
             
-            # ---> NEU: Aufruf des zentralen Hilfe-Banners <---
-            self.print_help_banner()
+            side = self.active_camera_var.get()
             
-            self.print_log("SYSTEM", f"Zeige initialen Zustand für Kamera {side.upper()}.\n")
+            # =====================================================================
+            # ---> ELA-FIX: Zustand direkt am Anfang unbestechlich synchronisieren!
+            # =====================================================================
+            self.current_side = side 
             
-            # ---> NEU: Treffer-Anzeige konsequent zurücksetzen! <---
-            self.lbl_current_scores.config(text="- keine -", fg="gray")
-            self.current_engine_shots = []
+            # ---> DER FIX: Alte Treffer-Merkliste sofort löschen, damit bei Kamerawechsel 
+            # oder Referenzbildern (Bild 0) keine alten Geister-Kreise übrig bleiben! <---
+            self.last_orig_shots_to_draw = []
             
-            # Bilder laden (Mit schwarzem Fallback-Bild, falls nichts existiert)
-            dummy_img = self.get_img(side_origs[0]) if side_origs else None
-            h, w = dummy_img.shape[:2] if dummy_img is not None else (720, 1280)
+            side_origs = self.get_current_side_origs()
+            
+            # =========================================================================
+            # ---> NEU: ELA-Optimierung! Wir berechnen den offiziellen Wettkampf-Radius
+            # genau EINMAL pro Frame-Wechsel und speichern ihn im RAM.
+            # =========================================================================
+            # ---> ELA FIX: Der Dummy ist tot! Wir nutzen direkt den echten Parser <---
+            d_config = self.package_data['config']
+            
+    
+            ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
+            aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+            targets = self.dm.load_targets()
+            
+            decimals = d_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
+            
+            # 1. Fallback-Weiche: Wettkampf-Modus vs. Freies Schießen
+            if ringwertung_aktiv and aktive_scheibe in targets:
+                offizielles_kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
+            else:
+                offizielles_kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
+            
+            seite_str = "links" if side == 'left' else "rechts"
+            px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+            px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+            avg_px = (px_x + px_y) / 2.0
+            
+            self.official_radius_px = (offizielles_kaliber_mm / 2.0) * avg_px
+            # =========================================================================
+            
+            # UI updaten
+            self.shot_jump_var.set(str(self.current_index))
+            self.lbl_shot_total.config(text=f" / {len(side_origs)}")
+            self.log_text.delete(1.0, tk.END)
+            
+            # ==========================================================
+            # ---> SONDERFALL: INDEX 0 = DAS REFERENZBILD <---
+            # ==========================================================
+            if self.current_index == 0:
+                
+                # ---> NEU: Aufruf des zentralen Hilfe-Banners <---
+                self.print_help_banner()
+                
+                self.print_log("SYSTEM", f"Zeige initialen Zustand für Kamera {side.upper()}.\n")
+                
+                # ---> NEU: Treffer-Anzeige konsequent zurücksetzen! <---
+                self.lbl_current_scores.config(text="- keine -", fg="gray")
+                self.current_engine_shots = []
+                
+                # Bilder laden (Mit schwarzem Fallback-Bild, falls nichts existiert)
+                dummy_img = self.get_img(side_origs[0]) if side_origs else None
+                h, w = dummy_img.shape[:2] if dummy_img is not None else (720, 1280)
+                
+                ref_name = next((f for f in self.all_files if f"referenz_{side}" in f), None)
+                ref_img = self.get_img(ref_name) if ref_name else np.zeros((h, w, 3), dtype=np.uint8)
+                
+                mask_name = next((f for f in self.all_files if f"cumulative_startmask_{side}" in f), None)
+                mask_img = self.get_img(mask_name) if mask_name else np.zeros((h, w), dtype=np.uint8)
+                if len(mask_img.shape) == 3: mask_img = cv2.cvtColor(mask_img, cv2.COLOR_BGR2GRAY)
+    
+                # ---> NEU: Das echte alte Bild (mit Löchern) suchen <---
+                cum_orig_name = next((f for f in self.all_files if f"cumulative_orig_{side}" in f), None)
+                cum_orig_img = self.get_img(cum_orig_name) if cum_orig_name else ref_img.copy()
+    
+                # ZUWEISUNG: Links saubere Referenz, Rechts in Ansicht 5 das Bild mit Löchern!
+                self.last_live_img = ref_img                # Linke UI-Hälfte
+                self.last_clean_live_img = cum_orig_img     # Rechte UI-Hälfte (nur in Modus 5)
+                self.last_diff_img = np.zeros_like(ref_img)
+                self.last_diff_gesamt_img = mask_img
+                self.last_ref_img = ref_img
+                self.last_raw_diff = np.zeros((h, w), dtype=np.uint8)
+                self.last_thresh_raw = np.zeros((h, w), dtype=np.uint8)
+                self.last_history_mask = np.zeros((h, w), dtype=np.uint8)
+                # ---> NEU: Geister-Abrisskante beim Zurückspringen löschen! <---
+                self.last_abrisskante = None
+                
+                self.renderer.update_image_display()
+                return 
+                
+            # ==========================================================
+            # ---> NORMALE SCHÜSSE (Index > 0) <---
+            # ==========================================================
+            target_idx = self.current_index - 1
+            orig_name = side_origs[target_idx]
+            
+            #self.image_frame.config(text=f" Live-Labor (Mausrad = Zoom | Klick = Bewegen | Rechtsklick = Reset)  |  📄 {orig_name} ")
+            
+            # 1. DUMMYS AUFBAUEN
+            # ---> ELA FIX <---
+            d_config = self.package_data['config']
+            d_dm = DummyDateiManager(self)
+            d_sm = StateManager(d_config, d_dm)
+            
+            # 2. ECHTE ENGINE STARTEN
+            detector = TargetDetector(d_config, d_dm, d_sm, self.print_log)
             
             ref_name = next((f for f in self.all_files if f"referenz_{side}" in f), None)
-            ref_img = self.get_img(ref_name) if ref_name else np.zeros((h, w, 3), dtype=np.uint8)
+            if not ref_name: return
+            ref_img = self.get_img(ref_name)
+            detector.set_reference_image(ref_img, side)
             
-            mask_name = next((f for f in self.all_files if f"cumulative_startmask_{side}" in f), None)
-            mask_img = self.get_img(mask_name) if mask_name else np.zeros((h, w), dtype=np.uint8)
-            if len(mask_img.shape) == 3: mask_img = cv2.cvtColor(mask_img, cv2.COLOR_BGR2GRAY)
-
-            # ---> NEU: Das echte alte Bild (mit Löchern) suchen <---
-            cum_orig_name = next((f for f in self.all_files if f"cumulative_orig_{side}" in f), None)
-            cum_orig_img = self.get_img(cum_orig_name) if cum_orig_name else ref_img.copy()
-
-            # ZUWEISUNG: Links saubere Referenz, Rechts in Ansicht 5 das Bild mit Löchern!
-            self.last_live_img = ref_img                # Linke UI-Hälfte
-            self.last_clean_live_img = cum_orig_img     # Rechte UI-Hälfte (nur in Modus 5)
-            self.last_diff_img = np.zeros_like(ref_img)
-            self.last_diff_gesamt_img = mask_img
-            self.last_ref_img = ref_img
-            self.last_raw_diff = np.zeros((h, w), dtype=np.uint8)
-            self.last_thresh_raw = np.zeros((h, w), dtype=np.uint8)
-            self.last_history_mask = np.zeros((h, w), dtype=np.uint8)
-            # ---> NEU: Geister-Abrisskante beim Zurückspringen löschen! <---
-            self.last_abrisskante = None
+            # =========================================================================
+            # ---> ELA FIX: Beschütze das echte Zentrum vor der Auto-Erkennung! <---
+            # =========================================================================
+            if getattr(self, 'original_match_data', None):
+                meta = self.original_match_data.get('metadata', {})
+                center_key = 'center_l' if side == 'left' else 'center_r'
+                if meta.get(center_key):
+                    d_sm.set_nullpunkt(side, meta[center_key][0], meta[center_key][1])
             
-            self.renderer.update_image_display()
-            return 
+            startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{side}" in f), None)
+            if startmask_name:
+                startmask_bgr = self.get_img(startmask_name)
+                startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
+                state = d_sm.state_left if side == 'left' else d_sm.state_right
+                state.cumulative_mask = startmask_gray
+                self.print_log("SYSTEM", f"Fortsetzung erkannt! Start-Maske für {side} geladen.")
             
-        # ==========================================================
-        # ---> NORMALE SCHÜSSE (Index > 0) <---
-        # ==========================================================
-        target_idx = self.current_index - 1
-        orig_name = side_origs[target_idx]
-        
-        #self.image_frame.config(text=f" Live-Labor (Mausrad = Zoom | Klick = Bewegen | Rechtsklick = Reset)  |  📄 {orig_name} ")
-        
-        # 1. DUMMYS AUFBAUEN
-        # ---> ELA FIX <---
-        d_config = self.package_data['config']
-        d_dm = DummyDateiManager(self)
-        d_sm = StateManager(d_config, d_dm)
-        
-        # 2. ECHTE ENGINE STARTEN
-        detector = TargetDetector(d_config, d_dm, d_sm, self.print_log)
-        
-        ref_name = next((f for f in self.all_files if f"referenz_{side}" in f), None)
-        if not ref_name: return
-        ref_img = self.get_img(ref_name)
-        detector.set_reference_image(ref_img, side)
-        
-        # =========================================================================
-        # ---> ELA FIX: Beschütze das echte Zentrum vor der Auto-Erkennung! <---
-        # =========================================================================
-        if getattr(self, 'original_match_data', None):
-            meta = self.original_match_data.get('metadata', {})
-            center_key = 'center_l' if side == 'left' else 'center_r'
-            if meta.get(center_key):
-                d_sm.set_nullpunkt(side, meta[center_key][0], meta[center_key][1])
-        
-        startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{side}" in f), None)
-        if startmask_name:
-            startmask_bgr = self.get_img(startmask_name)
-            startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
-            state = d_sm.state_left if side == 'left' else d_sm.state_right
-            state.cumulative_mask = startmask_gray
-            self.print_log("SYSTEM", f"Fortsetzung erkannt! Start-Maske für {side} geladen.")
-        
-        # 3. TIME-TRAVEL SIMULATION
-        start_idx = 0
-        
-        def safe_copy(img_obj):
-            return img_obj.copy() if img_obj is not None else None
-
-        # ---------------------------------------------------------
-        # ---> ELA: LAZY TIMELINE CACHE <---
-        # ---------------------------------------------------------
-        detail_export = d_config.getboolean('Erkennung', 'detail_export_aktiv', fallback=False)
-        
-        best_cached_idx = -1
-        # ---> ELA FIX: Wenn Detail-Export an ist, dürfen wir max. das BILD DAVOR aus dem Cache laden.
-        # So wird das Zielbild IMMER einmal frisch und MIT Details berechnet! <---
-        start_search_idx = target_idx - 1 if detail_export else target_idx
-        
-        for i in range(start_search_idx, -1, -1):
-            if i in self.frame_cache[side]:
-                best_cached_idx = i
-                break
+            # 3. TIME-TRAVEL SIMULATION
+            start_idx = 0
+            
+            def safe_copy(img_obj):
+                return img_obj.copy() if img_obj is not None else None
+    
+            # ---------------------------------------------------------
+            # ---> ELA: LAZY TIMELINE CACHE <---
+            # ---------------------------------------------------------
+            detail_export = d_config.getboolean('Erkennung', 'detail_export_aktiv', fallback=False)
+            
+            best_cached_idx = -1
+            # ---> ELA FIX: Wenn Detail-Export an ist, dürfen wir max. das BILD DAVOR aus dem Cache laden.
+            # So wird das Zielbild IMMER einmal frisch und MIT Details berechnet! <---
+            start_search_idx = target_idx - 1 if detail_export else target_idx
+            
+            for i in range(start_search_idx, -1, -1):
+                if i in self.frame_cache[side]:
+                    best_cached_idx = i
+                    break
+                    
+            if best_cached_idx >= 0:
+                cached_data = self.frame_cache[side][best_cached_idx]
                 
-        if best_cached_idx >= 0:
-            cached_data = self.frame_cache[side][best_cached_idx]
-            
-            d_sm.shots = copy.deepcopy(cached_data['shots'])
-            temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
-            temp_state.cumulative_mask = safe_copy(cached_data['mask'])
-            
-            d_dm.debug_images[f"diff_letzter_treffer_{side}"] = safe_copy(cached_data.get('diff_letzter_treffer'))
-            d_dm.debug_images[f"diff_letzte_verworfene_auswertung_{side}"] = safe_copy(cached_data.get('diff_letzte_verworfene'))
-            d_dm.debug_images[f"letzte_abrisskante_{side}"] = safe_copy(cached_data.get('letzte_abrisskante'))
-            
-            start_idx = best_cached_idx + 1
-            
-            if start_idx <= target_idx:
-                self.print_log("SYSTEM", f"⚡ Lazy-Cache: Überspringe die ersten {start_idx} Bilder, setze Zeitreise bei Bild #{start_idx + 1} fort...")
-
-        # ---------------------------------------------------------
-        # Dynamische Ausführungs-Schleife ab start_idx
-        # ---------------------------------------------------------
-        for i in range(start_idx, target_idx + 1):
-            img = self.get_img(side_origs[i])
-            
-            # ---> ELA FIX: Bei JEDEM Frame alte Diffs löschen, damit Geisterbilder nicht den Cache vergiften! <---
-            d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
-            d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
-            d_dm.debug_images.pop(f"letzte_abrisskante_{side}", None)
-            
-            if i == target_idx:
-                self.log_text.insert(tk.END, "\n" + "▼"*70 + "\n", "mono")
-                self.log_text.insert(tk.END, f"███  START DER LIVE-ANALYSE FÜR BILD-AUFNAHME ({i+1})  ███\n", "mono")
-                self.log_text.insert(tk.END, "▼"*70 + "\n", "mono")
+                d_sm.shots = copy.deepcopy(cached_data['shots'])
+                temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
+                temp_state.cumulative_mask = safe_copy(cached_data['mask'])
                 
+                d_dm.debug_images[f"diff_letzter_treffer_{side}"] = safe_copy(cached_data.get('diff_letzter_treffer'))
+                d_dm.debug_images[f"diff_letzte_verworfene_auswertung_{side}"] = safe_copy(cached_data.get('diff_letzte_verworfene'))
+                d_dm.debug_images[f"letzte_abrisskante_{side}"] = safe_copy(cached_data.get('letzte_abrisskante'))
+                
+                start_idx = best_cached_idx + 1
+                
+                if start_idx <= target_idx:
+                    self.print_log("SYSTEM", f"⚡ Lazy-Cache: Überspringe die ersten {start_idx} Bilder, setze Zeitreise bei Bild #{start_idx + 1} fort...")
+    
+            # ---------------------------------------------------------
+            # Dynamische Ausführungs-Schleife ab start_idx
+            # ---------------------------------------------------------
+            # ---> NEU: Log-Hinweis ab 10 zu berechnenden Bildern <---
+            frames_zu_rechnen = (target_idx + 1) - start_idx
+            if frames_zu_rechnen >= 10:
+                self.update_frame_title(f"⏳ [Zeitreise] Berechne größere Distanz ({frames_zu_rechnen} Frames)... Bitte warten.")
+            self.root.update()
+            
+            for i in range(start_idx, target_idx + 1):
+                ################## HIER WARTE-CURSOR #####################################
+                #self.root.config(cursor="watch")
+                #self.lbl_image.config(cursor="watch")
+                #if hasattr(self, 'img_container'):
+                #    self.img_container.config(cursor="watch")
+                #self.root.update()   
+                ################## HIER WARTE-CURSOR #####################################
+                
+                img = self.get_img(side_origs[i])
+                
+                # ---> ELA FIX: Bei JEDEM Frame alte Diffs löschen, damit Geisterbilder nicht den Cache vergiften! <---
+                d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
+                d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
+                d_dm.debug_images.pop(f"letzte_abrisskante_{side}", None)
+                
+                if i == target_idx:
+                    self.print_log(None, "\n" + "▼"*70)
+                    self.print_log(None, f"███  START DER LIVE-ANALYSE FÜR BILD-AUFNAHME ({i+1})  ███")
+                    self.print_log(None, "▼"*70)
+                    
+                    live_img = img.copy()
+                    clean_live_img = img.copy()
+                    
+                    temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
+                    if temp_state.cumulative_mask is not None:
+                        history_mask = temp_state.cumulative_mask.copy()
+                    else:
+                        history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+                        
+                    # ---> ZIEL-BILD: Details aktivieren (falls vom Nutzer gewünscht) <---
+                    detector.detail_export_aktiv = detail_export
+                else:
+                    self.print_log(None, f"\n--- BILD #{i+1} ".ljust(61, "-"))
+                    
+                    # ---> FAST-FORWARD: Striktes Verbot für Monsterdaten! <---
+                    detector.detail_export_aktiv = False
+                        
+                shots_before = len(d_sm.shots)
+                detector.detect_new_shot(img, side)
+                shots_after = len(d_sm.shots)
+                
+                for j in range(shots_before, shots_after):
+                    d_sm.shots[j]['labor_frame_num'] = i + 1
+                    
+                # ---> DEN FRAME IN DEN CACHE LEGEN <---
+                temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
+                
+                # ---> ELA RAM-DIÄT: Wir schneiden die Monsterdaten rigoros ab, BEVOR sie in den Cache gehen! <---
+                cache_shots = copy.deepcopy(d_sm.shots)
+                for s in cache_shots:
+                    s.pop('score_export_details', None)
+                    
+                self.frame_cache[side][i] = {
+                    'shots': cache_shots,
+                    'mask': safe_copy(temp_state.cumulative_mask),
+                    'diff_letzter_treffer': safe_copy(d_dm.debug_images.get(f"diff_letzter_treffer_{side}")),
+                    'diff_letzte_verworfene': safe_copy(d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}")),
+                    'letzte_abrisskante': safe_copy(d_dm.debug_images.get(f"letzte_abrisskante_{side}")),
+                    'log_text': self.log_text.get("1.0", tk.END)
+                }
+    
+            # ---------------------------------------------------------
+            # Fallback für reine Cache-Ladevorgänge (0-ms-Render)
+            # ---------------------------------------------------------
+            if start_idx > target_idx:
+                img = self.get_img(side_origs[target_idx])
                 live_img = img.copy()
                 clean_live_img = img.copy()
                 
-                temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
-                if temp_state.cumulative_mask is not None:
-                    history_mask = temp_state.cumulative_mask.copy()
+                if target_idx in self.frame_cache[side]:
+                    cached_log = self.frame_cache[side][target_idx].get('log_text', '')
+                    if cached_log:
+                        self.log_text.insert(tk.END, cached_log.rstrip('\n') + '\n')
+                
+                if (target_idx - 1) >= 0 and (target_idx - 1) in self.frame_cache[side]:
+                    prev_mask = self.frame_cache[side][target_idx - 1]['mask']
+                    history_mask = safe_copy(prev_mask)
+                    if history_mask is None:
+                        history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
                 else:
-                    history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
-                    
-                # ---> ZIEL-BILD: Details aktivieren (falls vom Nutzer gewünscht) <---
-                detector.detail_export_aktiv = detail_export
-            else:
-                self.log_text.insert(tk.END, f"\n--- BILD #{i+1} ".ljust(61, "-") + "\n", "mono")
-                
-                # ---> FAST-FORWARD: Striktes Verbot für Monsterdaten! <---
-                detector.detail_export_aktiv = False
-                    
-            shots_before = len(d_sm.shots)
-            detector.detect_new_shot(img, side)
-            shots_after = len(d_sm.shots)
+                    temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
+                    if temp_state.cumulative_mask is not None:
+                        history_mask = temp_state.cumulative_mask.copy()
+                    else:
+                        history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+                        
+                self.print_log(None, "\n" + "▼"*70)
+                self.print_log(None, f"███  BILD #{target_idx+1} DIREKT AUS DEM CACHE GELADEN (0 ms)  ███")
+                self.print_log(None, "▼"*70)
+    
+            # 4. VISUALISIERUNG DER ENGINE-ERGEBNISSE
+            # Hole das Diff-Bild direkt aus dem Dummy-DateiManager der Engine!
+            # ---> NEU: Ringwertung aus dem StateManager in die GUI schreiben (MIT SCHUSS-NUMMER) <---
+            side_shots = [s for s in d_sm.shots if s['side'] == side]
+            lines = []
             
-            for j in range(shots_before, shots_after):
-                d_sm.shots[j]['labor_frame_num'] = i + 1
+            # ---> DER FIX: Auslesen der Nachkommastellen direkt aus der Config! <---
+            decimals = d_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
+            
+            for i, s in enumerate(side_shots):
+                # DER FIX: Wir verlassen uns stur auf die Frame-Nummer, nicht auf "is_new"!
+                if s.get('labor_frame_num') == self.current_index:
+                    lines.append(f"🎯 #{i+1}: {s['score']:.{decimals}f}")
+                    
+            if lines:
+                self.lbl_current_scores.config(text="\n".join(lines), fg="#27ae60")
+            else:
+                self.lbl_current_scores.config(text="- keine -", fg="gray")
                 
-            # ---> DEN FRAME IN DEN CACHE LEGEN <---
+                
+            diff_img = d_dm.debug_images.get(f"diff_letzter_treffer_{side}")
+            if diff_img is None:
+                diff_img = d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}")
+            if diff_img is None:
+                diff_img = np.zeros_like(live_img)
+            
+            if len(diff_img.shape) == 2:
+                diff_img = cv2.cvtColor(diff_img, cv2.COLOR_GRAY2BGR)
+                
+            # ---> Die Zeichen-Logik wurde komplett in LaborRendererDeLuebs verlagert! <---
+            
+            # 1. Radius berechnen
+            r_erkennung = round(detector.get_caliber_radius(side))
+            r_offiziell = round(self.official_radius_px)
+            self.current_radius_px = r_erkennung
+            
+            # 2. Original-Treffer filtern
+            if getattr(self, 'original_match_data', None):
+                side_char = 'l' if side == 'left' else 'r'
+                orig_shots_side = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
+                curr_shots_side = [s for s in d_sm.shots if s.get('side') == side]
+                
+                aligned = self.align_shots(orig_shots_side, curr_shots_side, r_erkennung * 2.5)
+                
+                shots_to_draw = []
+                for o_idx, c_idx, dist in aligned:
+                    if o_idx is not None and c_idx is not None:
+                        curr_shot = curr_shots_side[c_idx]
+                        frame_num = curr_shot.get('labor_frame_num', 0)
+                        
+                        #if frame_num < self.current_index: #NUR BILD VORHER
+                        if frame_num <= self.current_index:
+                            shots_to_draw.append(orig_shots_side[o_idx])
+                
+                self.last_orig_shots_to_draw = shots_to_draw 
+            else:
+                self.last_orig_shots_to_draw = []
+            # (Wird wieder butterweich und hochauflösend vom Renderer übernommen)
+            
+            
+            # ====================================================================
+            # ---> NEU: Daten für den späteren Vergleich merken <---
+            self.current_engine_shots = d_sm.shots 
+            #self.current_side = side # WURDE SCHON GANZ OBEN GEMACHT!!
+    
+            # ---> NEU: Alle nötigen Bilder aus der Engine fischen <---
+            h, w = live_img.shape[:2]
+            
+            # ---> DER FIX: Diff-Gesamt 100% sicher aus dem StateManager holen! <---
             temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
-            
-            # ---> ELA RAM-DIÄT: Wir schneiden die Monsterdaten rigoros ab, BEVOR sie in den Cache gehen! <---
-            cache_shots = copy.deepcopy(d_sm.shots)
-            for s in cache_shots:
-                s.pop('score_export_details', None)
-                
-            self.frame_cache[side][i] = {
-                'shots': cache_shots,
-                'mask': safe_copy(temp_state.cumulative_mask),
-                'diff_letzter_treffer': safe_copy(d_dm.debug_images.get(f"diff_letzter_treffer_{side}")),
-                'diff_letzte_verworfene': safe_copy(d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}")),
-                'letzte_abrisskante': safe_copy(d_dm.debug_images.get(f"letzte_abrisskante_{side}")),
-                'log_text': self.log_text.get("1.0", tk.END)
-            }
-
-        # ---------------------------------------------------------
-        # Fallback für reine Cache-Ladevorgänge (0-ms-Render)
-        # ---------------------------------------------------------
-        if start_idx > target_idx:
-            img = self.get_img(side_origs[target_idx])
-            live_img = img.copy()
-            clean_live_img = img.copy()
-            
-            if target_idx in self.frame_cache[side]:
-                cached_log = self.frame_cache[side][target_idx].get('log_text', '')
-                if cached_log:
-                    self.log_text.insert(tk.END, cached_log.rstrip('\n') + '\n')
-            
-            if (target_idx - 1) >= 0 and (target_idx - 1) in self.frame_cache[side]:
-                prev_mask = self.frame_cache[side][target_idx - 1]['mask']
-                history_mask = safe_copy(prev_mask)
-                if history_mask is None:
-                    history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+            if temp_state.cumulative_mask is not None:
+                diff_gesamt_img = temp_state.cumulative_mask.copy()
             else:
-                temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
-                if temp_state.cumulative_mask is not None:
-                    history_mask = temp_state.cumulative_mask.copy()
+                diff_gesamt_img = np.zeros((h, w), dtype=np.uint8)
+                
+                
+            ref_img = d_dm.debug_images.get(f"referenz_{side}")
+            if ref_img is None:
+                ref_img = np.zeros((h, w, 3), dtype=np.uint8)
+    
+            # Bilder für butterweiches Zoomen im RAM zwischenspeichern
+            self.last_live_img = live_img
+            self.last_clean_live_img = clean_live_img.copy() # <--- NEU: Das nackte Bild retten!
+            self.last_diff_img = diff_img
+            self.last_diff_gesamt_img = diff_gesamt_img
+            self.last_ref_img = ref_img
+            
+            # ---> NEU: Abrisskante aus dem Dummy-Manager fischen <---
+            self.last_abrisskante = d_dm.debug_images.get(f"letzte_abrisskante_{side}")
+    
+            
+            
+            # ==========================================================
+            # ---> NEU: Den echten RAW-Diff-Wert berechnen (Modus 4) <---
+            # ==========================================================
+            if len(ref_img.shape) == 3 and 'clean_live_img' in locals():
+                k = self.blur_kernel_size_var.get()
+                
+                # 1. Wir nutzen zwingend das saubere Bild OHNE gezeichnete Kreise!
+                live_blur = cv2.GaussianBlur(clean_live_img, (k, k), 0)
+                
+                # Die Engine nutzt intern self.ref_left, und das ist geblurrt gespeichert.
+                ref_blur = cv2.GaussianBlur(ref_img, (k, k), 0)
+                
+                norm_live = detector.normalize_brightness(ref_blur, live_blur)
+                diff_bgr = cv2.absdiff(ref_blur, norm_live)
+                raw_diff = np.max(diff_bgr, axis=2) # Unser Farb-Hack!
+                
+                # =========================================================================
+                # ---> NEU: Matrix-Simulation für das Labor (Ansicht 4 synchron halten!) <---
+                # =========================================================================
+                if self.farb_bonus_aktiv_var.get():
+                    bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
+                    r_tgt = d_config.getint(bg_sec, 'rgb_r')
+                    g_tgt = d_config.getint(bg_sec, 'rgb_g')
+                    b_tgt = d_config.getint(bg_sec, 'rgb_b')
+                    
+                    sum_tgt = float(r_tgt + g_tgt + b_tgt)
+                    if sum_tgt == 0: sum_tgt = 1.0
+                    target_norm = np.array([b_tgt/sum_tgt, g_tgt/sum_tgt, r_tgt/sum_tgt], dtype=np.float32)
+                    
+                    live_float = norm_live.astype(np.float32)
+                    live_sum = np.sum(live_float, axis=2, keepdims=True)
+                    live_sum[live_sum == 0] = 1.0
+                    live_norm = live_float / live_sum
+                    
+                    dist_matrix = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
+                    
+                    self.last_color_dist = dist_matrix # Distanz für die Maus retten!
+                    
+                    # =========================================================================
+                    # ---> NEU: ELA-konforme Multiplikator-Logik mit Rausch-Plateau <---
+                    # =========================================================================
+                    limit = self.farb_bonus_limit_var.get()
+                    multiplier = 1.0 - (dist_matrix / limit)
+                    
+                    # Boost um 15% (Rausch-Ausgleich), aber hart bei 1.0 abriegeln!
+                    multiplier = np.clip(multiplier * 1.15, 0.0, 1.0)
+                    
+                    kurve = self.farb_bonus_kurve_var.get()
+                    if kurve != 1.0:
+                        multiplier = multiplier ** kurve
+                    
+                    self.last_color_multiplier = multiplier 
+                    
+                    raw_diff = np.clip(raw_diff.astype(np.float32) * multiplier, 0, 255).astype(np.uint8)
                 else:
-                    history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
-                    
-            self.log_text.insert(tk.END, "\n" + "▼"*70 + "\n", "mono")
-            self.log_text.insert(tk.END, f"███  BILD #{target_idx+1} DIREKT AUS DEM CACHE GELADEN (0 ms)  ███\n", "mono")
-            self.log_text.insert(tk.END, "▼"*70 + "\n", "mono")
-            self.log_text.see(tk.END)
-
-        # 4. VISUALISIERUNG DER ENGINE-ERGEBNISSE
-        # Hole das Diff-Bild direkt aus dem Dummy-DateiManager der Engine!
-        # ---> NEU: Ringwertung aus dem StateManager in die GUI schreiben (MIT SCHUSS-NUMMER) <---
-        side_shots = [s for s in d_sm.shots if s['side'] == side]
-        lines = []
-        
-        # ---> DER FIX: Auslesen der Nachkommastellen direkt aus der Config! <---
-        decimals = d_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
-        
-        for i, s in enumerate(side_shots):
-            # DER FIX: Wir verlassen uns stur auf die Frame-Nummer, nicht auf "is_new"!
-            if s.get('labor_frame_num') == self.current_index:
-                lines.append(f"🎯 #{i+1}: {s['score']:.{decimals}f}")
+                    self.last_color_multiplier = None
+    
+                # ---> NEU: Wir führen den Threshold VORHER aus, genau wie die Engine! <---
+    
+    
+                hit_tol = self.hit_tolerance_var.get()
+                _, thresh_raw = cv2.threshold(raw_diff, hit_tol, 255, cv2.THRESH_BINARY)
+                self.last_thresh_raw = thresh_raw.copy()
+    
+                self.last_raw_diff = raw_diff.copy() # Für die farbige Anzeige
                 
-        if lines:
-            self.lbl_current_scores.config(text="\n".join(lines), fg="#27ae60")
-        else:
-            self.lbl_current_scores.config(text="- keine -", fg="gray")
+                if 'history_mask' in locals():
+                    self.last_history_mask = history_mask.copy()
+                else:
+                    self.last_history_mask = np.zeros((h, w), dtype=np.uint8)        
+    
+            #self._is_batch_calculating = False
+            self.renderer.update_image_display()
             
+        finally:
+            self._is_batch_calculating = False
+            self.log_text.see(tk.END) # <--- Am Ende 1x sauber nach unten scrollen!
             
-        diff_img = d_dm.debug_images.get(f"diff_letzter_treffer_{side}")
-        if diff_img is None:
-            diff_img = d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}")
-        if diff_img is None:
-            diff_img = np.zeros_like(live_img)
-        
-        if len(diff_img.shape) == 2:
-            diff_img = cv2.cvtColor(diff_img, cv2.COLOR_GRAY2BGR)
-            
-        # ---> Die Zeichen-Logik wurde komplett in LaborRendererDeLuebs verlagert! <---
-        
-        # 1. Radius berechnen
-        r_erkennung = round(detector.get_caliber_radius(side))
-        r_offiziell = round(self.official_radius_px)
-        self.current_radius_px = r_erkennung
-        
-        # 2. Original-Treffer filtern
-        if getattr(self, 'original_match_data', None):
-            side_char = 'l' if side == 'left' else 'r'
-            orig_shots_side = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
-            curr_shots_side = [s for s in d_sm.shots if s.get('side') == side]
-            
-            aligned = self.align_shots(orig_shots_side, curr_shots_side, r_erkennung * 2.5)
-            
-            shots_to_draw = []
-            for o_idx, c_idx, dist in aligned:
-                if o_idx is not None and c_idx is not None:
-                    curr_shot = curr_shots_side[c_idx]
-                    frame_num = curr_shot.get('labor_frame_num', 0)
-                    
-                    #if frame_num < self.current_index: #NUR BILD VORHER
-                    if frame_num <= self.current_index:
-                        shots_to_draw.append(orig_shots_side[o_idx])
-            
-            self.last_orig_shots_to_draw = shots_to_draw 
-        else:
-            self.last_orig_shots_to_draw = []
-        # (Wird wieder butterweich und hochauflösend vom Renderer übernommen)
-        
-        
-        # ====================================================================
-        # ---> NEU: Daten für den späteren Vergleich merken <---
-        self.current_engine_shots = d_sm.shots 
-        #self.current_side = side # WURDE SCHON GANZ OBEN GEMACHT!!
-
-        # ---> NEU: Alle nötigen Bilder aus der Engine fischen <---
-        h, w = live_img.shape[:2]
-        
-        # ---> DER FIX: Diff-Gesamt 100% sicher aus dem StateManager holen! <---
-        temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
-        if temp_state.cumulative_mask is not None:
-            diff_gesamt_img = temp_state.cumulative_mask.copy()
-        else:
-            diff_gesamt_img = np.zeros((h, w), dtype=np.uint8)
-            
-            
-        ref_img = d_dm.debug_images.get(f"referenz_{side}")
-        if ref_img is None:
-            ref_img = np.zeros((h, w, 3), dtype=np.uint8)
-
-        # Bilder für butterweiches Zoomen im RAM zwischenspeichern
-        self.last_live_img = live_img
-        self.last_clean_live_img = clean_live_img.copy() # <--- NEU: Das nackte Bild retten!
-        self.last_diff_img = diff_img
-        self.last_diff_gesamt_img = diff_gesamt_img
-        self.last_ref_img = ref_img
-        
-        # ---> NEU: Abrisskante aus dem Dummy-Manager fischen <---
-        self.last_abrisskante = d_dm.debug_images.get(f"letzte_abrisskante_{side}")
-
-        
-        
-        # ==========================================================
-        # ---> NEU: Den echten RAW-Diff-Wert berechnen (Modus 4) <---
-        # ==========================================================
-        if len(ref_img.shape) == 3 and 'clean_live_img' in locals():
-            k = self.blur_kernel_size_var.get()
-            
-            # 1. Wir nutzen zwingend das saubere Bild OHNE gezeichnete Kreise!
-            live_blur = cv2.GaussianBlur(clean_live_img, (k, k), 0)
-            
-            # Die Engine nutzt intern self.ref_left, und das ist geblurrt gespeichert.
-            ref_blur = cv2.GaussianBlur(ref_img, (k, k), 0)
-            
-            norm_live = detector.normalize_brightness(ref_blur, live_blur)
-            diff_bgr = cv2.absdiff(ref_blur, norm_live)
-            raw_diff = np.max(diff_bgr, axis=2) # Unser Farb-Hack!
-            
-            # =========================================================================
-            # ---> NEU: Matrix-Simulation für das Labor (Ansicht 4 synchron halten!) <---
-            # =========================================================================
-            if self.farb_bonus_aktiv_var.get():
-                bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
-                r_tgt = d_config.getint(bg_sec, 'rgb_r')
-                g_tgt = d_config.getint(bg_sec, 'rgb_g')
-                b_tgt = d_config.getint(bg_sec, 'rgb_b')
-                
-                sum_tgt = float(r_tgt + g_tgt + b_tgt)
-                if sum_tgt == 0: sum_tgt = 1.0
-                target_norm = np.array([b_tgt/sum_tgt, g_tgt/sum_tgt, r_tgt/sum_tgt], dtype=np.float32)
-                
-                live_float = norm_live.astype(np.float32)
-                live_sum = np.sum(live_float, axis=2, keepdims=True)
-                live_sum[live_sum == 0] = 1.0
-                live_norm = live_float / live_sum
-                
-                dist_matrix = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
-                
-                self.last_color_dist = dist_matrix # Distanz für die Maus retten!
-                
-                # =========================================================================
-                # ---> NEU: ELA-konforme Multiplikator-Logik mit Rausch-Plateau <---
-                # =========================================================================
-                limit = self.farb_bonus_limit_var.get()
-                multiplier = 1.0 - (dist_matrix / limit)
-                
-                # Boost um 15% (Rausch-Ausgleich), aber hart bei 1.0 abriegeln!
-                multiplier = np.clip(multiplier * 1.15, 0.0, 1.0)
-                
-                kurve = self.farb_bonus_kurve_var.get()
-                if kurve != 1.0:
-                    multiplier = multiplier ** kurve
-                
-                self.last_color_multiplier = multiplier 
-                
-                raw_diff = np.clip(raw_diff.astype(np.float32) * multiplier, 0, 255).astype(np.uint8)
-            else:
-                self.last_color_multiplier = None
-
-            # ---> NEU: Wir führen den Threshold VORHER aus, genau wie die Engine! <---
-
-
-            hit_tol = self.hit_tolerance_var.get()
-            _, thresh_raw = cv2.threshold(raw_diff, hit_tol, 255, cv2.THRESH_BINARY)
-            self.last_thresh_raw = thresh_raw.copy()
-
-            self.last_raw_diff = raw_diff.copy() # Für die farbige Anzeige
-            
-            if 'history_mask' in locals():
-                self.last_history_mask = history_mask.copy()
-            else:
-                self.last_history_mask = np.zeros((h, w), dtype=np.uint8)        
-
-        
-        self.renderer.update_image_display()
+            self.root.config(cursor="")
+            self.lbl_image.config(cursor="")
+            if hasattr(self, 'img_container'):
+                self.img_container.config(cursor="")
+            if hasattr(self, 'entry_shot_jump'):
+                self.entry_shot_jump.config(cursor="")
+            self.update_frame_title()
 
     def align_shots(self, orig_shots, curr_shots, threshold):
         """Robustes Greedy-Alignment, das Aussetzer und OpenCV-Reihenfolge-Änderungen verzeiht."""
