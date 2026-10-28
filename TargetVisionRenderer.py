@@ -397,7 +397,7 @@ class TargetVisionRenderer:
             if self.show_all_rings:
                 lens_draw_cx = int(round((lens_cx * z + ox) * self.scale_x))
                 lens_draw_cy = int(round((lens_cy * z + oy) * self.scale_y))
-                cross_sz = 4
+                cross_sz = 12
                 cv2.line(roi, (lens_draw_cx - cross_sz, lens_draw_cy), (lens_draw_cx + cross_sz, lens_draw_cy), (0, 255, 255), 1, cv2.LINE_AA)
                 cv2.line(roi, (lens_draw_cx, lens_draw_cy - cross_sz), (lens_draw_cx, lens_draw_cy + cross_sz), (0, 255, 255), 1, cv2.LINE_AA)
             
