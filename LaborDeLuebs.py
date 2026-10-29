@@ -1472,6 +1472,8 @@ class LaborApp:
             target_idx = self.current_index - 1
             orig_name = side_origs[target_idx]
             
+            self._is_batch_calculating = True 
+            
             #self.image_frame.config(text=f" Live-Labor (Mausrad = Zoom | Klick = Bewegen | Rechtsklick = Reset)  |  📄 {orig_name} ")
             
             # 1. DUMMYS AUFBAUEN
@@ -1495,7 +1497,9 @@ class LaborApp:
                 meta = self.original_match_data.get('metadata', {})
                 center_key = 'center_l' if side == 'left' else 'center_r'
                 if meta.get(center_key):
-                    d_sm.set_nullpunkt(side, meta[center_key][0], meta[center_key][1])
+                    cx, cy = meta[center_key][0], meta[center_key][1]
+                    d_sm.set_nullpunkt(side, cx, cy)
+                    self.print_log("SYSTEM", f"🎯 Aktiver Nullpunkt {side.upper()} (aus Match-Daten): X:{cx:.2f} Y:{cy:.2f}")
             
             startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{side}" in f), None)
             if startmask_name:
@@ -1503,9 +1507,12 @@ class LaborApp:
                 startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
                 state = d_sm.state_left if side == 'left' else d_sm.state_right
                 state.cumulative_mask = startmask_gray
-                self.print_log("SYSTEM", f"Fortsetzung erkannt! Start-Maske für {side} geladen.")
+                #self.print_log("SYSTEM", f"Fortsetzung erkannt! Start-Maske für {side} geladen.")
+                # Wenn du das Startmasken-Log bei der Zeitreise nicht sehen willst, 
+                # wird es jetzt auch geschluckt!
+                self.print_log(None, f"[SYSTEM] Fortsetzung erkannt! Start-Maske für {side} geladen.")
             
-            # 3. TIME-TRAVEL SIMULATION
+            # 3. TIME-TRAVEL SIMULATION (Der echte, saubere Lazy Timeline Cache)
             start_idx = 0
             
             def safe_copy(img_obj):
@@ -1632,9 +1639,10 @@ class LaborApp:
                     if history_mask is None:
                         history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
                 else:
-                    temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
-                    if temp_state.cumulative_mask is not None:
-                        history_mask = temp_state.cumulative_mask.copy()
+                    # ---> ELA-FIX: Vor Bild #1 (target_idx == 0) gibt es nur die 
+                    # optionale Start-Maske (Fortsetzung) oder ein komplett leeres Blatt! <---
+                    if startmask_name:
+                        history_mask = startmask_gray.copy()
                     else:
                         history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
                         
@@ -1741,10 +1749,17 @@ class LaborApp:
                 k = self.blur_kernel_size_var.get()
                 
                 # 1. Wir nutzen zwingend das saubere Bild OHNE gezeichnete Kreise!
-                live_blur = cv2.GaussianBlur(clean_live_img, (k, k), 0)
+                #live_blur = cv2.GaussianBlur(clean_live_img, (k, k), 0)
                 
                 # Die Engine nutzt intern self.ref_left, und das ist geblurrt gespeichert.
-                ref_blur = cv2.GaussianBlur(ref_img, (k, k), 0)
+                #ref_blur = cv2.GaussianBlur(ref_img, (k, k), 0)
+                #---> ELA-FIX: Wenn Blur auf 0 steht, Weichzeichnen überspringen (Originalbild nutzen) <---
+                if k > 0 and k % 2 == 1:
+                    live_blur = cv2.GaussianBlur(clean_live_img, (k, k), 0)
+                    ref_blur = cv2.GaussianBlur(ref_img, (k, k), 0)
+                else:
+                    live_blur = clean_live_img.copy()
+                    ref_blur = ref_img.copy()                                           
                 
                 norm_live = detector.normalize_brightness(ref_blur, live_blur)
                 diff_bgr = cv2.absdiff(ref_blur, norm_live)

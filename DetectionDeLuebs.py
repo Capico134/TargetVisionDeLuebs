@@ -328,7 +328,13 @@ class TargetDetector:
 
     def set_reference_image(self, frame, side):
         k = self.blur_kernel_size
-        bgr_blur = cv2.GaussianBlur(frame, (k, k), 0)
+        
+        # ---> ELA-FIX: Wenn der Blur-Kernel 0 (oder ungültig) ist, 
+        # überspringen wir den Gauß-Filter komplett und nehmen das rohe Bild! <---
+        if k > 0 and k % 2 == 1:
+            bgr_blur = cv2.GaussianBlur(frame, (k, k), 0)
+        else:
+            bgr_blur = frame.copy()
         
         if side == 'left': self.ref_left = bgr_blur
         else: self.ref_right = bgr_blur
@@ -367,7 +373,12 @@ class TargetDetector:
             return False
         
         k = self.blur_kernel_size
-        current_bgr_blur = cv2.GaussianBlur(frame, (k, k), 0) 
+        
+        if k > 0 and k % 2 == 1:
+            current_bgr_blur = cv2.GaussianBlur(frame, (k, k), 0) 
+        else:
+            current_bgr_blur = frame.copy()
+            
         current_normalized = self.normalize_brightness(reference_bgr, current_bgr_blur)
         
         #ALTE FARBERKENNUNG

@@ -77,13 +77,10 @@ class LaborUIBuilder:
         """Der Baumeister erhält Zugriff auf das Zentralhirn (app)"""
         self.app = app
 
-    def make_slider(self, parent, label_text, tk_var, from_, to_, res=1, section="Erkennung", key=None, odd_only=False, tooltip_key=None):
+    def make_slider(self, parent, label_text, tk_var, from_, to_, res=1, section="Erkennung", key=None, force_odd=False, tooltip_key=None):
         """Hilfsfunktion für Slider mit direkter Eingabe, Reset und Live-Data-Binding"""
         if key:
             self.app.registered_sliders[key] = tk_var  
-            
-        if odd_only:
-            tk_var._last_val = tk_var.get() 
             
         frame = tk.Frame(parent)
         frame.pack(fill=tk.X, pady=2)
@@ -106,23 +103,32 @@ class LaborUIBuilder:
             if getattr(scale, '_ignore_cmd', False):
                 return
             try:
-                v = int(float(val_str)) if isinstance(tk_var, tk.IntVar) else float(val_str)
-                if odd_only and isinstance(tk_var, tk.IntVar):
-                    if v > 0 and v % 2 == 0:
-                        last = getattr(tk_var, '_last_val', v)
-                        v = v - 1 if v < last else v + 1
+                v = int(float(val_str)) if isinstance(tk_var, tk_var.__class__) and isinstance(tk_var, tk.IntVar) else float(val_str)
+                old_val = tk_var.get()
+                
+                # NUR WENN force_odd True ist, greift die Regel für ungerade Zahlen / 0!
+                if force_odd and isinstance(tk_var, tk.IntVar):
+                    if v == 0:
+                        pass # Die 0 (Filter AUS) bleibt erlaubt
+                    elif v % 2 == 0:
+                        # Richtungsabhängig runden: Beim Verringern abrunden, beim Erhöhen aufrunden!
+                        if v < old_val:
+                            v = max(int(from_), v - 1)
+                        else:
+                            v = min(int(to_), v + 1)
+                        
+                if old_val != v:
+                    tk_var.set(v)
+                    self.app.on_param_change()
+                elif int(float(val_str)) != v:
+                    # Falls am Rand (from_/to_) auf old_val zurückgerundet wurde -> Slider-Griff synchron halten!
                     scale._ignore_cmd = True
                     scale.set(v)
                     scale._ignore_cmd = False
-                    
-                if tk_var.get() != v:
-                    tk_var.set(v)
-                    if odd_only:
-                        tk_var._last_val = v
-                    self.app.on_param_change()
             except ValueError:
                 pass
 
+        # Standard resolution=1 für ALLE Slider – keine kaputten Sprünge mehr!
         scale = tk.Scale(frame, from_=from_, to_=to_, resolution=res, orient=tk.HORIZONTAL, command=scale_cmd, showvalue=0)
         scale._ignore_cmd = True
         scale.set(tk_var.get())
@@ -132,17 +138,15 @@ class LaborUIBuilder:
         def apply_entry_val(event=None):
             try:
                 val = int(float(entry.get())) if isinstance(tk_var, tk.IntVar) else float(entry.get())
-                if odd_only and isinstance(tk_var, tk.IntVar):
-                    #print(f"apply_entry_val: {val}")
-                    if val > 0 and val % 2 == 0:
-                        val += 1 
+                
+                if force_odd and isinstance(tk_var, tk.IntVar):
+                    if val != 0 and val % 2 == 0:
+                        val += 1
+                        
                 if val != tk_var.get():
                     tk_var.set(val)
-                    if odd_only:
-                        tk_var._last_val = val
                     self.app.on_param_change(force=True)
             except ValueError:
-                print("apply_entry_val ERROR")
                 pass 
                 
             entry.delete(0, tk.END)
@@ -189,8 +193,6 @@ class LaborUIBuilder:
             var_key = str(tk_var)
             if hasattr(self.app, 'original_values') and var_key in self.app.original_values:
                 tk_var.set(self.app.original_values[var_key])
-                if odd_only:
-                    tk_var._last_val = tk_var.get()
                 self.app.on_param_change(force=True)
             return "break" 
                 
@@ -513,9 +515,12 @@ class LaborUIBuilder:
         self.make_slider(param_frame, "hough_param1 (Kanten):", self.app.hough_param1_var, 10, 100, key="hough_param1")
         self.make_slider(param_frame, "hough_param2 (Strenge):", self.app.hough_param2_var, 1, 20, key="hough_param2")
         tk.Label(param_frame, text="--- Bild-Filterung ---", fg="#3498db").pack(pady=(10, 5))
-        self.make_slider(param_frame, "blur_kernel_size:", self.app.blur_kernel_size_var, 1, 31, key="blur_kernel_size", odd_only=True)
+        # Für den Blur-Kernel (Startet bei 1 -> 1, 3, 5, 7...)
+        self.make_slider(param_frame, "blur_kernel_size:", self.app.blur_kernel_size_var, 1, 31, key="blur_kernel_size", force_odd=True)
         self.make_slider(param_frame, "randaufschlag_cumulative:", self.app.randaufschlag_cumulative_var, 0, 10, key="randaufschlag_cumulative")
-        self.make_slider(param_frame, "morph_kernel_size:", self.app.morph_kernel_var, 0, 15, key="morph_kernel_size", odd_only=True)
+        # ---> DER FIX FÜR DEN MORPH-KERNEL (Startet bei 1, damit res=2 -> 1,3,5,7 macht) <---
+        # Die 0 (Abschalten) holen wir uns über das Textfeld!
+        self.make_slider(param_frame, "morph_kernel_size:", self.app.morph_kernel_var, 0, 15, key="morph_kernel_size", force_odd=True)
         self.make_slider(param_frame, "max_aspect_ratio (Sichel):", self.app.max_aspect_ratio_var, 1.5, 6.0, 0.1, key="max_aspect_ratio")
         tk.Label(param_frame, text="--- Score-Gewichtung ---", fg="#3498db").pack(pady=(10, 5))
         self.make_slider(param_frame, "gesamt_anteil (Raw):", self.app.gesamt_anteil_am_200score_var, 0.1, 0.9, 0.001, key="gesamt_anteil_am_200score")
