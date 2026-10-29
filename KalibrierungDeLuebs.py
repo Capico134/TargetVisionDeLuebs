@@ -656,6 +656,9 @@ class Kalibrator:
             recalculate()
 
         def apply_preview():
+            # Wenn du den Cache erzwingen willst, lösche ihn kurz:
+            if hasattr(self.app, 'cached_static_layer'):
+                delattr(self.app, 'cached_static_layer')
             self.app._is_loading = True
             try:
                 # ---> LUXUS-FEATURE: Ansicht erzwingen, damit man das Ergebnis sofort sieht <---
@@ -699,7 +702,8 @@ class Kalibrator:
                 d_sm = StateManager(d_config, d_dm)
                 d_sm.set_nullpunkt(side, final_values['cx'], final_values['cy'])
             
-            self.app.process_and_display()
+            #self.app.process_and_display()
+            self.app.renderer.update_image_display(full_rebuild=True, push_to_gui=True)
             
             info_win.lift()
             info_win.focus_force()

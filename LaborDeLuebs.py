@@ -411,7 +411,7 @@ class LaborApp:
             self.update_calib_sliders()
     
     def print_help_banner(self):
-        """Gibt das kompakte Cheat-Sheet für die Steuerung im Log aus."""
+        """Gibt das kompakte Cheat-Sheet für die Steuerung und die Auto-Heilungs-Infos im Log aus."""
         self.print_log("SYSTEM", "----------------------------------------------------------------------")    
         self.print_log("SYSTEM", "🚀 WILLKOMMEN IM LABOR - TASTATUR & MAUS STEUERUNG")
         self.print_log("SYSTEM", "[Pfeil Links/Rechts]   : Bild auf der Zeitleiste vor- und zurückspulen")
@@ -422,6 +422,32 @@ class LaborApp:
         self.print_log("SYSTEM", "[Rechtsklick]          : Ansicht komplett zurücksetzen (Auto-Fit)")
         self.print_log("SYSTEM", "[ESC]                  : Aktionen abbrechen / Kalibrierungs-Klick zurück")
         self.print_log("SYSTEM", "----------------------------------------------------------------------")    
+
+        # ---> NEU: Alle fehlenden / geheilten Parameter aus GUI & AuditedConfigParser sammeln <---
+        parser = self.package_data.get('config') if getattr(self, 'package_data', None) else None
+        alle_ergaenzten = []
+        
+        if getattr(self, 'migrated_keys', None):
+            alle_ergaenzten.extend(self.migrated_keys)
+            
+        if parser and hasattr(parser, 'healed_parameters'):
+            for item in parser.healed_parameters:
+                # 'item' hat das Format "[Sektion] key" -> wir prüfen, ob der Key schon gelistet ist
+                key_only = item.split("] ")[-1] if "] " in item else item
+                if key_only not in alle_ergaenzten and item not in alle_ergaenzten:
+                    alle_ergaenzten.append(item)
+
+        if alle_ergaenzten:
+            keys_str = ", ".join(alle_ergaenzten)
+            self.print_log("SYSTEM", f"🔧 Auto-Heilung: {len(alle_ergaenzten)} fehlende Parameter mit Standardwerten ergänzt:")
+            self.print_log("SYSTEM", f"   -> {keys_str}")
+            
+        if parser and getattr(parser, 'migrated_parameters', None):
+            mig_str = ", ".join([f"{old_k} -> {new_k}" for _, old_k, new_k, _ in parser.migrated_parameters])
+            self.print_log("SYSTEM", f"🔄 Legacy-Übersetzung: {mig_str}")
+            
+        if alle_ergaenzten or (parser and getattr(parser, 'migrated_parameters', None)):
+            self.print_log("SYSTEM", "----------------------------------------------------------------------")
             
     def get_img(self, name):
         """Holt ein Bild blitzschnell aus dem vorbereiteten RAM-Speicher"""
@@ -458,13 +484,13 @@ class LaborApp:
         # Exakt dieselbe Hilfsfunktion nutzen – keine Redundanz mehr!
         self.apply_config_to_ui(parser)
 
-        # ---> NEU: Migrator-Log auch im lokalen Modus ausgeben! <---
-        if hasattr(self, 'migrated_keys') and self.migrated_keys:
-            keys_str = ", ".join(self.migrated_keys)
-            self.print_log("SYSTEM", f"🔧 Legacy-Migrator: {len(self.migrated_keys)} fehlende Parameter aus lokaler Config ergänzt:")
-            self.print_log("SYSTEM", f"   -> {keys_str}")
-            print(f"\n🔧 [LEGACY-MIGRATOR] {len(self.migrated_keys)} fehlende Parameter lokal ergänzt:\n   -> {keys_str}\n")
-            self.migrated_keys = []
+        ## ---> NEU: Migrator-Log auch im lokalen Modus ausgeben! <---
+        #if hasattr(self, 'migrated_keys') and self.migrated_keys:
+        #    keys_str = ", ".join(self.migrated_keys)
+        #    self.print_log("SYSTEM", f"🔧 Legacy-Migrator: {len(self.migrated_keys)} fehlende Parameter aus lokaler Config ergänzt:")
+        #    self.print_log("SYSTEM", f"   -> {keys_str}")
+        #    print(f"\n🔧 [LEGACY-MIGRATOR] {len(self.migrated_keys)} fehlende Parameter lokal ergänzt:\n   -> {keys_str}\n")
+        #    self.migrated_keys = []
 
     def load_zip(self, filepath=None):
         if not filepath:
