@@ -394,15 +394,16 @@ class LaborApp:
                 'left_y': parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0),
                 'left_fisch': parser.getfloat('Kameras', 'linsen_verzerrung_links', fallback=0.0),
                 'left_r4': parser.getfloat('Kameras', 'linsen_verzerrung_links_r4', fallback=0.0),
+                'left_off_x': parser.getint('Kameras', 'lens_offset_x_links', fallback=0), # <--- HIER ERGÄNZEN
+                'left_off_y': parser.getint('Kameras', 'lens_offset_y_links', fallback=0),
                 'right_x': parser.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0),
                 'right_y': parser.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0),
                 'right_fisch': parser.getfloat('Kameras', 'linsen_verzerrung_rechts', fallback=0.0),
                 'right_r4': parser.getfloat('Kameras', 'linsen_verzerrung_rechts_r4', fallback=0.0),
-                'left_off_y': parser.getint('Kameras', 'lens_offset_y_links', fallback=0),
                 'right_off_x': parser.getint('Kameras', 'lens_offset_x_rechts', fallback=0),
                 'right_off_y': parser.getint('Kameras', 'lens_offset_y_rechts', fallback=0),
-                'left_limit': parser.getfloat('Kameras', 'linsen_verzerrung_limit_links', fallback=0.0),    # <--- NEU
-                'right_limit': parser.getfloat('Kameras', 'linsen_verzerrung_limit_rechts', fallback=0.0),  # <--- NEU
+                'left_limit': parser.getfloat('Kameras', 'linsen_verzerrung_limit_links', fallback=0.0),
+                'right_limit': parser.getfloat('Kameras', 'linsen_verzerrung_limit_rechts', fallback=0.0),
             }
             
             # ---> NEU: Initialen Push der Kalibrierungsdaten in die Slider erzwingen, 

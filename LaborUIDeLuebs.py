@@ -474,7 +474,7 @@ class LaborUIBuilder:
         self.make_slider(self.app.calib_outer_frame, "Linsen-r4 (Rand):", self.app.calib_linsen_verzerrung_r4_var, -0.0005, 0.0005, 0.00000001, key=None, tooltip_key="linsen_verzerrung_r4")
         self.make_slider(self.app.calib_outer_frame, "Linsen-Offset X:", self.app.calib_lens_offset_x_var, -300, 300, 1, key=None, tooltip_key="lens_offset_x")
         self.make_slider(self.app.calib_outer_frame, "Linsen-Offset Y:", self.app.calib_lens_offset_y_var, -300, 300, 1, key=None, tooltip_key="lens_offset_y")
-        self.make_slider(self.app.calib_outer_frame, "Optisches Limit (mm):", self.app.calib_linsen_verzerrung_limit_var, 0.0, 100.0, 0.1, key=None, tooltip_key="linsen_verzerrung_limit") # <--- NEU
+        self.make_slider(self.app.calib_outer_frame, "Optisches Limit (mm):", self.app.calib_linsen_verzerrung_limit_var, 0.0, 100.0, 0.001, key=None, tooltip_key="linsen_verzerrung_limit") # <--- NEU
         
         def sync_calib_config(*args):
             if getattr(self.app, 'package_data', None) and self.app.package_data.get('config'):
