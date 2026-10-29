@@ -77,7 +77,7 @@ class LaborUIBuilder:
         """Der Baumeister erhält Zugriff auf das Zentralhirn (app)"""
         self.app = app
 
-    def make_slider(self, parent, label_text, tk_var, from_, to_, res=1, section="Erkennung", key=None, force_odd=False, tooltip_key=None):
+    def make_slider(self, parent, label_text, tk_var, from_, to_, res=1, section="Erkennung", key=None, force_odd=False, tooltip_key=None, hide_scale=False):
         """Hilfsfunktion für Slider mit direkter Eingabe, Reset und Live-Data-Binding"""
         if key:
             self.app.registered_sliders[key] = tk_var  
@@ -95,23 +95,25 @@ class LaborUIBuilder:
         is_float = isinstance(tk_var, tk.DoubleVar)
         vcmd = self.app.vcmd_float if is_float else self.app.vcmd_int
         
-        entry = tk.Entry(frame, width=8, justify="right", validate="key", validatecommand=vcmd)
+        # Das Entry bekommt für High-Precision-Werte etwas mehr Platz (z.B. Breite 14), 
+        # damit man lange Dezimalzahlen wie -0.0001418 komplett sieht!
+        entry_width = 14 if is_float and hide_scale else 8
+        entry = tk.Entry(frame, width=entry_width, justify="right", validate="key", validatecommand=vcmd)
         entry.pack(side=tk.RIGHT, padx=(5, 0))
         entry.insert(0, str(tk_var.get()))
         
         def scale_cmd(val_str):
+            if hide_scale: return
             if getattr(scale, '_ignore_cmd', False):
                 return
             try:
-                v = int(float(val_str)) if isinstance(tk_var, tk_var.__class__) and isinstance(tk_var, tk.IntVar) else float(val_str)
+                v = int(float(val_str)) if isinstance(tk_var, tk.IntVar) else float(val_str)
                 old_val = tk_var.get()
                 
-                # NUR WENN force_odd True ist, greift die Regel für ungerade Zahlen / 0!
                 if force_odd and isinstance(tk_var, tk.IntVar):
                     if v == 0:
-                        pass # Die 0 (Filter AUS) bleibt erlaubt
+                        pass
                     elif v % 2 == 0:
-                        # Richtungsabhängig runden: Beim Verringern abrunden, beim Erhöhen aufrunden!
                         if v < old_val:
                             v = max(int(from_), v - 1)
                         else:
@@ -121,22 +123,24 @@ class LaborUIBuilder:
                     tk_var.set(v)
                     self.app.on_param_change()
                 elif int(float(val_str)) != v:
-                    # Falls am Rand (from_/to_) auf old_val zurückgerundet wurde -> Slider-Griff synchron halten!
                     scale._ignore_cmd = True
                     scale.set(v)
                     scale._ignore_cmd = False
             except ValueError:
                 pass
 
-        # Standard resolution=1 für ALLE Slider – keine kaputten Sprünge mehr!
-        scale = tk.Scale(frame, from_=from_, to_=to_, resolution=res, orient=tk.HORIZONTAL, command=scale_cmd, showvalue=0)
-        scale._ignore_cmd = True
-        scale.set(tk_var.get())
-        scale._ignore_cmd = False
-        scale.pack(side=tk.RIGHT, fill=tk.X, expand=True)
+        # Skala nur erzeugen, wenn hide_scale False ist!
+        scale = None
+        if not hide_scale:
+            scale = tk.Scale(frame, from_=from_, to_=to_, resolution=res, orient=tk.HORIZONTAL, command=scale_cmd, showvalue=0)
+            scale._ignore_cmd = True
+            scale.set(tk_var.get())
+            scale._ignore_cmd = False
+            scale.pack(side=tk.RIGHT, fill=tk.X, expand=True)
         
         def apply_entry_val(event=None):
             try:
+                # Hier greift jetzt die exakte Konvertierung (Float behält jede Dezimalstelle!)
                 val = int(float(entry.get())) if isinstance(tk_var, tk.IntVar) else float(entry.get())
                 
                 if force_odd and isinstance(tk_var, tk.IntVar):
@@ -161,15 +165,22 @@ class LaborUIBuilder:
         def sync_entry(*args):
             if self.app.root.focus_get() != entry:
                 entry.delete(0, tk.END)
+                # Zeigt im Entry immer den exakten, ungeschnittenen Wert an!
                 entry.insert(0, str(tk_var.get()))
                 
-            scale._ignore_cmd = True
-            scale.set(tk_var.get())
-            scale._ignore_cmd = False
+            if not hide_scale and scale:
+                scale._ignore_cmd = True
+                scale.set(tk_var.get())
+                scale._ignore_cmd = False
                 
             var_key = str(tk_var)
             if hasattr(self.app, 'original_values') and var_key in self.app.original_values:
-                if str(tk_var.get()) != str(self.app.original_values[var_key]):
+                # Vergleich mit Toleranz für Floats, damit winzige Sensor-Abweichungen nicht ruckeln
+                val_current = tk_var.get()
+                val_orig = self.app.original_values[var_key]
+                is_changed = (val_current != val_orig) if not is_float else (abs(val_current - val_orig) > 1e-9)
+                
+                if is_changed:
                     lbl.config(fg="#e74c3c", font=("Segoe UI", 9, "bold"))
                     if not lbl.cget("text").startswith("*"):
                         lbl.config(text=f"* {label_text}")
@@ -196,7 +207,8 @@ class LaborUIBuilder:
                 self.app.on_param_change(force=True)
             return "break" 
                 
-        scale.bind('<Button-2>', reset_to_original)
+        if not hide_scale and scale:
+            scale.bind('<Button-2>', reset_to_original)
         lbl.bind('<Button-2>', reset_to_original)
         entry.bind('<Button-2>', reset_to_original)
 
@@ -470,11 +482,13 @@ class LaborUIBuilder:
         
         self.make_slider(self.app.calib_outer_frame, "Pixel pro mm (X):", self.app.calib_x_var, 1.0, 15.0, 0.001, key=None, tooltip_key="px_pro_mm")
         self.make_slider(self.app.calib_outer_frame, "Pixel pro mm (Y):", self.app.calib_y_var, 1.0, 15.0, 0.001, key=None, tooltip_key="px_pro_mm")
-        self.make_slider(self.app.calib_outer_frame, "Linsen-Verzerr.:", self.app.calib_linsen_verzerrung_var, -0.01, 0.01, 0.00000001, key=None, tooltip_key="linsen_verzerrung")
-        self.make_slider(self.app.calib_outer_frame, "Linsen-r4 (Rand):", self.app.calib_linsen_verzerrung_r4_var, -0.0005, 0.0005, 0.00000001, key=None, tooltip_key="linsen_verzerrung_r4")
         self.make_slider(self.app.calib_outer_frame, "Linsen-Offset X:", self.app.calib_lens_offset_x_var, -300, 300, 1, key=None, tooltip_key="lens_offset_x")
         self.make_slider(self.app.calib_outer_frame, "Linsen-Offset Y:", self.app.calib_lens_offset_y_var, -300, 300, 1, key=None, tooltip_key="lens_offset_y")
-        self.make_slider(self.app.calib_outer_frame, "Optisches Limit (mm):", self.app.calib_linsen_verzerrung_limit_var, 0.0, 100.0, 0.001, key=None, tooltip_key="linsen_verzerrung_limit") # <--- NEU
+        self.make_slider(self.app.calib_outer_frame, "Optisches Limit (mm):", self.app.calib_linsen_verzerrung_limit_var, 0.0, 100.0, 0.01, key=None, tooltip_key="linsen_verzerrung_limit")
+        # ---> HIER GREFT AB SOFORT DIE VOLE PRÄZISION OHNE SCALE-BESCHNITT! <---
+        self.make_slider(self.app.calib_outer_frame, "Linsen-Verzerr.:", self.app.calib_linsen_verzerrung_var, -0.01, 0.01, 0.0, key=None, tooltip_key="linsen_verzerrung", hide_scale=True)
+        self.make_slider(self.app.calib_outer_frame, "Linsen-r4 (Rand):", self.app.calib_linsen_verzerrung_r4_var, -0.0005, 0.0005, 0.0, key=None, tooltip_key="linsen_verzerrung_r4", hide_scale=True)
+        
         
         def sync_calib_config(*args):
             if getattr(self.app, 'package_data', None) and self.app.package_data.get('config'):
