@@ -206,6 +206,7 @@ class LaborRenderer:
         side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
         seite_str = "links" if side == 'left' else "rechts"
         d_config = self.app.package_data['config']
+        targets = self.app.package_data['targets']
         px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
         px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
         korrektur = d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0)
@@ -230,7 +231,7 @@ class LaborRenderer:
         
         aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
         ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
-        targets = self.app.dm.load_targets()
+        #targets = self.app.dm.load_targets()
         
         if aktive_scheibe in targets and ringwertung_aktiv:
             kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
@@ -642,13 +643,14 @@ class LaborRenderer:
         
         if getattr(self.app, 'package_data', None) and self.app.package_data.get('config'):
             d_config = self.app.package_data['config']
+            targets = self.app.package_data['targets']
             px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
             px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
             korrektur, korr_r4 = d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0), d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}_r4', fallback=0.0)
             lens_cx = (d_config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280) / 2.0) - d_config.getint("Crop_Links" if side == 'left' else "Crop_Rechts", 'cut_left', fallback=0) + d_config.getint('Kameras', f'lens_offset_x_{seite_str}', fallback=0)
             lens_cy = (d_config.getint('Kameras', f'cam_height_{seite_str}', fallback=720) / 2.0) - d_config.getint("Crop_Links" if side == 'left' else "Crop_Rechts", 'cut_top', fallback=0) + d_config.getint('Kameras', f'lens_offset_y_{seite_str}', fallback=0)
             aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-            targets = self.app.dm.load_targets()
+            #targets = self.app.dm.load_targets()
             kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5)) if aktive_scheibe in targets and d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False) else d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
             r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe, config_limit_mm=d_config.getfloat('Kameras', f'linsen_verzerrung_limit_{seite_str}', fallback=0.0))
         else:

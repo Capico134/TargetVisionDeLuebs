@@ -694,11 +694,16 @@ class LaborUIBuilder:
         dialog.title("Erweiterte Einstellungen (Live Data-Binding)")
         
         sf = self.app.root.winfo_fpixels('1i') / 96.0
-        w, h = int(550 * sf), int(700 * sf)
-        dialog.geometry(f"{w}x{h}")
+        w = int(550 * sf)
+        
+        # Tatsächliche Bildschirmhöhe ermitteln, um Abschneiden zu verhindern
+        screen_h = dialog.winfo_screenheight()
+        target_h = min(int(850 * sf), int(screen_h * 0.85))
+        
+        dialog.geometry(f"{w}x{target_h}")
         
         dialog.transient(self.app.root)  
-        dialog.focus_force()         
+        dialog.focus_force()     
 
         info_frame = tk.Frame(dialog, bg="#fff3cd", bd=1, relief=tk.SOLID)
         info_frame.pack(fill=tk.X, padx=10, pady=(10, 0))

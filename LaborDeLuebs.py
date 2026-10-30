@@ -455,6 +455,10 @@ class LaborApp:
 
     def load_local_config(self):
         """Lädt die lokale config.ini im Stand-Alone Modus."""
+        
+        # ---> DER FIX: Cache leeren, damit frisch von der Festplatte gelesen wird! <---
+        #self.dm.targets_cache = None
+        
         parser = self.dm.load_or_create_config()
         
         #Das macht jetzt schon AuditedConfig.py
@@ -471,7 +475,8 @@ class LaborApp:
         self.package_data = {
             'config': parser,
             'images': {},
-            'match_data': None
+            'match_data': None,
+            'targets': self.dm.load_targets()  # <--- BOOM! Symmetrie zur Config hergestellt!
         }
         
         self.root.title("Labor & Einstellungen - Lokale config.ini")
@@ -508,6 +513,16 @@ class LaborApp:
             if not self.package_data:
                 messagebox.showerror("Fehler", "Konnte ZIP-Paket nicht laden!")
                 return
+                
+            # =========================================================================
+            # ---> DER FIX: Zeitkapsel-JSON global für ALLE Module in den Cache zwingen! <---
+            # =========================================================================
+            if not self.package_data.get('targets'):
+                self.package_data['targets'] = self.dm.load_targets()
+            #if self.package_data.get('targets'):
+            #    self.dm.targets_cache = self.package_data['targets']
+            #else:
+            #    self.dm.targets_cache = None
                 
             parser = self.package_data.get('config')
             
@@ -569,20 +584,20 @@ class LaborApp:
             # 1. ZUERST BILD LADEN UND LOG LÖSCHEN
             self.process_and_display()
 
-            # 2. DANN DEN MIGRATOR-LOG SCHREIBEN (Damit er sichtbar bleibt!)
-            if hasattr(self, 'migrated_keys') and self.migrated_keys:
-                keys_str = ", ".join(self.migrated_keys)
-                
-                # A) Ausgabe in der Labor-GUI
-                self.print_log("SYSTEM", f"🔧 Legacy-Migrator: {len(self.migrated_keys)} fehlende Parameter für diese Analyse ergänzt:")
-                self.print_log("SYSTEM", f"   -> {keys_str}")
-                
-                # B) Ausgabe in der CMD-Konsole
-                print(f"\n🔧 [LEGACY-MIGRATOR] {len(self.migrated_keys)} fehlende Parameter aus GUI-Standardwerten in '{os.path.basename(filepath)}' ergänzt:")
-                print(f"   -> {keys_str}\n")
-                
-                # Merkliste wieder putzen
-                self.migrated_keys = []
+            ## 2. DANN DEN MIGRATOR-LOG SCHREIBEN (Damit er sichtbar bleibt!)
+            #if hasattr(self, 'migrated_keys') and self.migrated_keys:
+            #    keys_str = ", ".join(self.migrated_keys)
+            #    
+            #    # A) Ausgabe in der Labor-GUI
+            #    self.print_log("SYSTEM", f"🔧 Legacy-Migrator: {len(self.migrated_keys)} fehlende Parameter für diese Analyse ergänzt:")
+            #    self.print_log("SYSTEM", f"   -> {keys_str}")
+            #    
+            #    # B) Ausgabe in der CMD-Konsole
+            #    print(f"\n🔧 [LEGACY-MIGRATOR] {len(self.migrated_keys)} fehlende Parameter aus GUI-Standardwerten in '{os.path.basename(filepath)}' ergänzt:")
+            #    print(f"   -> {keys_str}\n")
+            #    
+            #    # Merkliste wieder putzen
+            #    self.migrated_keys = []
                 
             self._is_loading = False # <--- NEU: Ladesperre LÖSEN
 
@@ -1426,7 +1441,8 @@ class LaborApp:
     
             ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
             aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-            targets = self.dm.load_targets()
+            #targets = self.dm.load_targets()
+            targets = self.package_data['targets']
             
             decimals = d_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
             

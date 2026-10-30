@@ -49,6 +49,8 @@ class Kalibrator:
                     if len(pts) in [16, 20]:
                         # ---> NEU: Sicherheits-Prüfung der Zielscheibe! <---
                         d_config = self.app.package_data['config']
+                        #targets = self.app.package_data['targets']
+                        
                         aktuelle_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Unbekannt')
                         gespeicherte_scheibe = params.get("zielscheibe", "Unbekannt")
                         
@@ -116,6 +118,8 @@ class Kalibrator:
         self.app.lbl_image.config(cursor="crosshair")
         
         d_config = self.app.package_data['config']
+        #targets = self.app.package_data['targets']
+        
         aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
         
         self.app.print_log("KALIB", "▼" * 70, show_gui=True)
@@ -224,8 +228,9 @@ class Kalibrator:
             return
             
         d_config = self.app.package_data['config']
+        targets = self.app.package_data['targets']
         aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-        targets = self.app.dm.load_targets()
+        #targets = self.app.dm.load_targets()
         
         if aktive_scheibe not in targets:
             messagebox.showerror("Fehler", f"Scheibe '{aktive_scheibe}' nicht in zielscheiben.json gefunden!")
@@ -303,7 +308,14 @@ class Kalibrator:
         info_win.focus_force()
         
         sf = self.app.root.winfo_fpixels('1i') / 96.0
-        info_win.geometry(f"{int(750 * sf)}x{int(850 * sf)}")
+        
+        # Tatsächliche Bildschirmhöhe ermitteln
+        screen_h = info_win.winfo_screenheight()
+        
+        # Wir berechnen eine sichere Höhe (entweder 750 Pixel oder max. 85% des Bildschirms)
+        target_h = min(int(750 * sf), int(screen_h * 0.85))
+        
+        info_win.geometry(f"{int(750 * sf)}x{target_h}")
         
         tk.Label(info_win, text="Kalibrierungs-Werkbank", font=("Arial", 12, "bold")).pack(pady=(10, 5))
         
@@ -378,11 +390,16 @@ class Kalibrator:
         build_param_row(control_frame, "Linsen-Offset X:", var_off_x, 1, 5, lock_off_x)
         build_param_row(control_frame, "Linsen-Offset Y:", var_off_y, 1, 5, lock_off_y)
 
-        txt_frame = tk.Frame(info_win)
-        txt_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+        # 1. Den Rahmen für das Protokoll erstellen
+        txt_frame = tk.LabelFrame(info_win, text="Protokoll & Validierung")
+        txt_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 5))
+        
+        # 2. Die Scrollbar GEHÖRT in den Rahmen
         scrollbar = tk.Scrollbar(txt_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        txt_log = tk.Text(txt_frame, font=("Consolas", 10), bg="#1e1e1e", fg="#00ff00", yscrollcommand=scrollbar.set)
+        
+        # 3. Das Textfeld GEHÖRT JETZT EBENFALLS in den Rahmen (txt_frame) und kriegt die Scrollbar zugewiesen!
+        txt_log = tk.Text(txt_frame, font=("Consolas", 9), bg="#1e1e1e", fg="#00ff00", height=10, yscrollcommand=scrollbar.set)
         txt_log.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=txt_log.yview)
 
@@ -677,6 +694,7 @@ class Kalibrator:
                 seite_str = "links" if side == 'left' else "rechts"
                 if hasattr(self.app, 'package_data') and self.app.package_data and 'config' in self.app.package_data:
                     d_config = self.app.package_data['config']
+                    #targets = self.app.package_data['targets']
                     d_config.set('Kameras', f'px_pro_mm_x_{seite_str}', str(final_values['px_x']))
                     d_config.set('Kameras', f'px_pro_mm_y_{seite_str}', str(final_values['px_y']))
                     d_config.set('Kameras', f'linsen_verzerrung_{seite_str}', str(final_values['korr']))
@@ -697,6 +715,7 @@ class Kalibrator:
             
             if hasattr(self.app, 'package_data') and self.app.package_data and 'config' in self.app.package_data:
                 d_config = self.app.package_data['config']
+                #targets = self.app.package_data['targets']
                 from LaborDeLuebs import DummyDateiManager 
                 d_dm = DummyDateiManager(self.app)
                 d_sm = StateManager(d_config, d_dm)
@@ -745,6 +764,7 @@ class Kalibrator:
             if filepath:
                 try:
                     d_config = self.app.package_data['config']
+                    #targets = self.app.package_data['targets']
                     aktive_scheibe_str = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Unbekannt')
                     
                     export_data = {
