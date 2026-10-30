@@ -3,11 +3,17 @@ import glob
 import re
 import ast
 
+# 1. SAUBERE CONFIG-ZUGRIFFE (Sucht jetzt gezielt nach Variablen, die config, parser oder d_config heißen)
 CONFIG_PATTERN = re.compile(
-    r'\.get(?:int|float|boolean)?\s*\(\s*[\'"]([^\'"]+)[\'"]\s*,\s*[\'"]([^\'"]+)[\'"]'
+    r'(?:config|parser|d_config)\.get(?:int|float|boolean)?\s*\(\s*[\'"]([^\'"]+)[\'"]\s*,\s*[\'"]([^\'"]+)[\'"]'
 )
+
+# 2. BÖSE BYPASSES
 DUMB_PARSER_PATTERN = re.compile(r'configparser\.ConfigParser\(\)')
 DIRECT_OPEN_PATTERN = re.compile(r'open\s*\(\s*[\'"][^\'"]*config\.ini[\'"]')
+
+# NEU: Findet direkte Zugriffe wie config['Erkennung']['Parameter'], die den AuditedConfigParser umgehen!
+DICT_BYPASS_PATTERN = re.compile(r'(?:config|parser|d_config)\[[\'"][^\'"]+[\'"]\]\[[\'"][^\'"]+[\'"]\]')
 
 def scan_project():
     print("🔍 Starte Architektur- & Bypass-Scan...\n")
@@ -60,6 +66,10 @@ def scan_project():
                 bypasses.append(f"Zeile {i+1}: Standard 'configparser.ConfigParser()' statt AuditedConfigParser genutzt")
             if DIRECT_OPEN_PATTERN.search(line):
                 bypasses.append(f"Zeile {i+1}: 'config.ini' wurde direkt mit open() geöffnet")
+            
+            # ---> NEU: Spürt die fiesen Dictionary-Zugriffe auf! <---
+            if DICT_BYPASS_PATTERN.search(line):
+                bypasses.append(f"Zeile {i+1}: Direkter [Sektion][Key] Zugriff umgeht die Auto-Heilung!")
 
         if classes or functions or config_calls or bypasses:
             report_lines.append(f"## 📄 `{filepath}`")

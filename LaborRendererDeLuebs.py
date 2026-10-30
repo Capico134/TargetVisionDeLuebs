@@ -346,8 +346,57 @@ class LaborRenderer:
                                                 zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
                                             )
 
+
+
+
+        mode = self.app.view_mode_var.get()     # <--- DIESE ZEILE HINZUFÜGEN!
         current_frame_num = self.app.current_index
         base_r = getattr(self.app, 'current_radius_px', 15)
+
+#Subpixel Anzeige        
+        if (mode == 1 or mode == 2) and hasattr(self.app, 'current_engine_shots'):
+            # Reale Skalierungsfaktoren des aktuellen 'combined'-Arrays ermitteln
+            # (Garantiert 100% Deckungsgleichheit mit cv2.resize INTER_NEAREST!)
+            curr_h, curr_w = combined.shape[:2]
+            src_w = (orig_x2 - orig_x1) if is_hybrid_mode and (crop_x1 < crop_x2 and crop_y1 < crop_y2) else (2 * w)
+            src_h = (orig_y2 - orig_y1) if is_hybrid_mode and (crop_x1 < crop_x2 and crop_y1 < crop_y2) else h
+            
+            real_scale_x = curr_w / float(src_w) if src_w > 0 else self.app.current_scale
+            real_scale_y = curr_h / float(src_h) if src_h > 0 else self.app.current_scale
+
+            for shot in self.app.current_engine_shots:
+                if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num:    
+                    details = shot.get('score_export_details')
+                    if details:
+                        scale = details.get('scale', 4)
+                        off_x = details.get('offset_x', 0)
+                        off_y = details.get('offset_y', 0)
+                        
+                        def draw_subpixel_box(sx_val, sy_val, color_bgr):
+                            # 1. Globale Koordinate im Doppelbild (Rechtes Panel startet bei +w)
+                            gx1 = w + off_x + (sx_val / float(scale))
+                            gy1 = off_y + (sy_val / float(scale))
+                            gx2 = w + off_x + ((sx_val + 1) / float(scale))
+                            gy2 = off_y + ((sy_val + 1) / float(scale))
+                            
+                            # 2. Exakte INTER_NEAREST-Kantenformel: ceil(coord * scale) statt Python-round()!
+                            # (-1e-9 verhindert, dass glatte Ganzzahlen durch Float-Ungenauigkeit um +1 aufgerundet werden)
+                            ui_x1 = int(math.ceil((gx1 - orig_x1) * real_scale_x - 1e-9))
+                            ui_y1 = int(math.ceil((gy1 - orig_y1) * real_scale_y - 1e-9))
+                            ui_x2 = int(math.ceil((gx2 - orig_x1) * real_scale_x - 1e-9)) - 1
+                            ui_y2 = int(math.ceil((gy2 - orig_y1) * real_scale_y - 1e-9)) - 1
+                            
+                            if ui_x2 >= ui_x1 and ui_y2 >= ui_y1:
+                                cv2.rectangle(combined, (ui_x1, ui_y1), (ui_x2, ui_y2), color_bgr, -1)
+
+                        for sx, sy in details.get('subpixels_raw', []):
+                            draw_subpixel_box(sx, sy, (0, 0, 150))
+
+                        for sx, sy in details.get('subpixels_new', []):
+                            draw_subpixel_box(sx, sy, (0, 165, 255))
+
+
+
 
 # GELBE KREISE?
         if getattr(self.app, 'show_orig_hits_var', None) and self.app.show_orig_hits_var.get():
@@ -417,53 +466,14 @@ class LaborRenderer:
             r2_px  = int(round(echter_score_radius_px * self.app.current_scale))
             cv2.putText(combined, f"#{f_num}", (txt_x2 - 30, txt_y - r2_px - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_8)
 
-        mode = self.app.view_mode_var.get()
+        #mode = self.app.view_mode_var.get()
         if mode == 4 and hasattr(self.app, 'current_engine_shots'):
             for shot in self.app.current_engine_shots:
                 if shot.get('side') != side or shot.get('labor_frame_num') != current_frame_num: continue
                 if "Abriss" in shot.get('winner_method', ''):
                     self._draw_candidate_vector(combined, shot.get('base_pos'), shot.get('end_pos'), shot['pos'], offset_x=self.app.current_img_w, vp_x=vp_x, vp_y=vp_y)
 
-        if (mode == 1 or mode == 2) and hasattr(self.app, 'current_engine_shots'):
-            # Reale Skalierungsfaktoren des aktuellen 'combined'-Arrays ermitteln
-            # (Garantiert 100% Deckungsgleichheit mit cv2.resize INTER_NEAREST!)
-            curr_h, curr_w = combined.shape[:2]
-            src_w = (orig_x2 - orig_x1) if is_hybrid_mode and (crop_x1 < crop_x2 and crop_y1 < crop_y2) else (2 * w)
-            src_h = (orig_y2 - orig_y1) if is_hybrid_mode and (crop_x1 < crop_x2 and crop_y1 < crop_y2) else h
-            
-            real_scale_x = curr_w / float(src_w) if src_w > 0 else self.app.current_scale
-            real_scale_y = curr_h / float(src_h) if src_h > 0 else self.app.current_scale
-
-            for shot in self.app.current_engine_shots:
-                if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num:    
-                    details = shot.get('score_export_details')
-                    if details:
-                        scale = details.get('scale', 4)
-                        off_x = details.get('offset_x', 0)
-                        off_y = details.get('offset_y', 0)
-                        
-                        def draw_subpixel_box(sx_val, sy_val, color_bgr):
-                            # 1. Globale Koordinate im Doppelbild (Rechtes Panel startet bei +w)
-                            gx1 = w + off_x + (sx_val / float(scale))
-                            gy1 = off_y + (sy_val / float(scale))
-                            gx2 = w + off_x + ((sx_val + 1) / float(scale))
-                            gy2 = off_y + ((sy_val + 1) / float(scale))
-                            
-                            # 2. Exakte INTER_NEAREST-Kantenformel: ceil(coord * scale) statt Python-round()!
-                            # (-1e-9 verhindert, dass glatte Ganzzahlen durch Float-Ungenauigkeit um +1 aufgerundet werden)
-                            ui_x1 = int(math.ceil((gx1 - orig_x1) * real_scale_x - 1e-9))
-                            ui_y1 = int(math.ceil((gy1 - orig_y1) * real_scale_y - 1e-9))
-                            ui_x2 = int(math.ceil((gx2 - orig_x1) * real_scale_x - 1e-9)) - 1
-                            ui_y2 = int(math.ceil((gy2 - orig_y1) * real_scale_y - 1e-9)) - 1
-                            
-                            if ui_x2 >= ui_x1 and ui_y2 >= ui_y1:
-                                cv2.rectangle(combined, (ui_x1, ui_y1), (ui_x2, ui_y2), color_bgr, -1)
-
-                        for sx, sy in details.get('subpixels_raw', []):
-                            draw_subpixel_box(sx, sy, (0, 0, 150))
-
-                        for sx, sy in details.get('subpixels_new', []):
-                            draw_subpixel_box(sx, sy, (0, 165, 255))
+        
 
         if getattr(self.app, 'candidate_view_active', False) and hasattr(self.app, 'var_shots'):
             shift, mult = 4, 16
