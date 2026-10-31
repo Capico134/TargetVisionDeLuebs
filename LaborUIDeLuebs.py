@@ -800,6 +800,22 @@ class LaborUIBuilder:
                     cb.bind("<Button-4>", block_cb_scroll) 
                     cb.bind("<Button-5>", block_cb_scroll)
 
+                # ---> NEU: Freitext (USB-Index, RTSP-Link oder MP4-Pfad) für die Kameras <---
+                elif key in ['cam_left_index', 'cam_right_index']:
+                    var = tk.StringVar(value=val_str.strip('\'"'))
+                    entry = tk.Entry(row, textvariable=var, width=38, justify="right")
+                    entry.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(10, 0))
+                    def make_cam_trace(s, k, var_obj):
+                        def cmd(*args):
+                            try:
+                                clean_v = str(var_obj.get()).strip().strip('\'"').strip()
+                            except tk.TclError:
+                                return
+                            parser.set(s, k, clean_v)
+                            self.app.on_param_change()
+                        return cmd
+                    var.trace_add("write", make_cam_trace(section, key, var))
+
                 elif val_str.lower() in ['yes', 'no', 'true', 'false', 'on', 'off']:
                     is_true = val_str.lower() in ['yes', 'true', 'on']
                     var = tk.BooleanVar(value=is_true)

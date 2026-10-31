@@ -10,3 +10,5 @@ config_backup.ini
 treffer_log.txt
 test_report.txt
 Thumbs.db
+.requirements_hash
+.icon_applied

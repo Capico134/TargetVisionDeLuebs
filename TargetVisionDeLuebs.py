@@ -65,10 +65,16 @@ class TargetTracker:
         if hasattr(self.config, 'healed_parameters') and self.config.healed_parameters:
             self.show_config_alert()
 
+    @staticmethod
+    def _parse_cam_source(val_str):
+        """ELA: Entfernt Anführungszeichen; Zahl -> int (USB), Text -> str (RTSP / Datei)."""
+        s = str(val_str).strip().strip('\'"').strip()
+        return int(s) if (s.isdigit() or (s.startswith('-') and s[1:].isdigit())) else s
+
     def _background_camera_init(self):
-        """Initialisiert die Kameras asynchron über das neue Modul."""
-        cam_left_idx = self.config.getint('Kameras', 'cam_left_index')
-        cam_right_idx = self.config.getint('Kameras', 'cam_right_index')
+        """Initialisiert die Kameras asynchron (USB-Index, RTSP-Stream oder Videodatei)."""
+        cam_left_idx = self._parse_cam_source(self.config.get('Kameras', 'cam_left_index', fallback='0'))
+        cam_right_idx = self._parse_cam_source(self.config.get('Kameras', 'cam_right_index', fallback='1'))
         width_l = self.config.getint('Kameras', 'cam_width_links', fallback=1280)
         height_l = self.config.getint('Kameras', 'cam_height_links', fallback=720)
         width_r = self.config.getint('Kameras', 'cam_width_rechts', fallback=1280)
@@ -77,21 +83,18 @@ class TargetTracker:
         self.log("SYSTEM", "--- KAMERA HARDWARE STATUS ---", True)
         
         if self.nutze_kamera_links:
-            # ---> cv2.CAP_ANY als neutraler Platzhalter (Die Klasse entscheidet selbst!) <---
             self.cap_left = AsyncCamera(cam_left_idx, cv2.CAP_ANY, width_l, height_l, self.kamera_bildrate, self.log, "LINKS")
             if self.cap_left.start():
                 belichtung_l = self.config.get('Kameras', 'belichtung_links', fallback='Standard')
                 self.cap_left.set_exposure(belichtung_l, self.is_windows)
                 
         if self.nutze_kamera_rechts:
-            # ---> cv2.CAP_ANY als neutraler Platzhalter <---
             self.cap_right = AsyncCamera(cam_right_idx, cv2.CAP_ANY, width_r, height_r, self.kamera_bildrate, self.log, "RECHTS")
             if self.cap_right.start():
                 belichtung_r = self.config.get('Kameras', 'belichtung_rechts', fallback='Standard')
                 self.cap_right.set_exposure(belichtung_r, self.is_windows)
             
         self.kameras_bereit = True
-
     def read_frames(self):
         """Holt das Bild und die Info, ob OpenCV rechnen muss."""
         frame_l, frame_r = None, None
@@ -429,15 +432,15 @@ class TargetTracker:
         self.config.read(self.dm.CONFIG_FILE, encoding='utf-8')
 
         # =====================================================================
-        # ---> NEU: Belichtung live auf die laufenden Kameras anwenden! <---
+        # ---> Belichtung live auf die laufenden Kameras anwenden! <---
         # =====================================================================
         if self.nutze_kamera_links and self.cap_left:
             belichtung_l = self.config.get('Kameras', 'belichtung_links', fallback='Standard')
-            self._set_camera_exposure(self.cap_left, belichtung_l)
+            self.cap_left.set_exposure(belichtung_l, self.is_windows)
                 
         if self.nutze_kamera_rechts and self.cap_right:
             belichtung_r = self.config.get('Kameras', 'belichtung_rechts', fallback='Standard')
-            self._set_camera_exposure(self.cap_right, belichtung_r)
+            self.cap_right.set_exposure(belichtung_r, self.is_windows)
         # =====================================================================
         
         # Weiche Variablen im laufenden Betrieb updaten
