@@ -35,6 +35,10 @@ class TargetTracker:
         self.cap_left = None
         self.cap_right = None
         
+        self.is_recording = False
+        self.video_writer = None
+        self.last_rendered_frame = None
+        
         # 1. Den Hintergrundarbeiter losschicken
         init_thread = threading.Thread(target=self._background_camera_init, daemon=True)
         init_thread.start()
@@ -119,6 +123,8 @@ class TargetTracker:
         time.sleep(0.05)
 
     def cleanup(self):
+        if self.is_recording and self.video_writer:
+            self.video_writer.release()
         self.dm.flush_image_queue()
         if self.nutze_kamera_links and self.cap_left: 
             self.cap_left.stop()
@@ -659,6 +665,12 @@ class TargetTracker:
                     self.trigger_exit = True
                     return
             
+            if getattr(self.renderer, 'btn_record_coords', None):
+                rx1, ry1, rx2, ry2 = self.renderer.btn_record_coords
+                if rx1 <= x <= rx2 and ry1 <= y <= ry2:
+                    self.toggle_recording()
+                    return
+            
             if getattr(self.renderer, 'btn_zip_coords', None):
                 zx1, zy1, zx2, zy2 = self.renderer.btn_zip_coords
                 if zx1 <= x <= zx2 and zy1 <= y <= zy2:
@@ -961,6 +973,30 @@ class TargetTracker:
                     self.log("SYSTEM", f"Zielscheiben-Ringe dauerhaft {'aktiviert' if self.renderer.show_all_rings else 'deaktiviert'}.", True)
                     return
 
+    def toggle_recording(self):
+        if not self.is_recording:
+            if self.last_rendered_frame is None: return
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = os.path.join(self.dm.DEBUG_FOLDER, f"Regie_Record_{timestamp}.mp4")
+            
+            h, w = self.last_rendered_frame.shape[:2]
+            self.record_dim = (w, h) # <--- NEU: Wir frieren die Aufnahme-Auflösung ein!
+            
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v') # Universeller MP4-Codec
+            fps = self.fps_limit if self.fps_limit > 0 else 30
+            
+            self.video_writer = cv2.VideoWriter(filename, fourcc, fps, (w, h))
+            self.is_recording = True
+            self.log("SYSTEM", f"🔴 Aufnahme gestartet: {os.path.basename(filename)}", True)
+        else:
+            self.is_recording = False
+            if self.video_writer:
+                self.video_writer.release()
+                self.video_writer = None
+            self.log("SYSTEM", "⏹️ Aufnahme beendet und gespeichert.", True)
+
+
     def process_edits(self):
         if self.trigger_edit_left:
             self.open_edit_dialog('left')
@@ -1157,12 +1193,25 @@ class TargetTracker:
                 first_frame = False
 
             # Die GUI rendert IMMER butterweich weiter!
-            self.renderer.update_gui(frame_l, frame_r, blink_state)
+            self.last_rendered_frame = self.renderer.update_gui(frame_l, frame_r, blink_state)
+            
+            # ---> NEU: Jeden Frame sofort in die MP4 schreiben <---
+            if self.is_recording and self.video_writer and self.last_rendered_frame is not None:
+                frame_to_record = self.last_rendered_frame
+                current_h, current_w = frame_to_record.shape[:2]
+                # Wenn das Fenster verzogen wurde, pressen wir das Bild für 
+                # die Aufnahme blitzschnell wieder in die Original-Schablone!
+                if (current_w, current_h) != getattr(self, 'record_dim', (0,0)):
+                    frame_to_record = cv2.resize(frame_to_record, self.record_dim)
+                self.video_writer.write(frame_to_record)
             
             if self.check_keys(frame_start_time):
                 break
 
         self.cleanup()
+
+
+
 
 if __name__ == "__main__":
     dm = DateiManager(clear_on_start=True)

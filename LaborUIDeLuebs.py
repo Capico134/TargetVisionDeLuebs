@@ -518,7 +518,7 @@ class LaborUIBuilder:
         
         tk.Label(param_frame, text="--- Engine Parameter ---", fg="#3498db").pack(pady=(5, 5))
         
-        self.make_slider(param_frame, "hit_tolerance:", self.app.hit_tolerance_var, 1, 100, key="hit_tolerance")
+        self.make_slider(param_frame, "hit_tolerance:", self.app.hit_tolerance_var, 1, 300, key="hit_tolerance")
         self.make_slider(param_frame, "min_hole_area:", self.app.min_hole_area_var, 5, 500, key="min_hole_area")
         self.make_slider(param_frame, "caliber_durchmesser (mm):", self.app.caliber_durchmesser_var, 3.00, 10.00, res=0.01, key="caliber_durchmesser")
         tk.Label(param_frame, text="--- Hybrid & Hough Faktoren ---", fg="#3498db").pack(pady=(10, 5))

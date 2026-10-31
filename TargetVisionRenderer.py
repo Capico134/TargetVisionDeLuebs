@@ -550,6 +550,12 @@ class TargetVisionRenderer:
 
         x_cursor = win_w - 10
         self.btn_exit_coords, x_cursor = draw_button(combined_view, "Beenden", x_cursor, (60, 60, 60))
+        # ---> NEU: Der Record-Button (Leuchtet Rot, wenn aktiv) <---
+        is_rec = getattr(self.tracker, 'is_recording', False)
+        rec_text = "REC (Laeuft)" if is_rec else "Record"
+        rec_color = (0, 0, 220) if is_rec else (50, 50, 50)
+        self.btn_record_coords, x_cursor = draw_button(combined_view, rec_text, x_cursor, rec_color)
+        #Handbuch
         self.btn_hilfe_coords, x_cursor = draw_button(combined_view, "Handbuch", x_cursor, (30, 140, 255))
         self.btn_zip_coords, x_cursor = draw_button(combined_view, "Bug ZIP", x_cursor, (40, 120, 40))
         self.btn_highscore_coords, x_cursor = draw_button(combined_view, "Highscore", x_cursor, (50, 150, 200))
@@ -756,3 +762,5 @@ class TargetVisionRenderer:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
 
         cv2.imshow(self.tracker.window_name, combined_view)
+        
+        return combined_view
