@@ -310,7 +310,7 @@ clipping_factor_current = 0.95
 # 0 = alle Treffer; alle anderen Zahlenwerte = nur die ersten x Treffer mit der größten Fläche werden gewertet
 max_treffer_je_frame = 0
 randaufschlag_cumulative = 0
-farb_bonus_aktiv = yes
+farb_bonus_aktiv = no
 farb_bonus_limit = 150.0
 farb_bonus_kurve = 2.0
 grenzwert_hough = 7.0
@@ -622,6 +622,15 @@ treffer_anzeigedauer = 8
                 print(f"🔧 Führe Auto-Patch aus: Füge '{neue_r4} = 0.0' hinzu...")
                 self.update_ini_value('Kameras', neue_r4, '0.0')
                 needs_reload = True
+
+
+        if config.has_option('Erkennung', 'farb_bonus_aktiv'):
+            # Prüfen, ob der Farbbonus aktuell aktiv ist (yes/true/1)
+            if config.getboolean('Erkennung', 'farb_bonus_aktiv', fallback=True):
+                print("🔧 Führe Auto-Patch aus: Setze 'farb_bonus_aktiv' auf 'no'...")
+                self.update_ini_value('Erkennung', 'farb_bonus_aktiv', 'no')
+                needs_reload = True
+
 
         
         if needs_reload:
