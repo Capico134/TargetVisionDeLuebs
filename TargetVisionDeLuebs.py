@@ -988,6 +988,12 @@ class TargetTracker:
             
             self.video_writer = cv2.VideoWriter(filename, fourcc, fps, (w, h))
             self.is_recording = True
+            
+            # ---> NEU: Zeit-Tracker für den Frame-Duplikator
+            self.recording_start_time = time.perf_counter()
+            self.frames_written = 0
+            self.recorded_fps = fps
+            
             self.log("SYSTEM", f"🔴 Aufnahme gestartet: {os.path.basename(filename)}", True)
         else:
             self.is_recording = False
@@ -1195,15 +1201,27 @@ class TargetTracker:
             # Die GUI rendert IMMER butterweich weiter!
             self.last_rendered_frame = self.renderer.update_gui(frame_l, frame_r, blink_state)
             
-            # ---> NEU: Jeden Frame sofort in die MP4 schreiben <---
+            # ---> NEU: Jeden Frame sofort in die MP4 schreiben (inkl. Frame-Padding) <---
             if self.is_recording and self.video_writer and self.last_rendered_frame is not None:
                 frame_to_record = self.last_rendered_frame
                 current_h, current_w = frame_to_record.shape[:2]
-                # Wenn das Fenster verzogen wurde, pressen wir das Bild für 
-                # die Aufnahme blitzschnell wieder in die Original-Schablone!
+                
+                # Reskalieren bei Fenster-Änderungen
                 if (current_w, current_h) != getattr(self, 'record_dim', (0,0)):
                     frame_to_record = cv2.resize(frame_to_record, self.record_dim)
+                    
+                # 1. Das aktuelle Bild immer mindestens 1x schreiben
                 self.video_writer.write(frame_to_record)
+                self.frames_written += 1
+                
+                # 2. Prüfen, ob wir durch hohe CPU-Last hinterherhinken
+                elapsed_time = time.perf_counter() - self.recording_start_time
+                expected_frames = int(elapsed_time * self.recorded_fps)
+                
+                # 3. Frame duplizieren, bis Video-Zeit und Realzeit wieder synchron sind
+                while self.frames_written < expected_frames:
+                    self.video_writer.write(frame_to_record)
+                    self.frames_written += 1
             
             if self.check_keys(frame_start_time):
                 break
