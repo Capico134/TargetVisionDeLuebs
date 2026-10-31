@@ -253,10 +253,10 @@ cam_width_links = 1280
 cam_height_links = 720
 cam_width_rechts = 1280
 cam_height_rechts = 720
-px_pro_mm_x_links = 5.0
-px_pro_mm_y_links = 5.0
-px_pro_mm_x_rechts = 5.0
-px_pro_mm_y_rechts = 5.0
+px_pro_mm_x_links = 9.5
+px_pro_mm_y_links = 9.5
+px_pro_mm_x_rechts = 9.5
+px_pro_mm_y_rechts = 9.5
 # Belichtungseinstellung (Standard, Auto oder manuelle Werte von -1 bis -10)
 belichtung_links = Standard
 belichtung_rechts = Standard
