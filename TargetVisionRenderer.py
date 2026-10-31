@@ -579,13 +579,14 @@ class TargetVisionRenderer:
                 display_shots = side_shots[-max_items:] if total_shots > max_items else side_shots
                 display_shots_rev = list(reversed(display_shots)) 
                 
+                # Rechte Kante der jeweiligen Kamerahälfte im Fenster bestimmen
                 if side == 'left':
-                    if not self.tracker.nutze_kamera_rechts:
-                        box_x = win_w - box_w - 10
-                    else:
-                        box_x = max(10, scaled_w_left - box_w - 10)
+                    right_edge = self.pad_x + scaled_w_left
                 else:
-                    box_x = win_w - box_w - 10
+                    scaled_w_right = int((orig_w - self.w_left_displayed) * self.scale_x)
+                    right_edge = self.pad_x + scaled_w_left + scaled_w_right
+                    
+                box_x = max(self.pad_x + 10, right_edge - box_w - 10)
                     
                 box_h = (len(display_shots_rev) + 2) * line_h
                 

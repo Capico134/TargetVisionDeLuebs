@@ -43,12 +43,14 @@ class AsyncCamera:
             # Unter Windows testen wir erst MSMF (für echtes USB MJPEG), dann DSHOW (für OBS)
             backends_to_try = [cv2.CAP_MSMF, cv2.CAP_DSHOW] if platform.system() == 'Windows' else [cv2.CAP_ANY]
         
+        # ELA: Ab 10 FPS erzwingen wir MJPG (kein USB-Engpass), darunter unkomprimiertes RAW/YUV
         cam_params = [
-            cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'),
             cv2.CAP_PROP_FRAME_WIDTH, self.width,
             cv2.CAP_PROP_FRAME_HEIGHT, self.height,
             cv2.CAP_PROP_FPS, self.fps_target
         ]
+        if self.fps_target >= 10:
+            cam_params = [cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')] + cam_params
         
         for current_backend in backends_to_try:
             if self.is_stream_or_file:
