@@ -480,8 +480,8 @@ class LaborUIBuilder:
         self.app.calib_lens_offset_y_var = tk.IntVar(value=0)
         self.app.calib_linsen_verzerrung_limit_var = tk.DoubleVar(value=0.0) # <--- NEU
         
-        self.make_slider(self.app.calib_outer_frame, "Pixel pro mm (X):", self.app.calib_x_var, 1.0, 15.0, 0.001, key=None, tooltip_key="px_pro_mm")
-        self.make_slider(self.app.calib_outer_frame, "Pixel pro mm (Y):", self.app.calib_y_var, 1.0, 15.0, 0.001, key=None, tooltip_key="px_pro_mm")
+        self.make_slider(self.app.calib_outer_frame, "Pixel pro mm (X):", self.app.calib_x_var, 1.0, 30.0, 0.001, key=None, tooltip_key="px_pro_mm")
+        self.make_slider(self.app.calib_outer_frame, "Pixel pro mm (Y):", self.app.calib_y_var, 1.0, 30.0, 0.001, key=None, tooltip_key="px_pro_mm")
         self.make_slider(self.app.calib_outer_frame, "Linsen-Offset X:", self.app.calib_lens_offset_x_var, -300, 300, 1, key=None, tooltip_key="lens_offset_x")
         self.make_slider(self.app.calib_outer_frame, "Linsen-Offset Y:", self.app.calib_lens_offset_y_var, -300, 300, 1, key=None, tooltip_key="lens_offset_y")
         self.make_slider(self.app.calib_outer_frame, "Optisches Limit (mm):", self.app.calib_linsen_verzerrung_limit_var, 0.0, 100.0, 0.01, key=None, tooltip_key="linsen_verzerrung_limit")
