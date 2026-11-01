@@ -36,6 +36,7 @@ class TargetTracker:
         self.cap_right = None
         
         self.is_recording = False
+        self.record_raw_mode = False  # <--- NEU: Merker für Rohdaten-Modus
         self.video_writer = None
         self.last_rendered_frame = None
         
@@ -55,6 +56,8 @@ class TargetTracker:
         self.raw_dims = {'left': (1,1), 'right': (1,1)}
         self.last_frame_l = None
         self.last_frame_r = None
+        self.last_raw_frame_l = None  # <--- NEU: Ungecropptes Original Links
+        self.last_raw_frame_r = None  # <--- NEU: Ungecropptes Original Rechts
         
         self.calib_feedback_left = None
         self.calib_feedback_right = None
@@ -107,11 +110,13 @@ class TargetTracker:
         if self.nutze_kamera_links and self.cap_left: 
             raw_l, new_l = self.cap_left.read()
             if raw_l is not None:
+                self.last_raw_frame_l = raw_l  # <--- NEU: Rohbild im RAM sichern
                 frame_l = self.apply_crop(raw_l, 'left')
             
         if self.nutze_kamera_rechts and self.cap_right: 
             raw_r, new_r = self.cap_right.read()
             if raw_r is not None:
+                self.last_raw_frame_r = raw_r  # <--- NEU: Rohbild im RAM sichern
                 frame_r = self.apply_crop(raw_r, 'right')
             
         return (frame_l, new_l), (frame_r, new_r)
@@ -665,10 +670,11 @@ class TargetTracker:
                     self.trigger_exit = True
                     return
             
+            # Innerhalb von: if event == cv2.EVENT_LBUTTONDOWN:
             if getattr(self.renderer, 'btn_record_coords', None):
                 rx1, ry1, rx2, ry2 = self.renderer.btn_record_coords
                 if rx1 <= x <= rx2 and ry1 <= y <= ry2:
-                    self.toggle_recording()
+                    self.toggle_recording(raw_mode=False) # <--- Explizit False bei Linksklick
                     return
             
             if getattr(self.renderer, 'btn_zip_coords', None):
@@ -972,31 +978,89 @@ class TargetTracker:
                     self.renderer.show_all_rings = not self.renderer.show_all_rings
                     self.log("SYSTEM", f"Zielscheiben-Ringe dauerhaft {'aktiviert' if self.renderer.show_all_rings else 'deaktiviert'}.", True)
                     return
+                    
+        elif event == cv2.EVENT_RBUTTONDOWN:
+            if getattr(self.renderer, 'btn_record_coords', None):
+                rx1, ry1, rx2, ry2 = self.renderer.btn_record_coords
+                if rx1 <= x <= rx2 and ry1 <= y <= ry2:
+                    self.toggle_recording(raw_mode=True)  # <--- Rechtsklick startet/stoppt Roh-Aufnahme!
+                    return            
+                    
 
-    def toggle_recording(self):
+    def _build_raw_recording_frame(self):
+        """Baut die ungecroppten Rohbilder beider Kameras sicher nebeneinander zusammen."""
+        frames = []
+        if self.nutze_kamera_links:
+            if self.last_raw_frame_l is not None:
+                frames.append(self.last_raw_frame_l)
+            else:
+                w = self.config.getint('Kameras', 'cam_width_links', fallback=1280)
+                h = self.config.getint('Kameras', 'cam_height_links', fallback=720)
+                frames.append(np.zeros((h, w, 3), dtype=np.uint8))
+                
+        if self.nutze_kamera_rechts:
+            if self.last_raw_frame_r is not None:
+                frames.append(self.last_raw_frame_r)
+            else:
+                w = self.config.getint('Kameras', 'cam_width_rechts', fallback=1280)
+                h = self.config.getint('Kameras', 'cam_height_rechts', fallback=720)
+                frames.append(np.zeros((h, w, 3), dtype=np.uint8))
+                
+        if not frames:
+            return None
+        if len(frames) == 1:
+            return frames[0].copy()
+            
+        # Falls beide Kameras unterschiedliche Höhen liefern, sanft mit Schwarz auffüllen
+        max_h = max(f.shape[0] for f in frames)
+        padded = []
+        for f in frames:
+            fh, fw = f.shape[:2]
+            if fh < max_h:
+                pad = np.zeros((max_h, fw, 3), dtype=np.uint8)
+                pad[:fh, :fw] = f
+                padded.append(pad)
+            else:
+                padded.append(f)
+        return np.hstack(padded)
+
+    def toggle_recording(self, raw_mode=False):
         if not self.is_recording:
-            if self.last_rendered_frame is None: return
+            self.record_raw_mode = raw_mode
+            
+            if self.record_raw_mode:
+                sample_frame = self._build_raw_recording_frame()
+                prefix = "Raw_Record"
+                mode_str = "ROHDATEN (Ungecroppt)"
+            else:
+                sample_frame = self.last_rendered_frame
+                prefix = "Regie_Record"
+                mode_str = "GUI-Ansicht"
+                
+            if sample_frame is None:
+                self.log("SYSTEM", "⚠️ Aufnahme nicht möglich: Noch keine Bilddaten vorhanden!", True)
+                return
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = os.path.join(self.dm.DEBUG_FOLDER, f"Regie_Record_{timestamp}.mp4")
+            filename = os.path.join(self.dm.DEBUG_FOLDER, f"{prefix}_{timestamp}.mp4")
             
-            h, w = self.last_rendered_frame.shape[:2]
-            self.record_dim = (w, h) # <--- NEU: Wir frieren die Aufnahme-Auflösung ein!
+            h, w = sample_frame.shape[:2]
+            self.record_dim = (w, h)
             
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v') # Universeller MP4-Codec
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             fps = self.fps_limit if self.fps_limit > 0 else 30
             
             self.video_writer = cv2.VideoWriter(filename, fourcc, fps, (w, h))
             self.is_recording = True
             
-            # ---> NEU: Zeit-Tracker für den Frame-Duplikator
             self.recording_start_time = time.perf_counter()
             self.frames_written = 0
             self.recorded_fps = fps
             
-            self.log("SYSTEM", f"🔴 Aufnahme gestartet: {os.path.basename(filename)}", True)
+            self.log("SYSTEM", f"🔴 Aufnahme ({mode_str}) gestartet: {os.path.basename(filename)}", True)
         else:
             self.is_recording = False
+            self.record_raw_mode = False
             if self.video_writer:
                 self.video_writer.release()
                 self.video_writer = None
@@ -1201,27 +1265,32 @@ class TargetTracker:
             # Die GUI rendert IMMER butterweich weiter!
             self.last_rendered_frame = self.renderer.update_gui(frame_l, frame_r, blink_state)
             
-            # ---> NEU: Jeden Frame sofort in die MP4 schreiben (inkl. Frame-Padding) <---
-            if self.is_recording and self.video_writer and self.last_rendered_frame is not None:
-                frame_to_record = self.last_rendered_frame
-                current_h, current_w = frame_to_record.shape[:2]
-                
-                # Reskalieren bei Fenster-Änderungen
-                if (current_w, current_h) != getattr(self, 'record_dim', (0,0)):
-                    frame_to_record = cv2.resize(frame_to_record, self.record_dim)
+            # ---> NEU: Jeden Frame sofort in die MP4 schreiben (GUI oder RAW) <---
+            if self.is_recording and self.video_writer:
+                if self.record_raw_mode:
+                    frame_to_record = self._build_raw_recording_frame()
+                else:
+                    frame_to_record = self.last_rendered_frame
                     
-                # 1. Das aktuelle Bild immer mindestens 1x schreiben
-                self.video_writer.write(frame_to_record)
-                self.frames_written += 1
-                
-                # 2. Prüfen, ob wir durch hohe CPU-Last hinterherhinken
-                elapsed_time = time.perf_counter() - self.recording_start_time
-                expected_frames = int(elapsed_time * self.recorded_fps)
-                
-                # 3. Frame duplizieren, bis Video-Zeit und Realzeit wieder synchron sind
-                while self.frames_written < expected_frames:
+                if frame_to_record is not None:
+                    current_h, current_w = frame_to_record.shape[:2]
+                    
+                    # Reskalieren bei Fenster-Änderungen
+                    if (current_w, current_h) != getattr(self, 'record_dim', (0,0)):
+                        frame_to_record = cv2.resize(frame_to_record, self.record_dim)
+                        
+                    # 1. Das aktuelle Bild immer mindestens 1x schreiben
                     self.video_writer.write(frame_to_record)
                     self.frames_written += 1
+                    
+                    # 2. Prüfen, ob wir durch hohe CPU-Last hinterherhinken
+                    elapsed_time = time.perf_counter() - self.recording_start_time
+                    expected_frames = int(elapsed_time * self.recorded_fps)
+                    
+                    # 3. Frame duplizieren, bis Video-Zeit und Realzeit wieder synchron sind
+                    while self.frames_written < expected_frames:
+                        self.video_writer.write(frame_to_record)
+                        self.frames_written += 1
             
             if self.check_keys(frame_start_time):
                 break

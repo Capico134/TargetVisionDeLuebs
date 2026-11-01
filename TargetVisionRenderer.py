@@ -550,11 +550,18 @@ class TargetVisionRenderer:
 
         x_cursor = win_w - 10
         self.btn_exit_coords, x_cursor = draw_button(combined_view, "Beenden", x_cursor, (60, 60, 60))
-        # ---> NEU: Der Record-Button (Leuchtet Rot, wenn aktiv) <---
+        
+        # ---> NEU: Der Record-Button unterscheidet optisch zwischen GUI-Rec und RAW-Rec <---
         is_rec = getattr(self.tracker, 'is_recording', False)
-        rec_text = "REC (Laeuft)" if is_rec else "Record"
-        rec_color = (0, 0, 220) if is_rec else (50, 50, 50)
+        is_raw = getattr(self.tracker, 'record_raw_mode', False)
+        if is_rec:
+            rec_text = "REC RAW (Laeuft)" if is_raw else "REC GUI (Laeuft)"
+            rec_color = (180, 0, 180) if is_raw else (0, 0, 220) # Violett für RAW, Rot für GUI
+        else:
+            rec_text = "Record (R:Raw)"
+            rec_color = (50, 50, 50)
         self.btn_record_coords, x_cursor = draw_button(combined_view, rec_text, x_cursor, rec_color)
+        
         #Handbuch
         self.btn_hilfe_coords, x_cursor = draw_button(combined_view, "Handbuch", x_cursor, (30, 140, 255))
         self.btn_zip_coords, x_cursor = draw_button(combined_view, "Bug ZIP", x_cursor, (40, 120, 40))
