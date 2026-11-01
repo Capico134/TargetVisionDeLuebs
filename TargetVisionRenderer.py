@@ -551,17 +551,26 @@ class TargetVisionRenderer:
         x_cursor = win_w - 10
         self.btn_exit_coords, x_cursor = draw_button(combined_view, "Beenden", x_cursor, (60, 60, 60))
         
-        # ---> NEU: Der Record-Button unterscheidet optisch zwischen GUI-Rec und RAW-Rec <---
         is_rec = getattr(self.tracker, 'is_recording', False)
         is_raw = getattr(self.tracker, 'record_raw_mode', False)
+        is_paused = getattr(self.tracker, 'is_recording_paused', False)
+        
         if is_rec:
-            rec_text = "REC RAW (Laeuft)" if is_raw else "REC GUI (Laeuft)"
-            rec_color = (180, 0, 180) if is_raw else (0, 0, 220) # Violett für RAW, Rot für GUI
+            # 1. ERST den Pause-Button zeichnen (landet rechts, direkt neben "Beenden")
+            pause_text = "Weiter" if is_paused else "Pause"
+            pause_color = (40, 180, 40) if is_paused else (220, 100, 20) # BGR: Grün für Weiter, Blau für Pause
+            self.btn_pause_coords, x_cursor = draw_button(combined_view, pause_text, x_cursor, pause_color)
+
+            # 2. DANN den Record-Button zeichnen (landet nun links neben der Pause)
+            rec_text = "REC RAW" if is_raw else "REC GUI"
+            rec_color = (180, 0, 180) if is_raw else (0, 0, 220)
+            self.btn_record_coords, x_cursor = draw_button(combined_view, rec_text, x_cursor, rec_color)
         else:
+            self.btn_pause_coords = None
             rec_text = "Record (R:Raw)"
             rec_color = (50, 50, 50)
-        self.btn_record_coords, x_cursor = draw_button(combined_view, rec_text, x_cursor, rec_color)
-        
+            self.btn_record_coords, x_cursor = draw_button(combined_view, rec_text, x_cursor, rec_color)
+            
         #Handbuch
         self.btn_hilfe_coords, x_cursor = draw_button(combined_view, "Handbuch", x_cursor, (30, 140, 255))
         self.btn_zip_coords, x_cursor = draw_button(combined_view, "Bug ZIP", x_cursor, (40, 120, 40))

@@ -37,6 +37,8 @@ class TargetTracker:
         
         self.is_recording = False
         self.record_raw_mode = False
+        self.is_recording_paused = False  # <--- NEU
+        self.pause_start_time = 0.0       # <--- NEU
         self.video_writer = None
         self.video_writer_r = None       # <--- NEU: Writer für Kamera Rechts
         self.last_recorded_file = None
@@ -568,6 +570,23 @@ class TargetTracker:
         elif key == ord('r'):
             if self.nutze_kamera_links: self.trigger_reset_left = True
             if self.nutze_kamera_rechts: self.trigger_reset_right = True
+            
+        elif key == 32:  # Leertaste (Space)
+            is_file = False
+            is_paused = False
+            if self.nutze_kamera_links and getattr(self, 'cap_left', None) and self.cap_left.is_local_file:
+                is_file = True
+                is_paused = self.cap_left.toggle_pause()
+            if self.nutze_kamera_rechts and getattr(self, 'cap_right', None) and self.cap_right.is_local_file:
+                is_file = True
+                is_paused = self.cap_right.toggle_pause()
+                
+            if is_file:
+                if is_paused:
+                    self.log("SYSTEM", "⏸️ Video-Wiedergabe pausiert (Leertaste).", True)
+                else:
+                    self.log("SYSTEM", "▶️ Video-Wiedergabe fortgesetzt (Leertaste).", True)
+            return False # Key abfangen
 
         if raw_key in (2490368, 65362, 2621440, 65364, 2424832, 65361, 2555904, 65363) or key in (ord('w'), ord('a'), ord('s'), ord('d')):
             current_time = time.time()
@@ -680,6 +699,12 @@ class TargetTracker:
                 rx1, ry1, rx2, ry2 = self.renderer.btn_record_coords
                 if rx1 <= x <= rx2 and ry1 <= y <= ry2:
                     self.toggle_recording(raw_mode=False) # <--- Explizit False bei Linksklick
+                    return
+            
+            if getattr(self.renderer, 'btn_pause_coords', None):
+                px1, py1, px2, py2 = self.renderer.btn_pause_coords
+                if px1 <= x <= px2 and py1 <= y <= py2:
+                    self.toggle_recording_pause()
                     return
             
             if getattr(self.renderer, 'btn_zip_coords', None):
@@ -1080,6 +1105,7 @@ class TargetTracker:
         else:
             self.is_recording = False
             self.record_raw_mode = False
+            self.is_recording_paused = False # <--- NEU: Sicherstellen, dass der Reset greift!
             
             # Beide Writer sicher freigeben
             if getattr(self, 'video_writer', None):
@@ -1094,6 +1120,19 @@ class TargetTracker:
             # Popup aufrufen
             if getattr(self, 'last_recorded_file', None) and os.path.exists(self.last_recorded_file):
                 self._show_recording_saved_popup(self.last_recorded_file, getattr(self, 'last_recorded_file_r', None))
+
+    def toggle_recording_pause(self):
+        if self.is_recording:
+            self.is_recording_paused = not self.is_recording_paused
+            if self.is_recording_paused:
+                self.pause_start_time = time.perf_counter()
+                self.log("SYSTEM", "⏸️ Aufnahme pausiert.", True)
+            else:
+                # Wir subtrahieren die pausierte Zeit vom elapsed_time-Zähler,
+                # indem wir den Startpunkt der Aufnahme künstlich vorschieben!
+                pause_duration = time.perf_counter() - self.pause_start_time
+                self.recording_start_time += pause_duration
+                self.log("SYSTEM", "▶️ Aufnahme fortgesetzt.", True)
 
     def _show_recording_saved_popup(self, filepath, filepath_r=None):
         """Zeigt ein Popup mit Direkt-Button zum Öffnen des Speicherorts im Explorer."""
@@ -1356,7 +1395,7 @@ class TargetTracker:
             self.last_rendered_frame = self.renderer.update_gui(frame_l, frame_r, blink_state)
             
             # ---> NEU: Jeden Frame sofort in die MP4 schreiben (GUI oder getrennte RAWs) <---
-            if self.is_recording:
+            if self.is_recording and not self.is_recording_paused:
                 elapsed_time = time.perf_counter() - self.recording_start_time
                 expected_frames = int(elapsed_time * self.recorded_fps)
                 

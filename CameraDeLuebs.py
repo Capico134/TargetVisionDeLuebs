@@ -33,6 +33,14 @@ class AsyncCamera:
         self.actual_fps = 0
         self.actual_exp = 0
         self.codec_str = "Unbekannt"
+        self.playback_paused = False  # <--- NEU: Pausiert lokale Videodateien
+
+    def toggle_pause(self):
+        """Pausiert oder startet die Wiedergabe einer lokalen Videodatei."""
+        if self.is_local_file:
+            self.playback_paused = not self.playback_paused
+            return self.playback_paused
+        return False
 
     def start(self):
         """Öffnet USB-Kameras (MSMF -> DSHOW) sowie RTSP-Streams und Videodateien (CAP_ANY)."""
@@ -130,13 +138,18 @@ class AsyncCamera:
                 pass
 
     def _update(self):
-        """Der Worker-Thread: Liest Bilder aus (inkl. Endlosschleife & Echtzeit-Bremse für Test-Videos)."""
+        """Der Worker-Thread: Liest Bilder aus (inkl. Echtzeit-Bremse für Test-Videos)."""
         file_delay = 0.0
         if self.is_local_file:
             fps = self.actual_fps if (self.actual_fps and 0 < self.actual_fps < 120) else (self.fps_target if self.fps_target > 0 else 30.0)
             file_delay = 1.0 / fps
 
         while self.running:
+            # ---> NEU: Wenn pausiert, tun wir einfach gar nichts und warten <---
+            if self.playback_paused and self.is_local_file:
+                time.sleep(0.05)
+                continue
+                
             t_start = time.perf_counter()
             ret, frame = self.cap.read()
             
