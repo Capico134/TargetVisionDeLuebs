@@ -38,6 +38,7 @@ class TargetTracker:
         self.is_recording = False
         self.record_raw_mode = False  # <--- NEU: Merker für Rohdaten-Modus
         self.video_writer = None
+        self.last_recorded_file = None  # <--- NEU: Merkt sich den Pfad für das Popup
         self.last_rendered_frame = None
         
         # 1. Den Hintergrundarbeiter losschicken
@@ -1041,9 +1042,13 @@ class TargetTracker:
                 self.log("SYSTEM", "⚠️ Aufnahme nicht möglich: Noch keine Bilddaten vorhanden!", True)
                 return
             
+            # Sicherstellen, dass der Zielordner existiert (Fallback, falls dm noch keinen REC_FOLDER hat)
+            rec_folder = getattr(self.dm, 'REC_FOLDER', os.path.join('savegames', 'rec'))
+            os.makedirs(rec_folder, exist_ok=True)
+            
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            # GEÄNDERT von self.dm.DEBUG_FOLDER zu self.dm.REC_FOLDER:
-            filename = os.path.join(self.dm.REC_FOLDER, f"{prefix}_{timestamp}.mp4")
+            filename = os.path.join(rec_folder, f"{prefix}_{timestamp}.mp4")
+            self.last_recorded_file = os.path.abspath(filename)  # <--- Absoluten Pfad merken
             
             h, w = sample_frame.shape[:2]
             self.record_dim = (w, h)
@@ -1051,7 +1056,7 @@ class TargetTracker:
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             fps = self.fps_limit if self.fps_limit > 0 else 30
             
-            self.video_writer = cv2.VideoWriter(filename, fourcc, fps, (w, h))
+            self.video_writer = cv2.VideoWriter(self.last_recorded_file, fourcc, fps, (w, h))
             self.is_recording = True
             
             self.recording_start_time = time.perf_counter()
@@ -1065,7 +1070,91 @@ class TargetTracker:
             if self.video_writer:
                 self.video_writer.release()
                 self.video_writer = None
+                
             self.log("SYSTEM", "⏹️ Aufnahme beendet und gespeichert.", True)
+            
+            # ---> NEU: Direkt nach dem Speichern das benutzerfreundliche Popup zeigen <---
+            if getattr(self, 'last_recorded_file', None) and os.path.exists(self.last_recorded_file):
+                self._show_recording_saved_popup(self.last_recorded_file)
+
+    def _show_recording_saved_popup(self, filepath):
+        """Zeigt ein klares Popup mit Direkt-Button zum Öffnen des Speicherorts im Explorer."""
+        abs_path = os.path.abspath(filepath)
+        folder_path = os.path.dirname(abs_path)
+        file_name = os.path.basename(abs_path)
+        
+        # 1. Am Anfang der Methode _show_recording_saved_popup auskommentieren:
+        # if self.vollbild:
+        #     cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+        #     cv2.resizeWindow(self.window_name, 1280, 720)
+        #     cv2.waitKey(50)
+
+        root_dialog = tk.Tk()
+        root_dialog.withdraw()
+        
+        dialog = tk.Toplevel(root_dialog)
+        dialog.title("Video erfolgreich gespeichert")
+        dialog.geometry("480x230")
+        dialog.attributes('-topmost', True)
+        dialog.resizable(False, False)
+        
+        # Fenster mittig auf dem Bildschirm platzieren
+        screen_w = dialog.winfo_screenwidth()
+        screen_h = dialog.winfo_screenheight()
+        x_c = (screen_w - 480) // 2
+        y_c = (screen_h - 230) // 2
+        dialog.geometry(f"480x230+{x_c}+{y_c}")
+        
+        tk.Label(dialog, text="🎥 Aufnahme abgeschlossen!", font=('Arial', 13, 'bold'), fg='#2E7D32').pack(pady=(15, 5))
+        tk.Label(dialog, text=f"Datei: {file_name}", font=('Arial', 10, 'bold')).pack(pady=(0, 5))
+        tk.Label(dialog, text=f"Speicherort:\n{folder_path}", font=('Arial', 9), fg='#555555', wraplength=440, justify="center").pack(pady=(0, 15))
+        
+        def open_folder():
+            try:
+                if self.is_windows:
+                    # Öffnet den Windows Explorer und markiert die Videodatei direkt!
+                    subprocess.Popen(['explorer', '/select,', abs_path])
+                elif platform.system() == 'Darwin':
+                    subprocess.Popen(['open', '-R', abs_path])
+                else:
+                    subprocess.Popen(['xdg-open', folder_path])
+            except Exception as e:
+                self.log("SYSTEM", f"Fehler beim Öffnen des Ordners: {e}")
+            dialog.destroy()
+            
+        def close_dialog(e=None):
+            dialog.destroy()
+            
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(pady=5)
+        
+        tk.Button(
+            btn_frame, text="📂 Ordner im Explorer öffnen", command=open_folder, 
+            font=('Arial', 10, 'bold'), bg='#2196F3', fg='white', width=25, pady=5
+        ).pack(side=tk.LEFT, padx=10)
+        
+        tk.Button(
+            btn_frame, text="OK", command=close_dialog, 
+            font=('Arial', 10), width=10, pady=5
+        ).pack(side=tk.LEFT, padx=10)
+        
+        dialog.bind('<Return>', lambda e: open_folder())
+        dialog.bind('<Escape>', close_dialog)
+        dialog.protocol("WM_DELETE_WINDOW", close_dialog)
+        
+        dialog.focus_force()
+        root_dialog.wait_window(dialog)
+        root_dialog.destroy()
+        
+        # 2. Am Ende der Methode _show_recording_saved_popup auskommentieren:
+        # if self.vollbild:
+        #     cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        #     cv2.waitKey(50)
+            
+        # Kurzes Leeren des Kamera-Puffers nach der Dialog-Pause
+        for _ in range(5):
+            if self.nutze_kamera_links and self.cap_left: self.cap_left.read()
+            if self.nutze_kamera_rechts and self.cap_right: self.cap_right.read()
 
 
     def process_edits(self):
