@@ -588,18 +588,52 @@ class LaborRenderer:
                     except Exception: pass
                 
         # =========================================================================
-        # ---> Optische Linsen-Mitte zur Kontrolle einzeichnen <---
+        # ---> Optische Linsen-Mitte zur Kontrolle (mit Rand-Pfeil, falls außerhalb) <---
         # =========================================================================
         if getattr(self.app, 'show_target_rings_var', None) and self.app.show_target_rings_var.get() and 'lens_cx' in locals():
-            marker_color = (0, 255, 255)
-                # 1. panel_overview
-            lx_panel = int(round(lens_cx * self.app.current_scale)) - vp_x
-            ly_panel = int(round(lens_cy * self.app.current_scale)) - vp_y
-                # 2. panel_render
-            for lx in [lx_panel, lx_panel + self.app.current_img_w]:
-                cv2.drawMarker(combined, (lx, ly_panel), marker_color, markerType=cv2.MARKER_CROSS, markerSize=25, thickness=2, line_type=cv2.LINE_AA)
-                cv2.putText(combined, "Linsen-Mitte", (lx + 15, ly_panel - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, marker_color, 2, cv2.LINE_AA)
+            marker_color = (0, 255, 255) # Gelb
+            
+            # Für beide Hälften (Linkes Panel und Rechtes Panel) prüfen
+            for panel_idx, base_offset_x in enumerate([0, self.app.current_img_w]):
+                # Berechne die absolute Position der Linsen-Mitte auf dem jeweiligen Panel
+                lx_panel = int(round(lens_cx * self.app.current_scale)) + base_offset_x - vp_x
+                ly_panel = int(round(lens_cy * self.app.current_scale)) - vp_y
+                
+                # Sichtbarer Bereich des Panels (vom aktuellen Viewport gecroppt)
+                panel_w = self.app.current_img_w
+                panel_h = h * self.app.current_scale # bzw. Höhe des combined arrays
+                
+                # Prüfen, ob das Zentrum im sichtbaren Ausschnitt liegt
+                margin = 20
+                is_visible = (base_offset_x - vp_x <= lx_panel <= base_offset_x + panel_w - vp_x) and \
+                             (0 <= ly_panel <= combined.shape[0])
+                
+                if is_visible:
+                    # Fall A: Linsen-Mitte ist im Bild -> Ganz normal das Kreuz zeichnen
+                    cv2.drawMarker(combined, (lx_panel, ly_panel), marker_color, markerType=cv2.MARKER_CROSS, markerSize=25, thickness=2, line_type=cv2.LINE_AA)
+                    cv2.putText(combined, "Linsen-Mitte", (lx_panel + 15, ly_panel - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, marker_color, 2, cv2.LINE_AA)
+                else:
+                    # Fall B: Linsen-Mitte ist draußen! -> Pfeil am Rand des Panels zeichnen
+                    # Begrenze die Koordinaten auf den sichtbaren Rand des jeweiligen Panels
+                    edge_x = max(base_offset_x + margin, min(base_offset_x + panel_w - margin, lx_panel))
+                    edge_y = max(margin, min(combined.shape[0] - margin, ly_panel))
+                    
+                    # Zeichne einen fetten Richtungs-Pfeil am Rand
+                    # (Wir nutzen ein Dreieck / einen Marker als Hinweis)
+                    cv2.drawMarker(combined, (edge_x, edge_y), (0, 0, 255), markerType=cv2.MARKER_TRIANGLE_UP, markerSize=20, thickness=2, line_type=cv2.LINE_AA)
+                    
+                    # Text-Info, in welche Richtung das Zentrum verzogen ist
+                    richtung_txt = []
+                    if lens_cx * self.app.current_scale + base_offset_x < vp_x: richtung_txt.append("<< Links")
+                    elif lens_cx * self.app.current_scale + base_offset_x > vp_x + panel_w: richtung_txt.append("Rechts >>")
+                    if lens_cy * self.app.current_scale < vp_y: richtung_txt.append("^^ Oben")
+                    elif lens_cy * self.app.current_scale > vp_y + combined.shape[0]: richtung_txt.append("vv Unten")
+                    
+                    inf_str = "Linse ausserhalb (" + " ".join(richtung_txt) + ")"
+                    cv2.putText(combined, inf_str, (edge_x - 60, edge_y + (25 if edge_y < 50 else -15)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2, cv2.LINE_AA)
         
+        
+        #ZEICHNEN!!!!!!!!!!!!!!!!!!'''''''''''!!!!!!!!!!!!!!!!!!
         self.app.base_combined_img = combined.copy()
         self.app.base_combined_img_rgb = cv2.cvtColor(combined, cv2.COLOR_BGR2RGB)
         
