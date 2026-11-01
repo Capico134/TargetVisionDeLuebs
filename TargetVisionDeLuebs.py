@@ -1042,7 +1042,8 @@ class TargetTracker:
                 return
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = os.path.join(self.dm.DEBUG_FOLDER, f"{prefix}_{timestamp}.mp4")
+            # GEÄNDERT von self.dm.DEBUG_FOLDER zu self.dm.REC_FOLDER:
+            filename = os.path.join(self.dm.REC_FOLDER, f"{prefix}_{timestamp}.mp4")
             
             h, w = sample_frame.shape[:2]
             self.record_dim = (w, h)

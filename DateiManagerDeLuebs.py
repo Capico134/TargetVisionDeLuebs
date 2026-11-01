@@ -18,6 +18,7 @@ class DateiManager:
         self.DEBUG_FOLDER = 'debug_bilder'
         self.LOG_FILE = 'treffer_log.txt'
         self.ZIP_FOLDER = 'debug_pakete'
+        self.REC_FOLDER = os.path.join('savegames', 'rec') # <--- NEU: Ordner für Aufnahmen
         
         # ---> NEU: Unser RAM-Log-Puffer statt permanenter Festplatten-I/O <---
         self.log_buffer = []
@@ -35,6 +36,8 @@ class DateiManager:
         """Erstellt Ordner und initialisiert das RAM-Log (ohne Festplatten-Zugriff)."""
         if not os.path.exists(self.DEBUG_FOLDER):
             os.makedirs(self.DEBUG_FOLDER)
+        if not os.path.exists(self.REC_FOLDER):
+            os.makedirs(self.REC_FOLDER)
         elif clear_on_start:
             alte_dateien = glob.glob(os.path.join(self.DEBUG_FOLDER, "*"))
             for f in alte_dateien:
