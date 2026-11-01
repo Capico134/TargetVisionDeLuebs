@@ -36,9 +36,11 @@ class TargetTracker:
         self.cap_right = None
         
         self.is_recording = False
-        self.record_raw_mode = False  # <--- NEU: Merker für Rohdaten-Modus
+        self.record_raw_mode = False
         self.video_writer = None
-        self.last_recorded_file = None  # <--- NEU: Merkt sich den Pfad für das Popup
+        self.video_writer_r = None       # <--- NEU: Writer für Kamera Rechts
+        self.last_recorded_file = None
+        self.last_recorded_file_r = None # <--- NEU: Pfad-Merker für Kamera Rechts
         self.last_rendered_frame = None
         
         # 1. Den Hintergrundarbeiter losschicken
@@ -129,12 +131,14 @@ class TargetTracker:
         time.sleep(0.05)
 
     def cleanup(self):
-        if self.is_recording and self.video_writer:
+        if getattr(self, 'video_writer', None):
             self.video_writer.release()
+        if getattr(self, 'video_writer_r', None): # <--- NEU
+            self.video_writer_r.release()
         self.dm.flush_image_queue()
-        if self.nutze_kamera_links and self.cap_left: 
+        if self.nutze_kamera_links and getattr(self, 'cap_left', None): 
             self.cap_left.stop()
-        if self.nutze_kamera_rechts and self.cap_right: 
+        if self.nutze_kamera_rechts and getattr(self, 'cap_right', None): 
             self.cap_right.stop()
         cv2.destroyAllWindows()
 
@@ -1029,90 +1033,104 @@ class TargetTracker:
         if not self.is_recording:
             self.record_raw_mode = raw_mode
             
-            if self.record_raw_mode:
-                sample_frame = self._build_raw_recording_frame()
-                prefix = "Raw_Record"
-                mode_str = "ROHDATEN (Ungecroppt)"
-            else:
-                sample_frame = self.last_rendered_frame
-                prefix = "Regie_Record"
-                mode_str = "GUI-Ansicht"
-                
-            if sample_frame is None:
-                self.log("SYSTEM", "⚠️ Aufnahme nicht möglich: Noch keine Bilddaten vorhanden!", True)
-                return
-            
-            # Sicherstellen, dass der Zielordner existiert (Fallback, falls dm noch keinen REC_FOLDER hat)
+            # Sicherstellen, dass der Zielordner existiert
             rec_folder = getattr(self.dm, 'REC_FOLDER', os.path.join('savegames', 'rec'))
             os.makedirs(rec_folder, exist_ok=True)
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = os.path.join(rec_folder, f"{prefix}_{timestamp}.mp4")
-            self.last_recorded_file = os.path.abspath(filename)  # <--- Absoluten Pfad merken
-            
-            h, w = sample_frame.shape[:2]
-            self.record_dim = (w, h)
-            
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             fps = self.fps_limit if self.fps_limit > 0 else 30
             
-            self.video_writer = cv2.VideoWriter(self.last_recorded_file, fourcc, fps, (w, h))
+            if self.record_raw_mode:
+                # ---> RAW MODUS: Wir schreiben 2 separate Kameras! <---
+                if self.nutze_kamera_links and self.last_raw_frame_l is not None:
+                    h, w = self.last_raw_frame_l.shape[:2]
+                    filename_l = os.path.join(rec_folder, f"Raw_Left_{timestamp}.mp4")
+                    self.last_recorded_file = os.path.abspath(filename_l)
+                    self.video_writer = cv2.VideoWriter(self.last_recorded_file, fourcc, fps, (w, h))
+                    
+                if self.nutze_kamera_rechts and self.last_raw_frame_r is not None:
+                    h, w = self.last_raw_frame_r.shape[:2]
+                    filename_r = os.path.join(rec_folder, f"Raw_Right_{timestamp}.mp4")
+                    self.last_recorded_file_r = os.path.abspath(filename_r)
+                    self.video_writer_r = cv2.VideoWriter(self.last_recorded_file_r, fourcc, fps, (w, h))
+                    
+                self.log("SYSTEM", f"🔴 Rohdaten-Aufnahme (Separate Streams) gestartet.", True)
+                
+            else:
+                # ---> GUI MODUS: Wir schreiben das fertige Fenster <---
+                if self.last_rendered_frame is None:
+                    self.log("SYSTEM", "⚠️ Aufnahme nicht möglich: Noch keine Bilddaten vorhanden!", True)
+                    return
+                    
+                h, w = self.last_rendered_frame.shape[:2]
+                self.record_dim = (w, h)
+                filename = os.path.join(rec_folder, f"Regie_Record_{timestamp}.mp4")
+                self.last_recorded_file = os.path.abspath(filename)
+                self.last_recorded_file_r = None
+                
+                self.video_writer = cv2.VideoWriter(self.last_recorded_file, fourcc, fps, (w, h))
+                self.log("SYSTEM", f"🔴 GUI-Aufnahme gestartet: {os.path.basename(filename)}", True)
+                
             self.is_recording = True
-            
             self.recording_start_time = time.perf_counter()
             self.frames_written = 0
             self.recorded_fps = fps
             
-            self.log("SYSTEM", f"🔴 Aufnahme ({mode_str}) gestartet: {os.path.basename(filename)}", True)
         else:
             self.is_recording = False
             self.record_raw_mode = False
-            if self.video_writer:
+            
+            # Beide Writer sicher freigeben
+            if getattr(self, 'video_writer', None):
                 self.video_writer.release()
                 self.video_writer = None
+            if getattr(self, 'video_writer_r', None):
+                self.video_writer_r.release()
+                self.video_writer_r = None
                 
             self.log("SYSTEM", "⏹️ Aufnahme beendet und gespeichert.", True)
             
-            # ---> NEU: Direkt nach dem Speichern das benutzerfreundliche Popup zeigen <---
+            # Popup aufrufen
             if getattr(self, 'last_recorded_file', None) and os.path.exists(self.last_recorded_file):
-                self._show_recording_saved_popup(self.last_recorded_file)
+                self._show_recording_saved_popup(self.last_recorded_file, getattr(self, 'last_recorded_file_r', None))
 
-    def _show_recording_saved_popup(self, filepath):
-        """Zeigt ein klares Popup mit Direkt-Button zum Öffnen des Speicherorts im Explorer."""
+    def _show_recording_saved_popup(self, filepath, filepath_r=None):
+        """Zeigt ein Popup mit Direkt-Button zum Öffnen des Speicherorts im Explorer."""
         abs_path = os.path.abspath(filepath)
         folder_path = os.path.dirname(abs_path)
-        file_name = os.path.basename(abs_path)
         
-        # 1. Am Anfang der Methode _show_recording_saved_popup auskommentieren:
-        # if self.vollbild:
-        #     cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
-        #     cv2.resizeWindow(self.window_name, 1280, 720)
-        #     cv2.waitKey(50)
+        if filepath_r and os.path.exists(filepath_r):
+            file_text = f"Dateien:\n{os.path.basename(abs_path)}\n{os.path.basename(filepath_r)}"
+        else:
+            file_text = f"Datei: {os.path.basename(abs_path)}"
 
+        # Erstelle ein frisches Root-Fenster, um "application has been destroyed" zu verhindern
         root_dialog = tk.Tk()
         root_dialog.withdraw()
         
         dialog = tk.Toplevel(root_dialog)
         dialog.title("Video erfolgreich gespeichert")
-        dialog.geometry("480x230")
+        dialog.geometry("480x250")
         dialog.attributes('-topmost', True)
         dialog.resizable(False, False)
         
-        # Fenster mittig auf dem Bildschirm platzieren
-        screen_w = dialog.winfo_screenwidth()
-        screen_h = dialog.winfo_screenheight()
-        x_c = (screen_w - 480) // 2
-        y_c = (screen_h - 230) // 2
-        dialog.geometry(f"480x230+{x_c}+{y_c}")
+        screen_w, screen_h = dialog.winfo_screenwidth(), dialog.winfo_screenheight()
+        dialog.geometry(f"480x250+{(screen_w - 480) // 2}+{(screen_h - 250) // 2}")
         
         tk.Label(dialog, text="🎥 Aufnahme abgeschlossen!", font=('Arial', 13, 'bold'), fg='#2E7D32').pack(pady=(15, 5))
-        tk.Label(dialog, text=f"Datei: {file_name}", font=('Arial', 10, 'bold')).pack(pady=(0, 5))
+        tk.Label(dialog, text=file_text, font=('Arial', 10, 'bold')).pack(pady=(0, 5))
         tk.Label(dialog, text=f"Speicherort:\n{folder_path}", font=('Arial', 9), fg='#555555', wraplength=440, justify="center").pack(pady=(0, 15))
         
         def open_folder():
             try:
+                # Falls wir im Vollbild waren, das Vollbild JETZT verlassen, damit man den Explorer sieht
+                if getattr(self, 'vollbild', False):
+                    cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                    cv2.resizeWindow(self.window_name, 1280, 720)
+                    cv2.waitKey(50)
+                    
                 if self.is_windows:
-                    # Öffnet den Windows Explorer und markiert die Videodatei direkt!
                     subprocess.Popen(['explorer', '/select,', abs_path])
                 elif platform.system() == 'Darwin':
                     subprocess.Popen(['open', '-R', abs_path])
@@ -1127,16 +1145,8 @@ class TargetTracker:
             
         btn_frame = tk.Frame(dialog)
         btn_frame.pack(pady=5)
-        
-        tk.Button(
-            btn_frame, text="📂 Ordner im Explorer öffnen", command=open_folder, 
-            font=('Arial', 10, 'bold'), bg='#2196F3', fg='white', width=25, pady=5
-        ).pack(side=tk.LEFT, padx=10)
-        
-        tk.Button(
-            btn_frame, text="OK", command=close_dialog, 
-            font=('Arial', 10), width=10, pady=5
-        ).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="📂 Ordner im Explorer öffnen", command=open_folder, font=('Arial', 10, 'bold'), bg='#2196F3', fg='white', width=25, pady=5).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="OK", command=close_dialog, font=('Arial', 10), width=10, pady=5).pack(side=tk.LEFT, padx=10)
         
         dialog.bind('<Return>', lambda e: open_folder())
         dialog.bind('<Escape>', close_dialog)
@@ -1146,16 +1156,6 @@ class TargetTracker:
         root_dialog.wait_window(dialog)
         root_dialog.destroy()
         
-        # 2. Am Ende der Methode _show_recording_saved_popup auskommentieren:
-        # if self.vollbild:
-        #     cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        #     cv2.waitKey(50)
-            
-        # Kurzes Leeren des Kamera-Puffers nach der Dialog-Pause
-        for _ in range(5):
-            if self.nutze_kamera_links and self.cap_left: self.cap_left.read()
-            if self.nutze_kamera_rechts and self.cap_right: self.cap_right.read()
-
 
     def process_edits(self):
         if self.trigger_edit_left:
@@ -1355,32 +1355,31 @@ class TargetTracker:
             # Die GUI rendert IMMER butterweich weiter!
             self.last_rendered_frame = self.renderer.update_gui(frame_l, frame_r, blink_state)
             
-            # ---> NEU: Jeden Frame sofort in die MP4 schreiben (GUI oder RAW) <---
-            if self.is_recording and self.video_writer:
+            # ---> NEU: Jeden Frame sofort in die MP4 schreiben (GUI oder getrennte RAWs) <---
+            if self.is_recording:
+                elapsed_time = time.perf_counter() - self.recording_start_time
+                expected_frames = int(elapsed_time * self.recorded_fps)
+                
                 if self.record_raw_mode:
-                    frame_to_record = self._build_raw_recording_frame()
-                else:
-                    frame_to_record = self.last_rendered_frame
-                    
-                if frame_to_record is not None:
-                    current_h, current_w = frame_to_record.shape[:2]
-                    
-                    # Reskalieren bei Fenster-Änderungen
-                    if (current_w, current_h) != getattr(self, 'record_dim', (0,0)):
-                        frame_to_record = cv2.resize(frame_to_record, self.record_dim)
-                        
-                    # 1. Das aktuelle Bild immer mindestens 1x schreiben
-                    self.video_writer.write(frame_to_record)
-                    self.frames_written += 1
-                    
-                    # 2. Prüfen, ob wir durch hohe CPU-Last hinterherhinken
-                    elapsed_time = time.perf_counter() - self.recording_start_time
-                    expected_frames = int(elapsed_time * self.recorded_fps)
-                    
-                    # 3. Frame duplizieren, bis Video-Zeit und Realzeit wieder synchron sind
+                    # RAW: 2 Kameras getrennt schreiben
                     while self.frames_written < expected_frames:
-                        self.video_writer.write(frame_to_record)
+                        if getattr(self, 'video_writer', None) and self.last_raw_frame_l is not None:
+                            self.video_writer.write(self.last_raw_frame_l)
+                        if getattr(self, 'video_writer_r', None) and self.last_raw_frame_r is not None:
+                            self.video_writer_r.write(self.last_raw_frame_r)
                         self.frames_written += 1
+                else:
+                    # GUI: Ein gemeinsames Fenster schreiben
+                    if getattr(self, 'video_writer', None) and self.last_rendered_frame is not None:
+                        frame_to_record = self.last_rendered_frame
+                        current_h, current_w = frame_to_record.shape[:2]
+                        
+                        if (current_w, current_h) != getattr(self, 'record_dim', (0,0)):
+                            frame_to_record = cv2.resize(frame_to_record, self.record_dim)
+                            
+                        while self.frames_written < expected_frames:
+                            self.video_writer.write(frame_to_record)
+                            self.frames_written += 1
             
             if self.check_keys(frame_start_time):
                 break
