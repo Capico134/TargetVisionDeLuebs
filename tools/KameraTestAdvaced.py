@@ -4,10 +4,10 @@ import os
 from datetime import datetime
 
 # =====================================================================
-# SICHERE KAMERA-DIAGNOSE (Mit Live-Zwischenspeicherung)
+# DER ULTIMATIVE ELP-KAMERA-HÄRTETEST
 # =====================================================================
-CAM_INDEX = 1  # Ggf. auf 0 anpassen
-TEST_DURATION = 2.0  # Verkürzt auf 2 Sekunden pro Test für schnelleren Durchlauf
+CAM_INDEX = 0  # Auf 0 oder 1 anpassen (je nach Kamera)
+TEST_DURATION = 3.0  # 3 Sekunden Messung pro Kombination
 
 BACKENDS = [
     ("MSMF", cv2.CAP_MSMF),
@@ -15,7 +15,7 @@ BACKENDS = [
 ]
 INIT_MODES = ["Pre-Set", "Post-Set"] 
 RESOLUTIONS = [(1920, 1080), (1280, 720)]
-FPS_TARGETS = [30]  # Konzentrieren uns auf 30 FPS
+FPS_TARGETS = [30, 60]  # 60 FPS wieder mit drin!
 CODECS = ["MJPG", "YUY2", "None"]
 
 def decode_fourcc(v):
@@ -27,7 +27,7 @@ def decode_fourcc(v):
         return "Unbekannt"
 
 def run_test_iteration(backend_name, backend_id, init_mode, w, h, fps_target, codec_str):
-    print(f"Test: {backend_name} | {init_mode} | {w}x{h} | {codec_str}...", end=" ", flush=True)
+    print(f"Teste: {backend_name:<5} | {init_mode:<8} | {w}x{h}@{fps_target}fps | Codec: {codec_str:<5}...", end=" ", flush=True)
     
     t0 = time.perf_counter()
     cap = None
@@ -67,6 +67,7 @@ def run_test_iteration(backend_name, backend_id, init_mode, w, h, fps_target, co
         
         actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        actual_fps = cap.get(cv2.CAP_PROP_FPS)
         actual_fcc = decode_fourcc(cap.get(cv2.CAP_PROP_FOURCC))
         
         frames = 0
@@ -79,8 +80,8 @@ def run_test_iteration(backend_name, backend_id, init_mode, w, h, fps_target, co
         t_end = time.perf_counter() - t_start_measure
         real_fps = frames / t_end if t_end > 0 else 0
         
-        status = "✅ OK" if real_fps > 5 else "⚠️ SEHR LANGSAM"
-        print(f"{status} (Init: {t_init:.2f}s | Real-FPS: {real_fps:.1f})")
+        status = "✅ OK" if real_fps > 15 else "⚠️ LANGSAM"
+        print(f"{status} (Init: {t_init:.2f}s | Soll/Ist-FPS: {fps_target}/{real_fps:.1f} | Treffer-Res: {actual_w}x{actual_h} | Codec: {actual_fcc})")
         
         cap.release()
         return status, t_init, real_fps, actual_w, actual_h, actual_fcc
@@ -91,23 +92,23 @@ def run_test_iteration(backend_name, backend_id, init_mode, w, h, fps_target, co
         return "CRASH", 0.0, 0.0, 0, 0, "N/A"
 
 if __name__ == "__main__":
-    print("=" * 80)
-    print("🚀 SICHERE KAMERA-DIAGNOSE STARTET (Schreibt live in Datei)")
-    print("=" * 80)
+    print("=" * 90)
+    print("🚀 ELP-KAMERA VOLLSTÄNDIGER HÄRTETEST (Inkl. 60 FPS)")
+    print("=" * 90)
     print()
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
     save_folder = os.path.abspath(os.path.join(base_dir, '..', 'savegames'))
     os.makedirs(save_folder, exist_ok=True)
-    file_path = os.path.join(save_folder, "KameraTestErgebnisse.txt")
+    file_path = os.path.join(save_folder, "KameraTestErgebnisse_Vollstaendig.txt")
 
-    header = f"{'Backend':<7} | {'Init':<8} | {'Req Res':<9} | {'Req FPS':<7} | {'Req Codec':<9} | {'Act Res':<9} | {'Real FPS':<8} | {'Act Codec':<9} | {'Init Zeit':<9} | {'Status'}"
+    header = f"{'Backend':<7} | {'Init':<8} | {'Req Res':<9} | {'Req FPS':<7} | {'Codec':<6} | {'Act Res':<9} | {'Real FPS':<8} | {'Act Codec':<9} | {'Init Zeit':<9} | {'Status'}"
     separator = "-" * len(header)
 
-    # Datei initialisieren
     with open(file_path, "w", encoding="utf-8") as f:
-        f.write(f"=== KAMERA TEST LAUF - {datetime.now()} ===\n{header}\n{separator}\n")
+        f.write(f"=== ELP KAMERA VOLLTEST - {datetime.now()} ===\n{header}\n{separator}\n")
 
+    # Gesamte Testmatrix durchlaufen
     for backend_name, backend_id in BACKENDS:
         for init_mode in INIT_MODES:
             for w, h in RESOLUTIONS:
@@ -116,15 +117,14 @@ if __name__ == "__main__":
                         res = run_test_iteration(backend_name, backend_id, init_mode, w, h, fps, codec)
                         status, t_init, real_fps, act_w, act_h, act_fcc = res
                         
-                        line = f"{backend_name:<7} | {init_mode:<8} | {w}x{h:<5} | {fps:<7} | {codec:<9} | {act_w}x{act_h:<5} | {real_fps:<8.1f} | {act_fcc:<9} | {t_init:<8.2f}s | {status}"
+                        line = f"{backend_name:<7} | {init_mode:<8} | {w}x{h:<5} | {fps:<7} | {codec:<6} | {act_w}x{act_h:<5} | {real_fps:<8.1f} | {act_fcc:<9} | {t_init:<8.2f}s | {status}"
                         
-                        # Sofort zeilenweise anhängen, damit man bei einem Hänger die Ergebnisse hat!
                         with open(file_path, "a", encoding="utf-8") as f:
                             f.write(line + "\n")
                             
                         time.sleep(0.3)
 
-    print("\n" + "=" * 80)
-    print(f"✅ Test beendet! Ergebnisse wurden live gespeichert in:\n   {file_path}")
-    print("=" * 80)
+    print("\n" + "=" * 90)
+    print(f"✅ Test vollständig abgeschlossen! Ergebnisse gespeichert unter:\n   {file_path}")
+    print("=" * 90)
     input("Drücke ENTER, um das Fenster zu schließen...")
