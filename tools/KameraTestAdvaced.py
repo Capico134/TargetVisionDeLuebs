@@ -6,7 +6,7 @@ from datetime import datetime
 # =====================================================================
 # DER ULTIMATIVE ELP-KAMERA-HÄRTETEST
 # =====================================================================
-CAM_INDEX = 0  # Auf 0 oder 1 anpassen (je nach Kamera)
+CAM_INDEX = 1  # Auf 0 oder 1 anpassen (je nach Kamera)
 TEST_DURATION = 3.0  # 3 Sekunden Messung pro Kombination
 
 BACKENDS = [
