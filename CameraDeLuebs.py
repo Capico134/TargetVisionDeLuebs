@@ -5,12 +5,15 @@ import threading
 import time
 
 class AsyncCamera:
-    def __init__(self, cam_index, backend, width, height, fps_target, log_callback, name=""):
+    # ---> Anpassung der Argumente <---
+    def __init__(self, cam_index, backend_str, width, height, fps_target, codec_str, init_modus, log_callback, name=""):
         if isinstance(cam_index, str):
             cam_index = cam_index.strip().strip('\'"').strip()
             
         self.cam_index = cam_index
-        self.backend = backend
+        self.backend_str = backend_str
+        self.codec_str = codec_str
+        self.init_modus = init_modus
         self.width = width
         self.height = height
         self.fps_target = fps_target
@@ -28,12 +31,11 @@ class AsyncCamera:
         self.lock = threading.Lock()
         self.thread = None
         
-        self.actual_w = 0
-        self.actual_h = 0
-        self.actual_fps = 0
-        self.actual_exp = 0
-        self.codec_str = "Unbekannt"
-        self.playback_paused = False  # <--- NEU: Pausiert lokale Videodateien
+        self.actual_w, self.actual_h = 0, 0
+        self.actual_fps, self.actual_exp = 0, 0
+        self.actual_codec = "Unbekannt"
+        self.playback_paused = False
+        self.backend = None
 
     def toggle_pause(self):
         """Pausiert oder startet die Wiedergabe einer lokalen Videodatei."""
@@ -43,34 +45,52 @@ class AsyncCamera:
         return False
 
     def start(self):
-        """Öffnet USB-Kameras (MSMF -> DSHOW) sowie RTSP-Streams und Videodateien (CAP_ANY)."""
+        """Öffnet die Kamera anhand der dynamischen Vorgaben aus der config.ini"""
         if self.is_stream_or_file:
             # Netzwerk-Streams (RTSP/HTTP) und lokale Videodateien laufen über FFmpeg (CAP_ANY)
             backends_to_try = [cv2.CAP_ANY]
         else:
-            # Unter Windows testen wir erst MSMF (für echtes USB MJPEG), dann DSHOW (für OBS)
-            backends_to_try = [cv2.CAP_MSMF, cv2.CAP_DSHOW] if platform.system() == 'Windows' else [cv2.CAP_ANY]
-        
-        # ELA: Ab 10 FPS erzwingen wir MJPG (kein USB-Engpass), darunter unkomprimiertes RAW/YUV
-        cam_params = [
-            cv2.CAP_PROP_FRAME_WIDTH, self.width,
-            cv2.CAP_PROP_FRAME_HEIGHT, self.height,
-            cv2.CAP_PROP_FPS, self.fps_target
-        ]
-        if self.fps_target >= 10:
-            cam_params = [cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')] + cam_params
+            if platform.system() != 'Windows':
+                backends_to_try = [cv2.CAP_ANY]
+            else:
+                # Übersetze den String aus der config.ini
+                if self.backend_str == 'MSMF':
+                    backends_to_try = [cv2.CAP_MSMF]
+                elif self.backend_str == 'DSHOW':
+                    backends_to_try = [cv2.CAP_DSHOW]
+                else: # AUTO
+                    backends_to_try = [cv2.CAP_MSMF, cv2.CAP_DSHOW]
         
         for current_backend in backends_to_try:
-            if self.is_stream_or_file:
-                self.cap = cv2.VideoCapture(self.cam_index, current_backend)
-                if self.cap.isOpened():
-                    # Minimale Latenz für Live-Netzwerkstreams (RTSP)
-                    self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            else:
-                self.cap = cv2.VideoCapture(self.cam_index, current_backend, cam_params)
             
+            # --- 1. Parameter vorbereiten (Pre-Set) ---
+            params = []
+            if self.init_modus == 'PRE' and not self.is_stream_or_file:
+                if self.codec_str != 'AUTO' and self.codec_str != 'NONE':
+                    params.extend([cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*self.codec_str)])
+                
+                params.extend([
+                    cv2.CAP_PROP_FRAME_WIDTH, self.width,
+                    cv2.CAP_PROP_FRAME_HEIGHT, self.height,
+                    cv2.CAP_PROP_FPS, self.fps_target
+                ])
+                self.cap = cv2.VideoCapture(self.cam_index, current_backend, params)
+            else:
+                # Nacktes Öffnen (Post-Set)
+                self.cap = cv2.VideoCapture(self.cam_index, current_backend)
+                
             if not self.cap.isOpened():
                 continue
+
+            # --- 2. Parameter erzwingen (Post-Set oder Stream-Optimierung) ---
+            if self.is_stream_or_file:
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            elif self.init_modus == 'POST':
+                if self.codec_str != 'AUTO' and self.codec_str != 'NONE':
+                    self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*self.codec_str))
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+                self.cap.set(cv2.CAP_PROP_FPS, self.fps_target)
 
             self.cap.grab()
             self.cap.retrieve()
@@ -91,21 +111,15 @@ class AsyncCamera:
         self.actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
         self.actual_exp = self.cap.get(cv2.CAP_PROP_EXPOSURE)
         
-        fourcc_int = int(self.cap.get(cv2.CAP_PROP_FOURCC))
         try:
-            codec = "".join([chr((fourcc_int >> 8 * i) & 0xFF) for i in range(4)]).strip()
-            if not codec or not codec.isprintable() or '\x00' in codec:
-                codec = "STREAM/FILE" if self.is_stream_or_file else "RAW/YUV (Unkomprimiert)"
-            self.codec_str = codec
-        except Exception:
-            pass
+            fcc = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+            codec = "".join([chr((fcc >> 8 * i) & 0xFF) for i in range(4)]).strip()
+            self.actual_codec = codec if codec and codec.isprintable() else "RAW/Stream"
+        except:
+            self.actual_codec = "Unbekannt"
 
-        if self.is_stream_or_file:
-            backend_name = "FILE" if self.is_local_file else "STREAM"
-        else:
-            backend_name = "MSMF" if self.backend == cv2.CAP_MSMF else ("DSHOW" if self.backend == cv2.CAP_DSHOW else "ANY")
-            
-        self.log("SYSTEM", f"Kamera {self.name} ({backend_name}) -> {self.actual_w}x{self.actual_h} | Codec: {self.codec_str} | FPS: {self.actual_fps} | Exp: {self.actual_exp}", True)
+        backend_name = "FILE" if self.is_local_file else ("STREAM" if self.is_stream_or_file else ("MSMF" if self.backend == cv2.CAP_MSMF else ("DSHOW" if self.backend == cv2.CAP_DSHOW else "ANY")))
+        self.log("SYSTEM", f"Kamera {self.name} ({backend_name}) -> {self.actual_w}x{self.actual_h} | Codec: {self.actual_codec} | FPS: {self.actual_fps} | Exp: {self.actual_exp}", True)
 
         self.running = True
         self.thread = threading.Thread(target=self._update, daemon=True)

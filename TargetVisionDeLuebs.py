@@ -92,21 +92,27 @@ class TargetTracker:
         width_r = self.config.getint('Kameras', 'cam_width_rechts', fallback=1280)
         height_r = self.config.getint('Kameras', 'cam_height_rechts', fallback=720)
         
+        # ---> NEU: Dynamische Hardware-Settings <---
+        backend_str = self.config.get('Kameras', 'kamera_backend', fallback='AUTO').upper()
+        codec_str = self.config.get('Kameras', 'kamera_codec', fallback='MJPG').upper()
+        init_modus = self.config.get('Kameras', 'kamera_init_modus', fallback='PRE').upper()
+        
         self.log("SYSTEM", "--- KAMERA HARDWARE STATUS ---", True)
         
         if self.nutze_kamera_links:
-            self.cap_left = AsyncCamera(cam_left_idx, cv2.CAP_ANY, width_l, height_l, self.kamera_bildrate, self.log, "LINKS")
+            self.cap_left = AsyncCamera(cam_left_idx, backend_str, width_l, height_l, self.kamera_bildrate, codec_str, init_modus, self.log, "LINKS")
             if self.cap_left.start():
                 belichtung_l = self.config.get('Kameras', 'belichtung_links', fallback='Standard')
                 self.cap_left.set_exposure(belichtung_l, self.is_windows)
                 
         if self.nutze_kamera_rechts:
-            self.cap_right = AsyncCamera(cam_right_idx, cv2.CAP_ANY, width_r, height_r, self.kamera_bildrate, self.log, "RECHTS")
+            self.cap_right = AsyncCamera(cam_right_idx, backend_str, width_r, height_r, self.kamera_bildrate, codec_str, init_modus, self.log, "RECHTS")
             if self.cap_right.start():
                 belichtung_r = self.config.get('Kameras', 'belichtung_rechts', fallback='Standard')
                 self.cap_right.set_exposure(belichtung_r, self.is_windows)
             
         self.kameras_bereit = True
+        
     def read_frames(self):
         """Holt das Bild und die Info, ob OpenCV rechnen muss."""
         frame_l, frame_r = None, None

@@ -271,6 +271,9 @@ lens_offset_x_links = 0
 lens_offset_y_links = 0
 lens_offset_x_rechts = 0
 lens_offset_y_rechts = 0
+kamera_backend = AUTO
+kamera_codec = MJPG
+kamera_init_modus = PRE
 
 [Erkennung]
 max_aspect_ratio = 3.5
@@ -633,6 +636,21 @@ treffer_anzeigedauer = 8
                 print("🔧 Führe Auto-Patch aus: Setze 'farb_bonus_aktiv' auf 'no'...")
                 self.update_ini_value('Erkennung', 'farb_bonus_aktiv', 'no')
                 needs_reload = True
+
+        if not config.has_option('Kameras', 'kamera_backend'):
+            print("🔧 Führe Auto-Patch aus: Füge 'kamera_backend = DSHOW' hinzu...")
+            self.update_ini_value('Kameras', 'kamera_backend', 'DSHOW')
+            needs_reload = True
+            
+        if not config.has_option('Kameras', 'kamera_codec'):
+            print("🔧 Führe Auto-Patch aus: Füge 'kamera_codec = MJPG' hinzu...")
+            self.update_ini_value('Kameras', 'kamera_codec', 'MJPG')
+            needs_reload = True
+            
+        if not config.has_option('Kameras', 'kamera_init_modus'):
+            print("🔧 Führe Auto-Patch aus: Füge 'kamera_init_modus = PRE' hinzu...")
+            self.update_ini_value('Kameras', 'kamera_init_modus', 'PRE')
+            needs_reload = True
 
 
         
