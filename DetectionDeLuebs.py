@@ -379,6 +379,8 @@ class TargetDetector:
         else:
             current_bgr_blur = frame.copy()
             
+        # ---> DER FIX: 'side' als dritten Parameter übergeben <---
+        #current_normalized = self.normalize_brightness(reference_bgr, current_bgr_blur, side)
         current_normalized = self.normalize_brightness(reference_bgr, current_bgr_blur)
         
         #ALTE FARBERKENNUNG
@@ -574,7 +576,8 @@ class TargetDetector:
                         # ---> DER FIX: +0.5 für die echte physikalische Mitte! <---
                         cog_x, cog_y = (M["m10"] / M["m00"]) + 0.5, (M["m01"] / M["m00"]) + 0.5
                         base_pos = (int(cog_x), int(cog_y))
-                        add_candidate("Schwerpunkt (CoG)", cog_x, cog_y)
+                        # ---> NEU: Fester 1.0 Bonus für den Schwerpunkt (Heimvorteil gegen Rand-Schätzer) <---
+                        add_candidate("Schwerpunkt (CoG)", cog_x, cog_y, bonus=1.0)
                     else:
                         (circle_x, circle_y), _ = cv2.minEnclosingCircle(cnt)
                         base_pos = (int(circle_x), int(circle_y))
@@ -612,9 +615,17 @@ class TargetDetector:
                         
                     self.log(side, f"⚓ Tie-Breaker Anker gesetzt auf: {anker_name} (Flächen-Ratio: {raw_area_ratio*100:.1f}%)")
 
-                    # 2. DISCARD CHECK (Mega-Störungen sofort abwürgen)
+                    # 2. DISCARD CHECK (Mega-Störungen & Mini-Fragmente sofort abwürgen)
                     if radius > limit_discard:
                         self.log(side, f"🚫 Störung ignoriert (Radius {radius:.1f}px > Limit {limit_discard:.1f}px). Wird maskiert!")
+                        update_mask_only = True
+                        continue
+
+                    # ---> ELA-OPTIMIERUNG: Frühzeitiger Abbruch bei chancenlosen Rauschen/Fehlalarmen <---
+                    # Basierend auf dem Worst-Case von stark überlappenden Sicheln (~20% vom min_score_valid).
+                    min_base_score = self.min_score_valid * 0.2
+                    if base_score < min_base_score:
+                        self.log(side, f"🚫 Fehlalarm (Basis): Score {base_score:.1f} < {min_base_score:.1f} (20% von min_score_valid) -> Deep-Analysis übersprungen!")
                         update_mask_only = True
                         continue
 

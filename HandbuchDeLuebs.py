@@ -83,7 +83,7 @@ PARAMETER_LEXIKON = {
     "abriss_base_bonus": "Basis-Bonus für Abrisskanten. Wird dynamisch mit der Rissfläche multipliziert und auf den Score aufgeschlagen, wenn genau eine echte, abgerissene Papierkante gefunden wird.",
     #"early_exit_min_score": "Mindest-Score für perfekte Löcher. Liegt der Radius in der Norm und der Score über diesem Wert, wird die aufwändige Deep-Analysis übersprungen (spart CPU-Ressourcen).",
     #"early_exit_perfect_score": "Makelloser Score: Liegt die Abdeckung über diesem Wert (z.B. 196.0), wird die Form als so perfekt eingestuft, dass die Deep-Analysis selbst bei leichten Radius-Abweichungen übersprungen wird.",
-    "min_score_valid": "Fehlalarm-Filter. Kandidaten, deren finaler Score unter diesem Wert liegt (z.B. < 70.0), werden strikt ignoriert und nicht als Treffer gewertet.",
+    "min_score_valid": "Fehlalarm-Filter & Early-Exit. Kandidaten, deren Basis-Score unter 20% dieses Wertes liegen (z.B. < 14.0 bei min_score_valid = 70.0), werden sofort verworfen. Finaler Score unter diesem Wert wird ebenfalls nicht gewertet.",
     "clipping_factor_history": "Sperr-Radius für die Historie (Faktor des Kaliber-Radius). Ein neuer Kandidat muss diesen Mindestabstand zu allen ALTEN (bereits bestätigten) Schüssen einhalten, um nicht als Doppelzählung blockiert zu werden.",
     "clipping_factor_current": "Sichel-Duell-Radius (Faktor des Kaliber-Radius). Wenn zwei Kandidaten im SELBEN Frame zu nah beieinander liegen, tritt dieser Filter in Kraft und nur das Fragment mit dem höheren Score überlebt.",
     # ---> NEUE TOOLTIPS <---
