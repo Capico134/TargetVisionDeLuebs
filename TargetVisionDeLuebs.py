@@ -257,7 +257,7 @@ class TargetTracker:
         self.dm.write_log(log_msg)
         if show_gui:
             gui_text = "".join(c for c in text if ord(c) < 1000).strip()
-            gui_text = gui_text if len(gui_text) <= 45 else gui_text[:42] + "..."
+            # Keine willkürliche 45-Zeichen-Kürzung mehr – der Renderer bricht jetzt bei Bedarf sauber um!
             # =========================================================================
             # ---> DER FIX: Wir prüfen, ob der Renderer (das HUD) überhaupt schon existiert!
             # =========================================================================

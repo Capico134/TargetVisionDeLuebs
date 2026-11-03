@@ -136,27 +136,66 @@ class TargetVisionRenderer:
         return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
 
     def draw_camera_overlay(self, view, side, start_x, frame_w, total_h):
-        cv2.rectangle(view, (start_x, total_h - 40), (start_x + frame_w, total_h), (30, 30, 30), -1)
         msg = self.msg_left if side == 'left' else self.msg_right
-        cv2.putText(view, msg, (start_x + 10, total_h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1, cv2.LINE_AA)
+        
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.5
+        thickness = 1
+        max_text_w = frame_w - 340  # Platz lassen für Reset, Edit, Zentrum Buttons (~330px)
+        
+        (text_w, text_h), _ = cv2.getTextSize(msg, font, font_scale, thickness)
+        
+        line1 = msg
+        line2 = ""
+        is_two_lines = False
+        
+        if text_w > max_text_w and len(msg) > 15:
+            words = msg.split(' ')
+            l1, l2 = "", ""
+            for word in words:
+                test_l1 = (l1 + " " + word).strip()
+                (tw, _), _ = cv2.getTextSize(test_l1, font, font_scale, thickness)
+                if tw <= max_text_w:
+                    l1 = test_l1
+                else:
+                    l2 = (l2 + " " + word).strip()
+            if l2:
+                line1 = l1
+                line2 = l2
+                is_two_lines = True
+            else:
+                mid = len(msg) // 2
+                line1 = msg[:mid]
+                line2 = msg[mid:]
+                is_two_lines = True
+
+        # Dynamische Leisten-Höhe: 40px (1 Zeile) oder 65px (2 Zeilen) -> Springt direkt ins Auge!
+        bar_h = 65 if is_two_lines else 40
+        cv2.rectangle(view, (start_x, total_h - bar_h), (start_x + frame_w, total_h), (30, 30, 30), -1)
+        
+        if is_two_lines:
+            cv2.putText(view, line1, (start_x + 10, total_h - 38), font, font_scale, (220, 220, 220), thickness, cv2.LINE_AA)
+            cv2.putText(view, line2, (start_x + 10, total_h - 15), font, font_scale, (220, 220, 220), thickness, cv2.LINE_AA)
+        else:
+            cv2.putText(view, line1, (start_x + 10, total_h - 15), font, font_scale, (220, 220, 220), thickness, cv2.LINE_AA)
         
         bx1, by1 = start_x + frame_w - 110, total_h - 35
         bx2, by2 = start_x + frame_w - 10, total_h - 5
         cv2.rectangle(view, (bx1, by1), (bx2, by2), (70, 70, 180), -1)
         cv2.rectangle(view, (bx1, by1), (bx2, by2), (255, 255, 255), 1)
-        cv2.putText(view, "Reset", (bx1 + 25, by1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(view, "Reset", (bx1 + 25, by1 + 20), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
         
         ex1, ey1 = start_x + frame_w - 220, total_h - 35
         ex2, ey2 = start_x + frame_w - 120, total_h - 5
         cv2.rectangle(view, (ex1, ey1), (ex2, ey2), (70, 150, 70), -1)
         cv2.rectangle(view, (ex1, ey1), (ex2, ey2), (255, 255, 255), 1)
-        cv2.putText(view, "Edit", (ex1 + 35, ey1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(view, "Edit", (ex1 + 35, ey1 + 20), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
         
         cx1, cy1 = start_x + frame_w - 330, total_h - 35
         cx2, cy2 = start_x + frame_w - 230, total_h - 5
         cv2.rectangle(view, (cx1, cy1), (cx2, cy2), (180, 130, 70), -1) 
         cv2.rectangle(view, (cx1, cy1), (cx2, cy2), (255, 255, 255), 1)
-        cv2.putText(view, "Zentrum", (cx1 + 15, cy1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(view, "Zentrum", (cx1 + 15, cy1 + 20), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
         
         if side == 'left':
             self.btn_left_coords = (bx1, by1, bx2, by2)
@@ -164,7 +203,7 @@ class TargetVisionRenderer:
             self.btn_center_left_coords = (cx1, cy1, cx2, cy2)
         else:
             self.btn_right_coords = (bx1, by1, bx2, by2)
-            self.btn_edit_right_coords = (ex1, ey1, ex2, ey2) 
+            self.btn_edit_right_coords = (ex1, ey1, ey2, ey2) 
             self.btn_center_right_coords = (cx1, cy1, cx2, cy2)
 
     def update_gui(self, frame_l, frame_r, blink_state):
