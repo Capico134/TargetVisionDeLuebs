@@ -654,6 +654,14 @@ class TargetTracker:
                 if s == 'right' and self.nutze_kamera_links:
                     raw_x -= self.renderer.w_left_displayed
                     
+                # ---> ELA FIX: Klick durch das Zoom-Korsett (Cinematic Zoom) zurückrechnen! <---
+                z_params = getattr(self.renderer, 'last_zoom_params', {}).get(s, (1.0, 0.0, 0.0))
+                z_factor, z_ox, z_oy = z_params
+                
+                if z_factor > 1.0:
+                    raw_x = (raw_x - z_ox) / z_factor
+                    raw_y = (raw_y - z_oy) / z_factor
+                    
                 if (s == 'left' and raw_x > self.renderer.w_left_displayed and self.nutze_kamera_rechts) or \
                    (s == 'right' and raw_x < 0):
                     self.log("SYSTEM", "⚠️ Klick war auf der falschen Seite! Bitte nochmal.", True)

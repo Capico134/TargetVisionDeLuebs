@@ -310,6 +310,9 @@ class TargetVisionRenderer:
             disp_r, zr, oxr, oyr = apply_cinematic_zoom('right', disp_r_frozen, disp_r_live)
             zoom_params['right'] = (zr, oxr, oyr)
             frames_to_stack.append(disp_r if disp_r is not None else create_dummy_frame("RECHTS"))
+            
+        # Parameter für die Klick-Rückrechnung im Tracker speichern
+        self.last_zoom_params = zoom_params
 
 
 #        if self.tracker.nutze_kamera_links:
