@@ -221,7 +221,7 @@ class StateManager:
                 
                 if dist_mm <= radius_10_score:
                     prozent_zur_mitte = (radius_10_score - dist_mm) / radius_10_score
-                    raw_score = 10.0 + (prozent_zur_mitte * 0.99)
+                    raw_score = 10.0 + (prozent_zur_mitte * 0.999)
                 else:
                     raw_score = 10.0 + ((radius_10_score - dist_mm) / ring_abstand_radius_mm)
                 
