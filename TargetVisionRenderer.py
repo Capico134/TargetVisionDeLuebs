@@ -203,7 +203,7 @@ class TargetVisionRenderer:
             self.btn_center_left_coords = (cx1, cy1, cx2, cy2)
         else:
             self.btn_right_coords = (bx1, by1, bx2, by2)
-            self.btn_edit_right_coords = (ex1, ey1, ey2, ey2) 
+            self.btn_edit_right_coords = (ex1, ey1, ex2, ey2) 
             self.btn_center_right_coords = (cx1, cy1, cx2, cy2)
 
     def update_gui(self, frame_l, frame_r, blink_state):

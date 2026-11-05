@@ -1224,13 +1224,14 @@ class TargetTracker:
             self.log("SYSTEM", f"Keine Treffer auf {'links' if side=='left' else 'rechts'} zum Editieren.", True)
             return
 
-        self.show_pause_screen(f"Treffer bearbeiten - {'Links' if side=='left' else 'Rechts'}")
+        #self.show_pause_screen(f"Treffer bearbeiten - {'Links' if side=='left' else 'Rechts'}")
 
         root_dialog = tk.Tk()
         root_dialog.withdraw()
         dialog = tk.Toplevel(root_dialog)
         dialog.title(f"Treffer bearbeiten - {'Links' if side=='left' else 'Rechts'}")
         dialog.geometry("550x450")
+        dialog.attributes('-topmost', True)  # <--- HIER FEHLTE DER FIX: Fenster nach vorne zwingen!
         
         dialog.focus_force()
 
@@ -1346,8 +1347,10 @@ class TargetTracker:
                     self.active_picker['x_var'].set(str(px))
                     self.active_picker['y_var'].set(str(py))
                     
-                    new_score = self.sm.calculate_score(side_name, px, py)
-                    self.active_picker['score_var'].set(str(new_score))
+                    #new_score = self.sm.calculate_score(side_name, px, py)
+                    #self.active_picker['score_var'].set(str(new_score))
+                    new_score, raw_score = self.sm.calculate_score(side_name, px, py)
+                    self.active_picker['score_var'].set(str(round(new_score, 3)))
                     
                     self.picked_coords_ready = False
                     self.active_picker = None 
