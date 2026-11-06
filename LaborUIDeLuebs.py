@@ -217,29 +217,54 @@ class LaborUIBuilder:
         top_frame = tk.Frame(self.app.root, pady=10, padx=10)
         top_frame.pack(fill=tk.X)
         
-        tk.Button(top_frame, text="📦 ZIP-Paket laden", command=self.app.load_zip, font=("Arial", 10, "bold")).pack(side=tk.LEFT)
-        
-        self.app.color_picker_active = False
-        self.app.btn_pick_color = tk.Button(top_frame, text="🎨 Farbe picken", command=self.app.toggle_color_picker, bg="#f39c12", fg="white", font=("Arial", 10, "bold"))
-        self.app.btn_pick_color.pack(side=tk.LEFT, padx=(20, 0))
-        
-        self.app.calib_mode_active = False
-        self.app.calib_points = []
-        self.app.btn_calib_assist = tk.Button(top_frame, text="📏 Kalibrierung", command=self.app.start_calibration_assist, bg="#8e44ad", fg="white", font=("Arial", 10, "bold"))
-        self.app.btn_calib_assist.pack(side=tk.LEFT, padx=(20, 0))
-        
-        self.app.btn_compare = tk.Button(top_frame, text="📊 Abweichungen", command=self.app.show_comparison, font=("Arial", 10, "bold"))
-        self.app.btn_compare.pack(side=tk.LEFT, padx=20)        
-        
-        btn_export = tk.Button(top_frame, text="💾 Test-Case-Export", command=self.app.export_test_case)
-        btn_export.pack(side=tk.LEFT, pady=5, padx=(0, 20))
-        
-        btn_einstellungen = tk.Button(top_frame, text="⚙️ Erweiterte Einstellungen", command=self.open_all_settings_dialog, bg="#34495e", fg="white")
-        btn_einstellungen.pack(side=tk.LEFT, pady=5, padx=(0, 20))
+        tk.Button(top_frame, text="📦 ZIP-Paket laden", command=self.app.load_zip, bg="#f5b041", fg="black", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(1, 0))
+
+        btn_export = tk.Button(top_frame, text="💾 Test-Case-Export", command=self.app.export_test_case, bg="#2980b9", fg="white", font=("Arial", 10, "bold"))
+        btn_export.pack(side=tk.LEFT, pady=5, padx=(15, 15))
         
         self.app.btn_apply = tk.Button(top_frame, text="✅ Einstellungen speichern", 
                                    command=self.app.apply_to_live, bg="#27ae60", fg="white", font=("Arial", 10, "bold"))
-        self.app.btn_apply.pack(side=tk.LEFT, pady=5)
+        self.app.btn_apply.pack(side=tk.LEFT, pady=5, padx=(0, 15))
+        
+        btn_erweiterte_einstellungen = tk.Button(top_frame, text="Erweiterte Einstellungen", 
+                                   command=self.open_all_settings_dialog, bg="#34495e", fg="white", font=("Arial", 10, "bold"))
+        btn_erweiterte_einstellungen.pack(side=tk.LEFT, pady=5)
+        
+        self.app.color_picker_active = False
+        self.app.calib_mode_active = False
+        self.app.calib_points = []
+        
+        # ---> NEU: Das aufgeräumte Zahnrad-Menü für Werkzeuge <---
+        self.app.btn_tools = tk.Menubutton(top_frame, text="⚙️ Werkzeuge", relief=tk.RAISED, bg="#8e44ad", fg="white", font=("Arial", 10, "bold"), padx=10)
+        self.app.btn_tools.pack(side=tk.LEFT, padx=(15, 0))
+        
+        tool_menu = tk.Menu(self.app.btn_tools, tearoff=0, font=("Arial", 10))
+        self.app.btn_tools.config(menu=tool_menu)
+        
+        # Monkey-Patch für den Farbe-Picken-Button, damit er das Menü rot färbt!
+        def new_toggle_color():
+            self.app.color_picker_active = not getattr(self.app, 'color_picker_active', False)
+            if self.app.color_picker_active:
+                self.app.btn_tools.config(bg="#e74c3c", text="🔴 Klick ins Bild...")
+                self.app.lbl_image.config(cursor="crosshair")
+            else:
+                self.app.btn_tools.config(bg="#8e44ad", text="⚙️ Werkzeuge")
+                self.app.lbl_image.config(cursor="")
+        self.app.toggle_color_picker = new_toggle_color
+        self.app.btn_pick_color = self.app.btn_tools  # Dummy Zuweisung gegen Crashes
+        
+        tool_menu.add_command(label="🎨 Farbe picken", command=self.app.toggle_color_picker)
+        tool_menu.add_command(label="📏 Kalibrierungs-Assistent", command=self.app.start_calibration_assist)
+        tool_menu.add_command(label="📊 Abweichungen vergleichen", command=self.app.show_comparison)
+        tool_menu.add_separator()
+        tool_menu.add_command(label="⚙️ Erweiterte Einstellungen", command=self.open_all_settings_dialog)
+        
+        def open_handbuch():
+            import subprocess
+            subprocess.Popen(["python", "HandbuchDeLuebs.py"])
+        tool_menu.add_command(label="📘 Handbuch öffnen", command=open_handbuch)
+        
+
         
         self.app.lbl_coords = tk.Label(top_frame, text="Maus nicht im Bild", font=("Consolas", 12, "bold"), fg="#3498db")
         self.app.lbl_coords.pack(side=tk.RIGHT, padx=15)
@@ -446,6 +471,19 @@ class LaborUIBuilder:
         tk.Radiobutton(view_frame, text="3) Überlagerung", variable=self.app.view_mode_var, value=3, command=self.app.renderer.update_image_display).pack(anchor=tk.W)
         tk.Radiobutton(view_frame, text="4) Raw-Diff", variable=self.app.view_mode_var, value=4, command=self.app.renderer.update_image_display).pack(anchor=tk.W)
         tk.Radiobutton(view_frame, text="5) Rohes Bild", variable=self.app.view_mode_var, value=5, command=self.app.renderer.update_image_display).pack(anchor=tk.W)
+        
+        # ---> NEU: Checkboxen direkt in den Sichtbereich hochgezogen! <---
+        tk.Frame(view_frame, height=2, bd=1, relief=tk.SUNKEN).pack(fill=tk.X, pady=10)
+        
+        self.app.show_target_rings_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(view_frame, text="🎯 Ringe einblenden", 
+                       variable=self.app.show_target_rings_var, fg="#27ae60", font=("Arial", 9, "bold"),
+                       command=lambda: self.app.renderer.update_image_display(full_rebuild=True)).pack(anchor=tk.W, pady=(0, 2))
+
+        self.app.show_orig_hits_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(view_frame, text="🟡 Original-Treffer einblenden", 
+                       variable=self.app.show_orig_hits_var, fg="#f1c40f", font=("Arial", 9, "bold"),
+                       command=lambda: self.app.renderer.update_image_display(full_rebuild=True)).pack(anchor=tk.W)
 
         self.app.score_frame = tk.LabelFrame(view_outer_frame, text=" Ringwertung (Live) ", pady=10, padx=10)
         self.app.score_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
@@ -589,15 +627,6 @@ class LaborUIBuilder:
         tk.Checkbutton(param_frame, text="💾 Simulations-Bilder exportieren", 
                        variable=self.app.export_images_var, fg="#00aaff").pack(anchor=tk.W, pady=(15, 0))
 
-        self.app.show_target_rings_var = tk.BooleanVar(value=False)
-        #tk.Checkbutton(param_frame, text="🎯 Zielscheibe (Ringe) einblenden", 
-        #               variable=self.app.show_target_rings_var, fg="#27ae60", 
-        #               command=lambda: self.app.on_param_change(force=True)).pack(anchor=tk.W, pady=(5, 0))
-        #
-        tk.Checkbutton(param_frame, text="🎯 Zielscheibe (Ringe) einblenden", 
-                       variable=self.app.show_target_rings_var, fg="#27ae60", 
-                       command=lambda: self.app.renderer.update_image_display(full_rebuild=True)).pack(anchor=tk.W, pady=(5, 0))
-
         def _on_mousewheel(event):
             if event.num == 4 or getattr(event, 'delta', 0) > 0:
                 canvas.yview_scroll(-1, "units")
@@ -625,19 +654,6 @@ class LaborUIBuilder:
             
         # ---> NEU: Backspace global binden für saubere Struktur <---
         self.app.root.bind('<BackSpace>', lambda e: self.app.undo_calibration_click())
-    
-        #self.app.show_orig_hits_var = tk.BooleanVar(value=False)
-        #tk.Checkbutton(param_frame, text="🟡 Original-Treffer (match.json) einblenden", 
-        #               variable=self.app.show_orig_hits_var, fg="#f1c40f", 
-        #               command=lambda: self.app.on_param_change(force=True)).pack(anchor=tk.W, pady=(5, 0))
-        self.app.show_orig_hits_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(param_frame, text="🟡 Original-Treffer (match.json) einblenden", 
-                       variable=self.app.show_orig_hits_var, fg="#f1c40f", 
-                       command= lambda: self.app.renderer.update_image_display(full_rebuild=True)).pack(anchor=tk.W, pady=(5, 0))
-        # Für die Original-Treffer:
-        #tk.Checkbutton(param_frame, text="🟡 Original-Treffer (match.json) einblenden", 
-        #               variable=self.app.show_orig_hits_var, fg="#f1c40f", 
-        #               command=self.app.toggle_orig_hits).pack(anchor=tk.W, pady=(5, 0))
 
         def release_focus(event):
             try:
