@@ -637,20 +637,20 @@ treffer_anzeigedauer = 8
                 self.update_ini_value('Erkennung', 'farb_bonus_aktiv', 'no')
                 needs_reload = True
 
-        if not config.has_option('Kameras', 'kamera_backend'):
-            print("🔧 Führe Auto-Patch aus: Füge 'kamera_backend = DSHOW' hinzu...")
-            self.update_ini_value('Kameras', 'kamera_backend', 'DSHOW')
-            needs_reload = True
-            
-        if not config.has_option('Kameras', 'kamera_codec'):
-            print("🔧 Führe Auto-Patch aus: Füge 'kamera_codec = MJPG' hinzu...")
-            self.update_ini_value('Kameras', 'kamera_codec', 'MJPG')
-            needs_reload = True
-            
-        if not config.has_option('Kameras', 'kamera_init_modus'):
-            print("🔧 Führe Auto-Patch aus: Füge 'kamera_init_modus = PRE' hinzu...")
-            self.update_ini_value('Kameras', 'kamera_init_modus', 'PRE')
-            needs_reload = True
+        #if not config.has_option('Kameras', 'kamera_backend'):
+        #    print("🔧 Führe Auto-Patch aus: Füge 'kamera_backend = DSHOW' hinzu...")
+        #    self.update_ini_value('Kameras', 'kamera_backend', 'DSHOW')
+        #    needs_reload = True
+        #    
+        #if not config.has_option('Kameras', 'kamera_codec'):
+        #    print("🔧 Führe Auto-Patch aus: Füge 'kamera_codec = MJPG' hinzu...")
+        #    self.update_ini_value('Kameras', 'kamera_codec', 'MJPG')
+        #    needs_reload = True
+        #    
+        #if not config.has_option('Kameras', 'kamera_init_modus'):
+        #    print("🔧 Führe Auto-Patch aus: Füge 'kamera_init_modus = PRE' hinzu...")
+        #    self.update_ini_value('Kameras', 'kamera_init_modus', 'PRE')
+        #    needs_reload = True
 
 
         

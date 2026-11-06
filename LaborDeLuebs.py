@@ -349,6 +349,16 @@ class LaborApp:
             if not parser.has_option('Erkennung', 'detail_export_aktiv'):
                 parser.set('Erkennung', 'detail_export_aktiv', 'no')
                 self.migrated_keys.append('detail_export_aktiv')
+            if not parser.has_option('Kameras', 'kamera_backend'):
+                parser.set('Kameras', 'kamera_backend', 'AUTO')
+                self.migrated_keys.append('detail_export_aktiv')
+            if not parser.has_option('Kameras', 'kamera_codec'):
+                parser.set('Kameras', 'kamera_codec', 'MJPG')
+                self.migrated_keys.append('detail_export_aktiv')    
+            if not parser.has_option('Kameras', 'kamera_init_modus'):
+                parser.set('Kameras', 'kamera_init_modus', 'PRE')
+                self.migrated_keys.append('detail_export_aktiv')      
+                
             # =========================================================================
             
             # d_config = self.package_data['config']
@@ -481,13 +491,14 @@ class LaborApp:
         
         self.root.title("Labor & Einstellungen - Lokale config.ini")
         self.print_log("SYSTEM", "Stand-Alone Modus: Lokale config.ini geladen.")
-        # ---> NEU: Hier rufen wir das Cheat-Sheet auf! <---
-        self.print_help_banner()
         
         self.lbl_image.config(text="Stand-Alone Modus aktiv.\n(Klicke auf 'Erweiterte Einstellungen')", fg="white")
 
-        # Exakt dieselbe Hilfsfunktion nutzen – keine Redundanz mehr!
+        # 1. ERST die Config prüfen und anwenden (das sammelt die fehlenden Parameter)
         self.apply_config_to_ui(parser)
+
+        # 2. DANN das Hilfe-Banner drucken (jetzt sind die geheilten Parameter bekannt!)
+        self.print_help_banner()
 
         ## ---> NEU: Migrator-Log auch im lokalen Modus ausgeben! <---
         #if hasattr(self, 'migrated_keys') and self.migrated_keys:
