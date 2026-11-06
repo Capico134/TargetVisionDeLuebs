@@ -23,6 +23,7 @@ from LaborUIDeLuebs import LaborUIBuilder
 from DateiManagerDeLuebs import DateiManager
 from StateManagerDeLuebs import StateManager
 from KalibrierungDeLuebs import Kalibrator
+import tools.KameraTestAdvaced as KameraTestAdvaced
 
 #import LoggerDeLuebs
 #from HandbuchDeLuebs import PARAMETER_LEXIKON
@@ -491,14 +492,13 @@ class LaborApp:
         
         self.root.title("Labor & Einstellungen - Lokale config.ini")
         self.print_log("SYSTEM", "Stand-Alone Modus: Lokale config.ini geladen.")
+        # ---> NEU: Hier rufen wir das Cheat-Sheet auf! <---
+        self.print_help_banner()
         
         self.lbl_image.config(text="Stand-Alone Modus aktiv.\n(Klicke auf 'Erweiterte Einstellungen')", fg="white")
 
-        # 1. ERST die Config prüfen und anwenden (das sammelt die fehlenden Parameter)
+        # Exakt dieselbe Hilfsfunktion nutzen – keine Redundanz mehr!
         self.apply_config_to_ui(parser)
-
-        # 2. DANN das Hilfe-Banner drucken (jetzt sind die geheilten Parameter bekannt!)
-        self.print_help_banner()
 
         ## ---> NEU: Migrator-Log auch im lokalen Modus ausgeben! <---
         #if hasattr(self, 'migrated_keys') and self.migrated_keys:
@@ -1080,6 +1080,9 @@ class LaborApp:
         self.kalibrator.handle_calibration_click(event)
     def finish_calibration(self):
         self.kalibrator.finish_calibration()
+        
+    def start_kamera_test(self):
+        KameraTestAdvaced.start_ui(self.root, self)
 
 
     def identify_shot_at_click(self, x, y, jump_to_frame=False):

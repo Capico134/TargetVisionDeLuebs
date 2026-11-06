@@ -217,18 +217,23 @@ class LaborUIBuilder:
         top_frame = tk.Frame(self.app.root, pady=10, padx=10)
         top_frame.pack(fill=tk.X)
         
-        tk.Button(top_frame, text="📦 ZIP-Paket laden", command=self.app.load_zip, bg="#f5b041", fg="black", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(1, 0))
+        btn_load = tk.Button(top_frame, text="📦 ZIP-Paket laden", command=self.app.load_zip, bg="#f5b041", fg="black", font=("Arial", 10, "bold"))
+        btn_load.pack(side=tk.LEFT, padx=(1.5, 0))
+        ToolTip(btn_load, "Lädt ein gespeichertes Match-Archiv (.zip) aus dem 'savegames/logs' Ordner. Ideal, um alte Schüsse mit neuen Parametern zu simulieren.")
 
         btn_export = tk.Button(top_frame, text="💾 Test-Case-Export", command=self.app.export_test_case, bg="#2980b9", fg="white", font=("Arial", 10, "bold"))
         btn_export.pack(side=tk.LEFT, pady=5, padx=(15, 15))
+        ToolTip(btn_export, "Exportiert das aktuell geladene Match inkl. aller manueller Korrekturen als neuen 'Golden Master' in den 'testcases' Ordner.")
         
         self.app.btn_apply = tk.Button(top_frame, text="✅ Einstellungen speichern", 
                                    command=self.app.apply_to_live, bg="#27ae60", fg="white", font=("Arial", 10, "bold"))
         self.app.btn_apply.pack(side=tk.LEFT, pady=5, padx=(0, 15))
+        ToolTip(self.app.btn_apply, "Überschreibt die globale config.ini deines Systems mit den aktuell sichtbaren Werten. Beim Live-Tuning wird das Match sofort damit fortgesetzt.")
         
         btn_erweiterte_einstellungen = tk.Button(top_frame, text="Erweiterte Einstellungen", 
                                    command=self.open_all_settings_dialog, bg="#34495e", fg="white", font=("Arial", 10, "bold"))
         btn_erweiterte_einstellungen.pack(side=tk.LEFT, pady=5)
+        ToolTip(btn_erweiterte_einstellungen, "Öffnet ein Fenster mit tiefgreifenden Systemeinstellungen (Kameras, Crop, FPS, etc.). Warnung: Werden sofort aktiv!")
         
         self.app.color_picker_active = False
         self.app.calib_mode_active = False
@@ -237,6 +242,7 @@ class LaborUIBuilder:
         # ---> NEU: Das aufgeräumte Zahnrad-Menü für Werkzeuge <---
         self.app.btn_tools = tk.Menubutton(top_frame, text="⚙️ Werkzeuge", relief=tk.RAISED, bg="#8e44ad", fg="white", font=("Arial", 10, "bold"), padx=10)
         self.app.btn_tools.pack(side=tk.LEFT, padx=(15, 0))
+        ToolTip(self.app.btn_tools, "Öffnet das Werkzeug-Menü (Farbpipette, Kalibrierung, Härtetest, Handbuch, etc.)")
         
         tool_menu = tk.Menu(self.app.btn_tools, tearoff=0, font=("Arial", 10))
         self.app.btn_tools.config(menu=tool_menu)
@@ -256,6 +262,9 @@ class LaborUIBuilder:
         tool_menu.add_command(label="🎨 Farbe picken", command=self.app.toggle_color_picker)
         tool_menu.add_command(label="📏 Kalibrierungs-Assistent", command=self.app.start_calibration_assist)
         tool_menu.add_command(label="📊 Abweichungen vergleichen", command=self.app.show_comparison)
+        tool_menu.add_separator()
+        # ---> NEU: Der Kamera-Härtetest direkt aus dem Menü! <---
+        tool_menu.add_command(label="🎥 Kamera-Härtetest", command=self.app.start_kamera_test)
         tool_menu.add_separator()
         tool_menu.add_command(label="⚙️ Erweiterte Einstellungen", command=self.open_all_settings_dialog)
         
@@ -775,7 +784,7 @@ class LaborUIBuilder:
                 if key in PARAMETER_LEXIKON:
                     ToolTip(lbl_key, PARAMETER_LEXIKON[key])
 
-                def make_trace_cmd(s, k, var_obj):
+                def make_trace_cmd(s, k, var_obj, lbl_widget):
                     def cmd(*args):
                         try:
                             v = var_obj.get()
@@ -786,9 +795,27 @@ class LaborUIBuilder:
                             v_str = "yes" if v else "no"
                         else:
                             v_str = str(v)
-                        
+                            
                         parser.set(s, k, v_str)
                         self.app.on_param_change() 
+                        
+                        # --- NEU: Rotes Highlighting für veränderte erweiterte Parameter ---
+                        var_key = str(var_obj)
+                        if hasattr(self.app, 'original_values') and var_key in self.app.original_values:
+                            val_orig = str(self.app.original_values[var_key]).strip().lower()
+                            val_curr = v_str.strip().lower()
+                            
+                            # Typkorrektur für Booleans (1.0 vs yes etc.)
+                            if val_orig in ['1', '1.0', 'true']: val_orig = 'yes'
+                            if val_orig in ['0', '0.0', 'false']: val_orig = 'no'
+                                
+                            if val_curr != val_orig:
+                                lbl_widget.config(fg="#e74c3c", font=("Segoe UI", 9, "bold"))
+                                if not lbl_widget.cget("text").startswith("*"):
+                                    lbl_widget.config(text=f"* {k}")
+                            else:
+                                lbl_widget.config(fg="black", font=("Segoe UI", 9, "normal")) 
+                                lbl_widget.config(text=k)
                     return cmd
 
                 if key == 'aktive_scheibe':
@@ -796,7 +823,9 @@ class LaborUIBuilder:
                     cb = ttk.Combobox(row, textvariable=var, values=targets, state="readonly", width=20)
                     cb.pack(side=tk.RIGHT)
                     cb.var_ref = var 
-                    var.trace_add("write", make_trace_cmd(section, key, var))
+                    # Initiale Sicherung für das Label
+                    self.app.original_values[str(var)] = val_str
+                    var.trace_add("write", make_trace_cmd(section, key, var, lbl_key))
                     
                     cb.bind("<MouseWheel>", block_cb_scroll)
                     cb.bind("<Button-4>", block_cb_scroll) # Für Linux
@@ -809,7 +838,9 @@ class LaborUIBuilder:
                     cb = ttk.Combobox(row, textvariable=var, values=belichtungs_werte, state="readonly", width=20)
                     cb.pack(side=tk.RIGHT)
                     cb.var_ref = var 
-                    var.trace_add("write", make_trace_cmd(section, key, var))
+                    # Initiale Sicherung für das Label
+                    self.app.original_values[str(var)] = val_str
+                    var.trace_add("write", make_trace_cmd(section, key, var, lbl_key))
                     
                     # Das Scrollrad-Hijacking binden
                     cb.bind("<MouseWheel>", block_cb_scroll)
@@ -821,7 +852,7 @@ class LaborUIBuilder:
                     var = tk.StringVar(value=val_str.strip('\'"'))
                     entry = tk.Entry(row, textvariable=var, width=38, justify="right")
                     entry.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(10, 0))
-                    def make_cam_trace(s, k, var_obj):
+                    def make_cam_trace(s, k, var_obj, lbl_widget):
                         def cmd(*args):
                             try:
                                 clean_v = str(var_obj.get()).strip().strip('\'"').strip()
@@ -829,33 +860,52 @@ class LaborUIBuilder:
                                 return
                             parser.set(s, k, clean_v)
                             self.app.on_param_change()
+                            
+                            var_key = str(var_obj)
+                            if hasattr(self.app, 'original_values') and var_key in self.app.original_values:
+                                if clean_v != self.app.original_values[var_key]:
+                                    lbl_widget.config(fg="#e74c3c", font=("Segoe UI", 9, "bold"))
+                                    if not lbl_widget.cget("text").startswith("*"):
+                                        lbl_widget.config(text=f"* {k}")
+                                else:
+                                    lbl_widget.config(fg="black", font=("Segoe UI", 9, "normal"))
+                                    lbl_widget.config(text=k)
                         return cmd
-                    var.trace_add("write", make_cam_trace(section, key, var))
+                    self.app.original_values[str(var)] = val_str.replace("'", "").replace('"', '').strip()
+                    var.trace_add("write", make_cam_trace(section, key, var, lbl_key))
 
                 elif val_str.lower() in ['yes', 'no', 'true', 'false', 'on', 'off']:
                     is_true = val_str.lower() in ['yes', 'true', 'on']
                     var = tk.BooleanVar(value=is_true)
                     chk = tk.Checkbutton(row, text="Aktiv", variable=var)
                     chk.pack(side=tk.RIGHT)
-                    var.trace_add("write", make_trace_cmd(section, key, var))
+                    # Initiale Sicherung für das Label
+                    self.app.original_values[str(var)] = val_str
+                    var.trace_add("write", make_trace_cmd(section, key, var, lbl_key))
 
                 elif '.' in val_str and val_str.replace('.', '', 1).replace('-', '', 1).isdigit():
                     var = tk.DoubleVar(value=float(val_str))
                     entry = tk.Entry(row, textvariable=var, width=12, justify="right", validate="key", validatecommand=self.app.vcmd_float)
                     entry.pack(side=tk.RIGHT)
-                    var.trace_add("write", make_trace_cmd(section, key, var))
+                    # Initiale Sicherung für das Label
+                    self.app.original_values[str(var)] = val_str
+                    var.trace_add("write", make_trace_cmd(section, key, var, lbl_key))
 
                 elif val_str.replace('-', '', 1).isdigit():
                     var = tk.IntVar(value=int(val_str))
                     entry = tk.Entry(row, textvariable=var, width=12, justify="right", validate="key", validatecommand=self.app.vcmd_int)
                     entry.pack(side=tk.RIGHT)
-                    var.trace_add("write", make_trace_cmd(section, key, var))
+                    # Initiale Sicherung für das Label
+                    self.app.original_values[str(var)] = val_str
+                    var.trace_add("write", make_trace_cmd(section, key, var, lbl_key))
 
                 else:
                     var = tk.StringVar(value=val_str)
                     entry = tk.Entry(row, textvariable=var, width=22, justify="right")
                     entry.pack(side=tk.RIGHT)
-                    var.trace_add("write", make_trace_cmd(section, key, var))
+                    # Initiale Sicherung für das Label
+                    self.app.original_values[str(var)] = val_str
+                    var.trace_add("write", make_trace_cmd(section, key, var, lbl_key))
 
         def _on_mousewheel(event):
             if event.num == 4 or getattr(event, 'delta', 0) > 0:
