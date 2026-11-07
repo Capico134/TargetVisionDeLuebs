@@ -712,7 +712,9 @@ class LaborUIBuilder:
         ignore_keys.add('caliber_radius') 
         ignore_keys.update([
             'px_pro_mm_x_links', 'px_pro_mm_y_links', 'linsen_verzerrung_links', 'linsen_verzerrung_links_r4',
-            'px_pro_mm_x_rechts', 'px_pro_mm_y_rechts', 'linsen_verzerrung_rechts', 'linsen_verzerrung_rechts_r4'
+            'px_pro_mm_x_rechts', 'px_pro_mm_y_rechts', 'linsen_verzerrung_rechts', 'linsen_verzerrung_rechts_r4',
+            'lens_offset_x_links', 'lens_offset_y_links', 'linsen_verzerrung_limit_links',
+            'lens_offset_x_rechts', 'lens_offset_y_rechts', 'linsen_verzerrung_limit_rechts'
         ])
 
         dialog = tk.Toplevel(self.app.root)
@@ -761,6 +763,13 @@ class LaborUIBuilder:
                 canvas.yview_scroll(1, "units")
             return "break" 
 
+        def update_lbl_highlight(s, k, lbl_widget, curr_v_str):
+            """Färbt das Label rot mit Sternchen, wenn der aktuelle Wert vom geladenen Original-Snapshot abweicht."""
+            if hasattr(self.app, 'is_config_value_changed') and self.app.is_config_value_changed(s, k, curr_v_str):
+                lbl_widget.config(fg="#e74c3c", font=("Segoe UI", 9, "bold"), text=f"* {k}")
+            else:
+                lbl_widget.config(fg="black", font=("Segoe UI", 9, "normal"), text=k)
+
         for section in parser.sections():
             visible_keys = [k for k in parser.options(section) if k not in ignore_keys]
             if not visible_keys:
@@ -784,6 +793,9 @@ class LaborUIBuilder:
                 if key in PARAMETER_LEXIKON:
                     ToolTip(lbl_key, PARAMETER_LEXIKON[key])
 
+                # ---> NEU: Sofort beim Öffnen des Fensters gegen den Original-Snapshot prüfen! <---
+                update_lbl_highlight(section, key, lbl_key, val_str)
+
                 def make_trace_cmd(s, k, var_obj, lbl_widget):
                     def cmd(*args):
                         try:
@@ -797,57 +809,55 @@ class LaborUIBuilder:
                             v_str = str(v)
                             
                         parser.set(s, k, v_str)
+                        update_lbl_highlight(s, k, lbl_widget, v_str)
                         self.app.on_param_change() 
-                        
-                        # --- NEU: Rotes Highlighting für veränderte erweiterte Parameter ---
-                        var_key = str(var_obj)
-                        if hasattr(self.app, 'original_values') and var_key in self.app.original_values:
-                            val_orig = str(self.app.original_values[var_key]).strip().lower()
-                            val_curr = v_str.strip().lower()
-                            
-                            # Typkorrektur für Booleans (1.0 vs yes etc.)
-                            if val_orig in ['1', '1.0', 'true']: val_orig = 'yes'
-                            if val_orig in ['0', '0.0', 'false']: val_orig = 'no'
-                                
-                            if val_curr != val_orig:
-                                lbl_widget.config(fg="#e74c3c", font=("Segoe UI", 9, "bold"))
-                                if not lbl_widget.cget("text").startswith("*"):
-                                    lbl_widget.config(text=f"* {k}")
-                            else:
-                                lbl_widget.config(fg="black", font=("Segoe UI", 9, "normal")) 
-                                lbl_widget.config(text=k)
                     return cmd
+
+                def bind_middle_click_reset(s, k, var_obj, widget_list):
+                    def reset_cmd(event):
+                        dialog.focus_set()
+                        orig_v = self.app.get_orig_config_value(s, k, fallback=None) if hasattr(self.app, 'get_orig_config_value') else None
+                        if orig_v is not None:
+                            if isinstance(var_obj, tk.BooleanVar):
+                                var_obj.set(str(orig_v).strip().lower() in ('yes', 'true', '1', 'on'))
+                            elif isinstance(var_obj, tk.DoubleVar):
+                                try: var_obj.set(float(orig_v))
+                                except ValueError: pass
+                            elif isinstance(var_obj, tk.IntVar):
+                                try: var_obj.set(int(float(orig_v)))
+                                except ValueError: pass
+                            else:
+                                var_obj.set(str(orig_v).strip().strip('\'"').strip())
+                            self.app.on_param_change(force=True)
+                        return "break"
+                    for w_item in widget_list:
+                        w_item.bind('<Button-2>', reset_cmd)
 
                 if key == 'aktive_scheibe':
                     var = tk.StringVar(value=val_str)
                     cb = ttk.Combobox(row, textvariable=var, values=targets, state="readonly", width=20)
                     cb.pack(side=tk.RIGHT)
                     cb.var_ref = var 
-                    # Initiale Sicherung für das Label
-                    self.app.original_values[str(var)] = val_str
                     var.trace_add("write", make_trace_cmd(section, key, var, lbl_key))
+                    bind_middle_click_reset(section, key, var, [lbl_key, cb])
                     
                     cb.bind("<MouseWheel>", block_cb_scroll)
-                    cb.bind("<Button-4>", block_cb_scroll) # Für Linux
-                    cb.bind("<Button-5>", block_cb_scroll) # Für Linux
+                    cb.bind("<Button-4>", block_cb_scroll)
+                    cb.bind("<Button-5>", block_cb_scroll)
 
                 elif key in ['belichtung_links', 'belichtung_rechts']:
                     var = tk.StringVar(value=val_str)
-                    # Die feste Auswahl für das Dropdown
                     belichtungs_werte = ["Standard", "Auto", "-1", "-2", "-3", "-4", "-5", "-6", "-7", "-8", "-9", "-10"]
                     cb = ttk.Combobox(row, textvariable=var, values=belichtungs_werte, state="readonly", width=20)
                     cb.pack(side=tk.RIGHT)
                     cb.var_ref = var 
-                    # Initiale Sicherung für das Label
-                    self.app.original_values[str(var)] = val_str
                     var.trace_add("write", make_trace_cmd(section, key, var, lbl_key))
+                    bind_middle_click_reset(section, key, var, [lbl_key, cb])
                     
-                    # Das Scrollrad-Hijacking binden
                     cb.bind("<MouseWheel>", block_cb_scroll)
                     cb.bind("<Button-4>", block_cb_scroll) 
                     cb.bind("<Button-5>", block_cb_scroll)
 
-                # ---> NEU: Freitext (USB-Index, RTSP-Link oder MP4-Pfad) für die Kameras <---
                 elif key in ['cam_left_index', 'cam_right_index']:
                     var = tk.StringVar(value=val_str.strip('\'"'))
                     entry = tk.Entry(row, textvariable=var, width=38, justify="right")
@@ -859,53 +869,40 @@ class LaborUIBuilder:
                             except tk.TclError:
                                 return
                             parser.set(s, k, clean_v)
+                            update_lbl_highlight(s, k, lbl_widget, clean_v)
                             self.app.on_param_change()
-                            
-                            var_key = str(var_obj)
-                            if hasattr(self.app, 'original_values') and var_key in self.app.original_values:
-                                if clean_v != self.app.original_values[var_key]:
-                                    lbl_widget.config(fg="#e74c3c", font=("Segoe UI", 9, "bold"))
-                                    if not lbl_widget.cget("text").startswith("*"):
-                                        lbl_widget.config(text=f"* {k}")
-                                else:
-                                    lbl_widget.config(fg="black", font=("Segoe UI", 9, "normal"))
-                                    lbl_widget.config(text=k)
                         return cmd
-                    self.app.original_values[str(var)] = val_str.replace("'", "").replace('"', '').strip()
                     var.trace_add("write", make_cam_trace(section, key, var, lbl_key))
+                    bind_middle_click_reset(section, key, var, [lbl_key, entry])
 
                 elif val_str.lower() in ['yes', 'no', 'true', 'false', 'on', 'off']:
                     is_true = val_str.lower() in ['yes', 'true', 'on']
                     var = tk.BooleanVar(value=is_true)
                     chk = tk.Checkbutton(row, text="Aktiv", variable=var)
                     chk.pack(side=tk.RIGHT)
-                    # Initiale Sicherung für das Label
-                    self.app.original_values[str(var)] = val_str
                     var.trace_add("write", make_trace_cmd(section, key, var, lbl_key))
+                    bind_middle_click_reset(section, key, var, [lbl_key, chk])
 
                 elif '.' in val_str and val_str.replace('.', '', 1).replace('-', '', 1).isdigit():
                     var = tk.DoubleVar(value=float(val_str))
                     entry = tk.Entry(row, textvariable=var, width=12, justify="right", validate="key", validatecommand=self.app.vcmd_float)
                     entry.pack(side=tk.RIGHT)
-                    # Initiale Sicherung für das Label
-                    self.app.original_values[str(var)] = val_str
                     var.trace_add("write", make_trace_cmd(section, key, var, lbl_key))
+                    bind_middle_click_reset(section, key, var, [lbl_key, entry])
 
                 elif val_str.replace('-', '', 1).isdigit():
                     var = tk.IntVar(value=int(val_str))
                     entry = tk.Entry(row, textvariable=var, width=12, justify="right", validate="key", validatecommand=self.app.vcmd_int)
                     entry.pack(side=tk.RIGHT)
-                    # Initiale Sicherung für das Label
-                    self.app.original_values[str(var)] = val_str
                     var.trace_add("write", make_trace_cmd(section, key, var, lbl_key))
+                    bind_middle_click_reset(section, key, var, [lbl_key, entry])
 
                 else:
                     var = tk.StringVar(value=val_str)
                     entry = tk.Entry(row, textvariable=var, width=22, justify="right")
                     entry.pack(side=tk.RIGHT)
-                    # Initiale Sicherung für das Label
-                    self.app.original_values[str(var)] = val_str
                     var.trace_add("write", make_trace_cmd(section, key, var, lbl_key))
+                    bind_middle_click_reset(section, key, var, [lbl_key, entry])
 
         def _on_mousewheel(event):
             if event.num == 4 or getattr(event, 'delta', 0) > 0:

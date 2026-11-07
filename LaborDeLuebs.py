@@ -282,6 +282,8 @@ class LaborApp:
                 self.original_values[str(self.calib_lens_offset_y_var)] = self.orig_calib.get(f"{side}_off_y", 0)
                 self.original_values[str(self.calib_linsen_verzerrung_limit_var)] = self.orig_calib.get(f"{side}_limit", 0.0) # <--- NEU
 
+            #self._updating_calib_sliders = True
+            #try:
             self.calib_x_var.set(val_x)
             self.calib_y_var.set(val_y)
             self.calib_linsen_verzerrung_var.set(val_fisch)
@@ -289,6 +291,8 @@ class LaborApp:
             self.calib_lens_offset_x_var.set(val_off_x)
             self.calib_lens_offset_y_var.set(val_off_y)
             self.calib_linsen_verzerrung_limit_var.set(val_limit) # <--- NEU
+            #finally:
+            #    self._updating_calib_sliders = False
 
             
     def switch_camera(self):
@@ -352,13 +356,13 @@ class LaborApp:
                 self.migrated_keys.append('detail_export_aktiv')
             if not parser.has_option('Kameras', 'kamera_backend'):
                 parser.set('Kameras', 'kamera_backend', 'AUTO')
-                self.migrated_keys.append('detail_export_aktiv')
+                self.migrated_keys.append('kamera_backend')
             if not parser.has_option('Kameras', 'kamera_codec'):
                 parser.set('Kameras', 'kamera_codec', 'MJPG')
-                self.migrated_keys.append('detail_export_aktiv')    
+                self.migrated_keys.append('kamera_codec')
             if not parser.has_option('Kameras', 'kamera_init_modus'):
                 parser.set('Kameras', 'kamera_init_modus', 'PRE')
-                self.migrated_keys.append('detail_export_aktiv')      
+                self.migrated_keys.append('kamera_init_modus')   
                 
             # =========================================================================
             
@@ -420,6 +424,48 @@ class LaborApp:
             # ---> NEU: Initialen Push der Kalibrierungsdaten in die Slider erzwingen, 
             # BEVOR der Dirty-Marker scharfgeschaltet wird!
             self.update_calib_sliders()
+
+            # =================================================================
+            # ---> SCHRITT 1: Kompletten Original-Snapshot ALLER Config-Werte sichern <---
+            # =================================================================
+            self.orig_config_snapshot = {}
+            for sec in parser.sections():
+                self.orig_config_snapshot[sec] = {}
+                for k, v in parser.items(sec):
+                    self.orig_config_snapshot[sec][k] = str(v).strip()
+
+    def get_orig_config_value(self, section, key, fallback=None):
+        """Liefert den unveränderten Originalwert aus dem geladenen Snapshot."""
+        if hasattr(self, 'orig_config_snapshot'):
+            return self.orig_config_snapshot.get(section, {}).get(key, fallback)
+        return fallback
+
+    def is_config_value_changed(self, section, key, current_val):
+        """Prüft unbestechlich, ob ein Parameter gegenüber dem geladenen Originalzustand verändert wurde."""
+        orig_val = self.get_orig_config_value(section, key, fallback=None)
+        if orig_val is None:
+            return False
+
+        curr_str = str(current_val).strip().strip('\'"').strip()
+        orig_str = str(orig_val).strip().strip('\'"').strip()
+
+        curr_low = curr_str.lower()
+        orig_low = orig_str.lower()
+
+        # 1. Sauberer Boolean-Abgleich (fängt 'False' vs 'no' und 'True' vs 'yes' ab!)
+        bool_true = ('1', 'true', 'yes', 'on')
+        bool_false = ('0', 'false', 'no', 'off')
+        if (curr_low in bool_true or curr_low in bool_false) and (orig_low in bool_true or orig_low in bool_false):
+            return (curr_low in bool_true) != (orig_low in bool_true)
+
+        # 2. Numerischer Abgleich (für Floats/Ints wie 5.0 vs 5.000)
+        try:
+            return abs(float(curr_str) - float(orig_str)) > 1e-9
+        except ValueError:
+            pass
+
+        # 3. Exakter String-Abgleich (z. B. für Kamera-Dateipfade oder aktive_scheibe)
+        return curr_str != orig_str
     
     def print_help_banner(self):
         """Gibt das kompakte Cheat-Sheet für die Steuerung und die Auto-Heilungs-Infos im Log aus."""
@@ -2341,38 +2387,126 @@ class LaborApp:
             messagebox.showwarning("Fehler", "Es ist keine Konfiguration geladen!")
             return
 
-        # ---> NEU: Die 3-Wege Text-Weiche <---
         current_path = getattr(self, 'current_zip_path', '')
 
+        # --- SMART SAVE: Finde heraus, was WIRKLICH geändert wurde (Mit Diagnose-Prints) ---
+        changed_items = [] # Liste von (section, key, orig_val, curr_val)
+        changed_keys = []
+        print("\n" + "="*60)
+        print("🔍 [SMART-SAVE DIAGNOSE] Starte Parameter-Abgleich...")
+        print("="*60)
+
+        if self.package_data and 'config' in self.package_data:
+            parser = self.package_data['config']
+            
+            for section in parser.sections():
+                for key, curr_val_raw in parser.items(section):
+                    curr_val = str(curr_val_raw).strip()
+                    orig_val = self.get_orig_config_value(section, key, fallback=None)
+                    
+                    if orig_val is not None:
+                        if self.is_config_value_changed(section, key, curr_val):
+                            print(f"  🔴 [GEÄNDERT] [{section}] {key} -> Alt: '{orig_val}' | Neu: '{curr_val}'")
+                            changed_items.append((section, key, orig_val, curr_val))
+                            changed_keys.append(f"[{section}] {key}" if key in ('rgb_r', 'rgb_g', 'rgb_b', 'tolerance', 'min_area_percent', 'cut_top', 'cut_bottom', 'cut_left', 'cut_right') else key)
+                        else:
+                            print(f"  🟢 [Gleich]   [{section}] {key}")
+                    else:
+                        print(f"  ⚠️ [Kein Originalwert im Snapshot] [{section}] {key} (Neu angelegt: '{curr_val}')")
+                        changed_items.append((section, key, None, curr_val))
+                        changed_keys.append(key)
+
+        print("="*60)
+        print(f"📋 Endergebnis: {len(changed_items)} geänderte Parameter erkannt -> {changed_keys}")
+        print("="*60 + "\n")
+
+        # ---> NEU: Die clevere Speicher-Weiche <---
+        apply_mode = "ALL" # Standardmäßig wird alles überschrieben
+        
         if not current_path:
             # Fall 1: Stand-Alone Modus (Nur lokale config.ini)
-            titel = "Globale Einstellungen speichern?"
-            text = (
-                "Möchtest du diese Werte direkt in die System-Konfiguration schreiben?\n\n"
-                "▶ Sie gelten ab sofort als Standard für alle NEUEN Matches.\n\n"
-                "Das Labor wird danach geschlossen."
-            )
+            titel = "Globale Einstellungen speichern"
+            text = "Möchtest du diese Werte direkt in die System-Konfiguration schreiben?\n\n▶ Sie gelten ab sofort als Standard für alle NEUEN Matches.\n\nDas Labor wird danach geschlossen."
+            if not messagebox.askyesno(titel, text): return
+            
         elif os.path.basename(current_path) == "Live_Tuning_Bridge.zip":
             # Fall 2: Live-Tuning am Schießstand
-            titel = "Live-System aktualisieren?"
-            text = (
-                "Möchtest du diese Einstellungen an das laufende System am Schießstand senden?\n\n"
-                "▶ Das aktuelle Match wird sofort damit fortgesetzt.\n"
-                "▶ Das Labor wird danach geschlossen."
-            )
+            titel = "Live-System aktualisieren"
+            text = "Möchtest du diese Einstellungen an das laufende System am Schießstand senden?\n\n▶ Das aktuelle Match wird sofort damit fortgesetzt.\n▶ Das Labor wird danach geschlossen."
+            if not messagebox.askyesno(titel, text): return
+            
         else:
-            # Fall 3: Altes Highscore-Match geladen
-            titel = "Als neuen Standard speichern?"
-            text = (
-                "Möchtest du diese Werte als neuen Standard für die Zukunft übernehmen?\n\n"
-                "WICHTIG: Das geladene Match-Archiv bleibt davon unberührt! "
-                "Diese Werte gelten nur für NEUE Matches.\n\n"
-                "Das Labor wird danach geschlossen."
-            )
+            # Fall 3: Altes Match (Time Capsule) geladen - SMART SAVE!
+            if changed_items:
+                # Benutzer hat etwas verändert
+                titel = "Intelligentes Speichern (Smart-Save)"
+                max_len = 99
+                # Formatierung für das Popup
+                changes_text = "\n".join([f"• [{sec}] {k}: {o_v} ➔ {c_v}" if o_v is not None else f"• [{sec}] {k}: {c_v}" for sec, k, o_v, c_v in changed_items[:max_len]])
+                if len(changed_items) > max_len:
+                    changes_text += f"\n... und {len(changed_items) - max_len} weitere."
+                    
+                msg = (
+                    f"Du betrachtest gerade ein historisches Match-Paket.\n"
+                    f"Folgende {len(changed_items)} Parameter hast du im Labor verändert:\n\n"
+                    f"{changes_text}\n\n"
+                    "Wie möchtest du speichern?\n\n"
+                    "[ NUR GEÄNDERTE ] = Überträgt nur die rot markierten Werte in dein Live-System.\n"
+                    "[ ALLES ÜBERSCHREIBEN ] = Macht diese historische Config zum neuen globalen Standard."
+                )
+                
+                # Custom Dialog mit Scrollable Text und festen Buttons unten
+                def custom_prompt():
+                    result = tk.StringVar(value="")
+                    dlg = tk.Toplevel(self.root)
+                    dlg.title(titel)
+                    dlg.geometry("560x420")
+                    dlg.attributes('-topmost', True)
+                    dlg.focus_force()
+                    
+                    # Layout mit festem Button-Frame unten und Canvas/Text oben mit Scrollbar
+                    btn_frame = tk.Frame(dlg, pady=12, bg="#f0f0f0")
+                    btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
+                    
+                    def set_res(val):
+                        result.set(val)
+                        dlg.destroy()
+                        
+                    tk.Button(btn_frame, text="Nur Geänderte", bg="#27ae60", fg="white", font=("Arial", 10, "bold"), command=lambda: set_res("CHANGED")).pack(side=tk.LEFT, padx=15)
+                    tk.Button(btn_frame, text="Alles Überschreiben", bg="#e74c3c", fg="white", font=("Arial", 10, "bold"), command=lambda: set_res("ALL")).pack(side=tk.LEFT, padx=15)
+                    tk.Button(btn_frame, text="Abbrechen", font=("Arial", 10), command=lambda: set_res("CANCEL")).pack(side=tk.RIGHT, padx=15)
+                    
+                    text_frame = tk.Frame(dlg)
+                    text_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=15, pady=15)
+                    
+                    scrollbar = ttk.Scrollbar(text_frame, orient="vertical")
+                    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+                    
+                    txt_widget = tk.Text(text_frame, wrap=tk.WORD, font=("Arial", 10), yscrollcommand=scrollbar.set, bg="#fafafa", padx=10, pady=10)
+                    txt_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+                    scrollbar.config(command=txt_widget.yview)
+                    
+                    txt_widget.insert(tk.END, msg)
+                    txt_widget.config(state=tk.DISABLED) # Nur lesen
+                    
+                    self.root.wait_window(dlg)
+                    return result.get()
+                
+                choice = custom_prompt()
+                if choice == "CANCEL" or choice == "":
+                    return
+                apply_mode = choice
+                
+            else:
+                # Nichts wurde verändert
+                titel = "Keine Änderungen erkannt"
+                text = (
+                    "Du hast im Labor keine Parameter verändert (keine roten Markierungen).\n\n"
+                    "Möchtest du die historische Config dieses ZIP-Paketes trotzdem zum neuen globalen Standard machen (Alles überschreiben)?"
+                )
+                if not messagebox.askyesno(titel, text): return
+                apply_mode = "ALL"
 
-        antwort = messagebox.askyesno(titel, text)
-        if not antwort:
-            return
             
         # =========================================================================
         # ---> NEU: DER DETAIL-EXPORT TÜRSTEHER (FÜR DIE LIVE-ANLAGE) <---
@@ -2397,7 +2531,6 @@ class LaborApp:
             
         try:
             current_path = getattr(self, 'current_zip_path', '')
-            current_path = getattr(self, 'current_zip_path', '')
             export_dir = os.path.join(os.getcwd(), "labor_export")
             os.makedirs(export_dir, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2414,15 +2547,34 @@ class LaborApp:
             parser = self.package_data.get('config')
             updates = {}
             if parser:
-                string_io = io.StringIO()
-                parser.write(string_io)
-                new_ini_str = string_io.getvalue()
-                
-                # Sauberes Dictionary für das physische config.ini Backup-Update
-                for section in parser.sections():
-                    updates[section] = {}
-                    for key, val in parser.items(section):
-                        updates[section][key] = str(val)
+                if apply_mode == "CHANGED":
+                    # ---> SMART SAVE: Wir patchen gezielt nur die geänderten (section, key)-Paare in die lokale Config <---
+                    disk_parser = self.dm.load_or_create_config()
+                    for sec, key, _, curr_val in changed_items:
+                        val_actual = parser.get(sec, key, fallback=curr_val)
+                        if not disk_parser.has_section(sec):
+                            disk_parser.add_section(sec)
+                        disk_parser.set(sec, key, str(val_actual))
+                        
+                        if sec not in updates:
+                            updates[sec] = {}
+                        updates[sec][key] = str(val_actual)
+                    
+                    string_io = io.StringIO()
+                    disk_parser.write(string_io)
+                    new_ini_str = string_io.getvalue()
+                    
+                else:
+                    # ---> NORMAL SAVE (ALL) <---
+                    string_io = io.StringIO()
+                    parser.write(string_io)
+                    new_ini_str = string_io.getvalue()
+                    
+                    # Übernimm ALLES in das Update-Dictionary
+                    for section in parser.sections():
+                        updates[section] = {}
+                        for key, val in parser.items(section):
+                            updates[section][key] = str(val)
             else:
                 new_ini_str = None
  

@@ -317,7 +317,7 @@ class LaborRenderer:
                                     if '10' in ringe:
                                         radius_10_score = (float(ringe['10']) + kaliber_mm) / 2.0
                                         for step in range(1, 10):
-                                            prozent = (10.0 + (step / 10.0) - 10.0) / 0.99
+                                            prozent = (10.0 + (step / 10.0) - 10.0) / 0.999
                                             r_mm_base = radius_10_score * (1.0 - prozent)
                                             if r_mm_base >= 0:
                                                 Helfer.draw_smart_ellipse(
