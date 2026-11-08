@@ -660,7 +660,10 @@ class LaborApp:
             #    # Merkliste wieder putzen
             #    self.migrated_keys = []
                 
-            self._is_loading = False # <--- NEU: Ladesperre LÖSEN
+            self.drag_start_x = None
+            self.drag_start_y = None
+            self.is_zoom_box_active = False
+            self._is_loading = False # <--- Ladesperre LÖSEN
 
     def prev_shot(self):
         if self.current_index > 0:
@@ -939,6 +942,13 @@ class LaborApp:
     def on_drag_start(self, event):
         """Normaler Linksklick (Verschieben, Kalibrieren, Pipette)"""
         self.root.focus_set() # <--- ELA FIX: Fokus sanft holen, bevor das Ziehen beginnt!
+        
+        # ---> FIX 1: Kein Panning starten, solange kein Bild da ist oder gerade ein ZIP lädt! <---
+        if getattr(self, 'tk_image', None) is None or getattr(self, '_is_loading', False):
+            self.drag_start_x = None
+            self.drag_start_y = None
+            return
+
         if getattr(self, 'calib_mode_active', False):
             if event.widget == self.lbl_image:
                  self.handle_calibration_click(event)
@@ -988,23 +998,26 @@ class LaborApp:
 
     def on_drag_stop(self, event):
         """Normales Loslassen (Verschieben beenden oder Röntgen-Klick)"""
-        # ---> DER FIX: Wenn wir im Zoom-Modus sind, triggern wir den Zoom! <---
+        # ---> FIX 2: Startwerte lokal sichern und Status SOFORT vor allen 'returns' freigeben! <---
+        start_x = self.drag_start_x
+        start_y = self.drag_start_y
+        self.drag_start_x = None
+        self.drag_start_y = None
+
+        # Wenn wir im Zoom-Modus sind, triggern wir den Zoom!
         if getattr(self, 'is_zoom_box_active', False):
             return self.on_zoom_box_stop(event)
 
         if getattr(self, 'color_picker_active', False): return
         if getattr(self, 'tk_image', None) is None: return
         
-        # ---> DER TÜRSTEHER GEGEN DEN SONDERFALL <---
-        if self.drag_start_x is None or self.drag_start_y is None: 
+        # Türsteher, falls gar kein gültiger Drag lief
+        if start_x is None or start_y is None: 
             return
 
-        dx = event.x_root - self.drag_start_x
-        dy = event.y_root - self.drag_start_y
+        dx = event.x_root - start_x
+        dy = event.y_root - start_y
         dist = (dx**2 + dy**2)**0.5
-        
-        self.drag_start_x = None
-        self.drag_start_y = None
 
         if dist < 5:  
             self.identify_shot_at_click(event.x, event.y)
