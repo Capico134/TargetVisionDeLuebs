@@ -739,16 +739,11 @@ treffer_anzeigedauer = 8
 
     def export_match_package(self, filepath, match_data=None, config_string=None, source_folder=None, source_zip=None, apply_diet_filter=False):
         """
-        Erstellt ein ZIP-Paket. Zieht die Bilder entweder aus einem Ordner (TargetVision Live-Betrieb) 
-        oder kopiert sie aus einem bestehenden ZIP (Labor Zeitmaschine).
+        Erstellt ein ZIP-Paket atomar über eine .tmp-Datei.
         """
+        temp_filepath = filepath + ".tmp"
         try:
-            #ALT:
-            #with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_DEFLATED) as zf_out:
-            
-            # Wir nutzen ZIP_STORED statt ZIP_DEFLATED. Das packt die Dateien nur in 
-            # den Container ohne Kompression -> Perfekt für Git Delta-Matching von PNGs!
-            with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_STORED) as zf_out:
+            with zipfile.ZipFile(temp_filepath, 'w', zipfile.ZIP_STORED) as zf_out:
                 
                 # 1. Frische JSON (überschreibt alte Versionen)
                 if match_data is not None:
@@ -807,10 +802,17 @@ treffer_anzeigedauer = 8
                             zip_internal_path = os.path.join(self.DEBUG_FOLDER, fname)
                             zf_out.write(full_path, zip_internal_path)
                             
+            # Erst wenn das ZIP zu 100 % fehlerfrei geschlossen wurde, ersetzen wir das Ziel atomar:
+            os.replace(temp_filepath, filepath)
             self.write_log(f"SYSTEM: 📦 ELA-Paket erfolgreich exportiert -> {filepath}")
             return True
         except Exception as e:
             self.write_log(f"SYSTEM: ❌ Fehler beim Exportieren von {filepath}: {e}")
+            if os.path.exists(temp_filepath):
+                try:
+                    os.remove(temp_filepath)
+                except OSError:
+                    pass
             return False
        
 

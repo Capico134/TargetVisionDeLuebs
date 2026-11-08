@@ -102,7 +102,12 @@ class KameraTestApp:
         self.labor_app = labor_app
         self.win = tk.Toplevel(master)
         self.win.title("ELP Kamera-Härtetest")
-        self.win.geometry("950x750")
+        
+        # ---> NEU: Dynamische DPI-Skalierung für Windows (z.B. 200%) <---
+        sf = master.winfo_fpixels('1i') / 96.0
+        w, h = int(950 * sf), int(750 * sf)
+        self.win.geometry(f"{w}x{h}")
+        
         self.win.transient(master)
         self.win.attributes('-topmost', True)
         self.win.focus_force()
@@ -144,7 +149,7 @@ class KameraTestApp:
         log_frame = tk.Frame(self.win, padx=10, pady=10)
         log_frame.pack(fill=tk.BOTH, expand=True)
         
-        self.log_text = tk.Text(log_frame, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
+        self.log_text = tk.Text(log_frame, bg="#1e1e1e", fg="#00ff00", font=("Consolas", int(10 * sf)))
         scrollbar = tk.Scrollbar(log_frame, command=self.log_text.yview)
         self.log_text.config(yscrollcommand=scrollbar.set)
         
@@ -278,10 +283,13 @@ class KameraTestApp:
         self.is_previewing = True
         self.btn_preview.config(text="⏹️ Vorschau stoppen", bg="#e74c3c", state=tk.NORMAL)
         
-        # Sauberes Tkinter-Toplevel statt buggy cv2.imshow!
+        # ---> NEU: DPI-Skalierung für das Vorschaufenster <---
+        sf = self.win.winfo_fpixels('1i') / 96.0
+        pw, ph = int(660 * sf), int(400 * sf)
+        
         self.preview_win = tk.Toplevel(self.win)
         self.preview_win.title(f"👁️ Kamera-Vorschau (ID {cam_index} - {used_name})")
-        self.preview_win.geometry("660x400")
+        self.preview_win.geometry(f"{pw}x{ph}")
         self.preview_win.attributes('-topmost', True)
         self.preview_win.protocol("WM_DELETE_WINDOW", self.stop_preview)
         

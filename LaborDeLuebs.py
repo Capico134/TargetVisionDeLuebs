@@ -35,6 +35,10 @@ class DummyDateiManager:
         self.debug_images = {}
         self.export_folder = "labor_export"
         
+    def get_current_version(self):
+        """Leitet die Versionsabfrage an den echten DateiManager weiter."""
+        return self.app.dm.get_current_version()
+        
     def save_debug_image(self, name, image):
         self.debug_images[name] = image.copy()
         if self.app.export_images_var.get():
@@ -2263,30 +2267,28 @@ class LaborApp:
             d_sm = StateManager(d_config, d_dm)
             detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
 
-            #with zipfile.ZipFile(self.current_zip_path, 'r') as zf:
-            ### Start WEG
             # Setze Referenzen und Startmasken
             for s in ['left', 'right']:
-                    # ---> DER FIX: Prüfen, ob die Kamera für diese Seite überhaupt noch aktiv ist! <---
-                    state = d_sm.state_left if s == 'left' else d_sm.state_right
-                    if not state:
-                        continue # Kamera ist abgeschaltet -> alte Bilder im ZIP ignorieren
-                        
-                    ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
-                    if ref_name:
-                        detector.set_reference_image(self.get_img(ref_name), s)
-                        
-                        # ---> ELA FIX <---
-                        if getattr(self, 'original_match_data', None):
-                            meta = self.original_match_data.get('metadata', {})
-                            center_key = 'center_l' if s == 'left' else 'center_r'
-                            if meta.get(center_key):
-                                d_sm.set_nullpunkt(s, meta[center_key][0], meta[center_key][1])
+                # ---> DER FIX: Prüfen, ob die Kamera für diese Seite überhaupt noch aktiv ist! <---
+                state = d_sm.state_left if s == 'left' else d_sm.state_right
+                if not state:
+                    continue # Kamera ist abgeschaltet -> alte Bilder im ZIP ignorieren
                     
-                    startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
-                    if startmask_name:
-                        startmask_gray = cv2.cvtColor(self.get_img(startmask_name), cv2.COLOR_BGR2GRAY)
-                        state.cumulative_mask = startmask_gray
+                ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
+                if ref_name:
+                    detector.set_reference_image(self.get_img(ref_name), s)
+                    
+                    # ---> ELA FIX <---
+                    if getattr(self, 'original_match_data', None):
+                        meta = self.original_match_data.get('metadata', {})
+                        center_key = 'center_l' if s == 'left' else 'center_r'
+                        if meta.get(center_key):
+                            d_sm.set_nullpunkt(s, meta[center_key][0], meta[center_key][1])
+                
+                startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
+                if startmask_name:
+                    startmask_gray = cv2.cvtColor(self.get_img(startmask_name), cv2.COLOR_BGR2GRAY)
+                    state.cumulative_mask = startmask_gray
 
             # Alle orig-Bilder durch die NEUEN Parameter jagen
             for orig_name in self.orig_files:
@@ -2294,56 +2296,23 @@ class LaborApp:
                 s = 'left' if 'left' in orig_name else 'right'
                 detector.detect_new_shot(img, s)
             
-            ### END WEG
-            
             # =========================================================================
-            # NEU: 5. EINE BRANDNEUE MATCH.JSON BAUEN
+            # NEU: 5. EINE BRANDNEUE MATCH.JSON BAUEN (mit korrekten Summen!)
             # =========================================================================
-            new_match_data = {
-                "metadata": self.original_match_data.get("metadata", {}).copy(),
-                "timeline": []
-            }
+            # Wir lassen den StateManager die komplette Arbeit machen:
+            player_l = self.original_match_data.get("metadata", {}).get("spieler", "Schütze 1").split(" / ")[0].strip()
+            player_r = self.original_match_data.get("metadata", {}).get("spieler", "Schütze 2").split(" / ")[-1].strip()
             
-            # Die Gesamt-Trefferzahlen in den Metadaten aktualisieren (falls sich was geändert hat)
-            shots_l = [s for s in d_sm.shots if s['side'] == 'left']
-            shots_r = [s for s in d_sm.shots if s['side'] == 'right']
+            new_match_data = d_sm.get_match_data(player_l, player_r)
             
-            new_match_data["metadata"]["treffer_links"] = len(shots_l)
-            new_match_data["metadata"]["treffer_rechts"] = len(shots_r)
-            new_match_data["metadata"]["gesamtpunkte"] = len(d_sm.shots)
-            
-            # Wir bauen die neue Timeline aus den Schüssen der frisch durchgelaufenen Engine!
-            for s in d_sm.shots:
-                # Den Zeitstempel t_mono müssen wir faken oder aus dem Original übernehmen. 
-                # Da wir offline keine perfekten Zeitstempel haben, ordnen wir sie chronologisch (1.0, 2.0, ...) an.
-                # Oder besser: Wir versuchen, den Zeitstempel des alten, zugehörigen Schusses zu retten!
-                
-                # Wir suchen blind nach dem nächsten passenden Original-Schuss, um dessen 't' und 'edited'-Flag zu klauen
-                side_char = "l" if s['side'] == 'left' else "r"
-                orig_candidates = [o for o in self.original_match_data.get("timeline", []) if o.get('s') == side_char]
-                
-                closest_t = 0.0
-                is_edited = False
-                
-                # Wenn wir im Labor per Slider arbeiten, sind das CV-generierte Schüsse, also "edited=False" 
-                # (es sei denn, wir bauen später noch manuelles Schuss-Verschieben per Maus ins Labor ein).
-                
-                # Für den Moment: Einfach als neuen, perfekten Schuss in die Timeline schreiben.
-                new_match_data["timeline"].append({
-                    "t": float(len(new_match_data["timeline"]) + 1.0), 
-                    "s": side_char,
-                    "x": round(float(s['pos'][0]), 4),
-                    "y": round(float(s['pos'][1]), 4),
-                    "a": round(float(s['area']), 1),
-                    "score": float(s.get('score', 0.0)),
-                    "cv_score": round(float(s.get('cv_score', 0.0)), 1),
-                    "winner_method": str(s.get('winner_method', 'Unbekannt')), # <--- NEU
-                    "edited": False 
-                })
-
+            # Da es ein Labor-Export ist, setzen wir alle Schüsse auf "edited = False" 
+            # und füllen Dummy-Zeitstempel auf (da wir die echten nicht haben)
+            for i, s in enumerate(new_match_data["timeline"]):
+                s["t"] = float(i + 1.0)
+                s["edited"] = False
 
             # =========================================================================
-            # NEU: 6. ELA Export mit Overwrite-Schutz (.tmp Tausch)
+            # NEU: 6. ELA Export mit zentralem Overwrite-Schutz
             # =========================================================================
             parser = self.package_data.get('config')
             if parser:
@@ -2353,12 +2322,11 @@ class LaborApp:
             else:
                 new_ini_str = None
                 
-            # Prüfen, ob wir das Original-ZIP überschreiben wollen
             is_overwrite = (os.path.abspath(save_path) == os.path.abspath(self.current_zip_path))
-            actual_save_path = save_path + ".tmp" if is_overwrite else save_path
                 
+            # Wir übergeben direkt save_path. Den .tmp-Schutz macht der DateiManager atomar!
             success = self.dm.export_match_package(
-                filepath=actual_save_path,
+                filepath=save_path,
                 match_data=new_match_data,
                 config_string=new_ini_str,
                 source_zip=self.current_zip_path,
@@ -2366,12 +2334,11 @@ class LaborApp:
             )
             
             if success:
-                # Heimlicher Tausch, falls wir überschrieben haben
+                # RAM updaten, damit der nächste Klick auf "Integrations-Check" sofort stimmt
                 if is_overwrite:
-                    os.remove(self.current_zip_path) # Altes Original löschen
-                    os.rename(actual_save_path, self.current_zip_path) # Temp-Datei umbenennen
+                    self.original_match_data = copy.deepcopy(new_match_data)
                     
-                messagebox.showinfo("Erfolg", f"Test-Case erfolgreich aktualisiert:\n{os.path.basename(save_path)}")
+                messagebox.showinfo("Erfolg", f"Test-Case erfolgreich gespeichert:\n{os.path.basename(save_path)}")
             else:
                 messagebox.showerror("Fehler", "Beim Exportieren ist ein Fehler aufgetreten.")
             
@@ -2460,7 +2427,12 @@ class LaborApp:
                     result = tk.StringVar(value="")
                     dlg = tk.Toplevel(self.root)
                     dlg.title(titel)
-                    dlg.geometry("560x420")
+                    
+                    # ---> NEU: Dynamische DPI-Skalierung <---
+                    sf = self.root.winfo_fpixels('1i') / 96.0
+                    w, h = int(560 * sf), int(420 * sf)
+                    dlg.geometry(f"{w}x{h}")
+                    
                     dlg.attributes('-topmost', True)
                     dlg.focus_force()
                     

@@ -94,11 +94,28 @@ class CameraState:
         percent = (matching_pixels / total_pixels) * 100
         return (percent >= self.min_area), percent
 
+    #def check_motion(self, frame):
+    #    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    #    gray = cv2.GaussianBlur(gray, (21, 21), 0)
+    #    motion_detected = False
+    #    if self.prev_gray is not None:
+    #        diff = cv2.absdiff(self.prev_gray, gray)
+    #        _, thresh = cv2.threshold(diff, self.motion_tolerance, 255, cv2.THRESH_BINARY)
+    #        if cv2.countNonZero(thresh) > self.motion_threshold:
+    #            motion_detected = True
+    #    self.prev_gray = gray
+    #    return motion_detected
+
     def check_motion(self, frame):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (21, 21), 0)
         motion_detected = False
         if self.prev_gray is not None:
+            # ---> NEU: Sicherheits-Check, falls sich die Bildgröße (z.B. durch Resize) ändert! <---
+            if self.prev_gray.shape != gray.shape:
+                self.prev_gray = gray
+                print(f"FEHLER: BILDGRÖßE WURDE GEÄNDERT")
+                return False
             diff = cv2.absdiff(self.prev_gray, gray)
             _, thresh = cv2.threshold(diff, self.motion_tolerance, 255, cv2.THRESH_BINARY)
             if cv2.countNonZero(thresh) > self.motion_threshold:

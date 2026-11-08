@@ -149,6 +149,7 @@ class TargetTracker:
         if self.nutze_kamera_rechts and getattr(self, 'cap_right', None): 
             self.cap_right.stop()
         cv2.destroyAllWindows()
+        cv2.waitKey(1)  # <--- Zwingt Windows, das Schließen-Event sofort abzuarbeiten
 
     def _play_splash_screen(self):
         """Zeichnet eine flüssige Animation (Pulsierend), bis die Kameras bereit sind."""
