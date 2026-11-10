@@ -6,6 +6,7 @@ import time
 import math
 from datetime import datetime
 import shutil
+import hashlib
 from HelperDeLuebs import Helfer
 
 class HighscoreManager:
@@ -306,12 +307,13 @@ class StateManager:
             self.dm.write_log("SYSTEM: Speichern abgebrochen - Keine Treffer vorhanden.")
             return False
 
-        # ---> ELA: Die gesamte Datenbeschaffung läuft nun über unsere zentrale Funktion! <---
+        # 1. Daten für das Match generieren
         match_data = self.get_match_data(player_name_l, player_name_r)
 
         os.makedirs(os.path.join("savegames", "logs"), exist_ok=True)
         zip_filepath = os.path.join("savegames", "logs", f"MATCH{self.get_formatted_match_id()}.zip")
         
+        # 2. ZUERST das ZIP-Paket physisch erstellen
         self.dm.export_match_package(
             filepath=zip_filepath, 
             match_data=match_data,
@@ -319,7 +321,17 @@ class StateManager:
             apply_diet_filter=False
         )
 
+        # 3. DANACH Prüfsumme der fertigen ZIP berechnen und für highscore.json ergänzen
+
+        if os.path.exists(zip_filepath):
+            with open(zip_filepath, "rb") as f:
+                match_data["metadata"]["zip_sha256"] = hashlib.file_digest(f, "sha256").hexdigest()
+        else:
+            match_data["metadata"]["zip_sha256"] = None
+
+        # 4. In highscore.json speichern
         self.hm.save_highscore(match_data["metadata"])
+        
         ringe_str = match_data["metadata"]["gesamt_ringe_anzeige"]
         self.dm.write_log(f"SYSTEM: 🏆 Match {self.get_formatted_match_id()} gespeichert (Ringe: {ringe_str})!")
         

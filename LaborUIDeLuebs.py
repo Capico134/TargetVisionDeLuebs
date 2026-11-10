@@ -262,6 +262,7 @@ class LaborUIBuilder:
         tool_menu.add_command(label="🎨 Farbe picken", command=self.app.toggle_color_picker)
         tool_menu.add_command(label="📏 Kalibrierungs-Assistent", command=self.app.start_calibration_assist)
         tool_menu.add_command(label="📊 Abweichungen vergleichen", command=self.app.show_comparison)
+        tool_menu.add_command(label="🔍 Match-Integrität prüfen", command=self.app.start_match_integrity) # <--- NEU
         tool_menu.add_separator()
         # ---> NEU: Der Kamera-Härtetest direkt aus dem Menü! <---
         tool_menu.add_command(label="🎥 Kamera-Härtetest", command=self.app.start_kamera_test)

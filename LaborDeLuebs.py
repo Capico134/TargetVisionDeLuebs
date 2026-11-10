@@ -24,6 +24,7 @@ from DateiManagerDeLuebs import DateiManager
 from StateManagerDeLuebs import StateManager
 from KalibrierungDeLuebs import Kalibrator
 import tools.KameraTestAdvaced as KameraTestAdvaced
+import tools.MatchIntegrity as MatchIntegrity  # <--- NEU
 
 #import LoggerDeLuebs
 #from HandbuchDeLuebs import PARAMETER_LEXIKON
@@ -1153,6 +1154,9 @@ class LaborApp:
         
     def start_kamera_test(self):
         KameraTestAdvaced.start_ui(self.root, self)
+
+    def start_match_integrity(self):
+        MatchIntegrity.start_ui(self.root, self)
 
 
     def identify_shot_at_click(self, x, y, jump_to_frame=False):
