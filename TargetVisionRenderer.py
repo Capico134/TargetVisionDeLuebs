@@ -478,8 +478,8 @@ class TargetVisionRenderer:
                 lens_draw_cx = int(round((lens_cx * z + ox) * self.scale_x))
                 lens_draw_cy = int(round((lens_cy * z + oy) * self.scale_y))
                 marker_color = (0, 255, 255)
-                cv2.drawMarker(roi, (lens_draw_cx, lens_draw_cy), marker_color, markerType=cv2.MARKER_CROSS, markerSize=25, thickness=2, line_type=cv2.LINE_AA)
-                cv2.putText(roi, "Linsen-Mitte", (lens_draw_cx + 15, lens_draw_cy - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, marker_color, 2, cv2.LINE_AA)
+                cv2.drawMarker(roi, (lens_draw_cx, lens_draw_cy), marker_color, markerType=cv2.MARKER_CROSS, markerSize=25, thickness=1, line_type=cv2.LINE_AA)
+                #cv2.putText(roi, "Linsen-Mitte", (lens_draw_cx + 15, lens_draw_cy - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, marker_color, 2, cv2.LINE_AA)
 
                 # Der optische Mittelpunkt (Weißer Punkt/Erdnuss)
                 draw_cx = int(round((feedback['cx'] * z + ox) * self.scale_x))

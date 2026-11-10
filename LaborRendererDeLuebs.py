@@ -355,7 +355,9 @@ class LaborRenderer:
         base_r = getattr(self.app, 'current_radius_px', 15)
 
 #Subpixel Anzeige        
-        if (mode == 1 or mode == 2) and hasattr(self.app, 'current_engine_shots'):
+        # ---> ELA-OPTIMIERUNG: Während des Panning/Zoomens (is_interacting) Subpixel-Boxen überspringen! <---
+        is_interacting = getattr(self.app, 'is_interacting', False)
+        if not is_interacting and (mode == 1 or mode == 2) and hasattr(self.app, 'current_engine_shots'):
             # Reale Skalierungsfaktoren des aktuellen 'combined'-Arrays ermitteln
             # (Garantiert 100% Deckungsgleichheit mit cv2.resize INTER_NEAREST!)
             curr_h, curr_w = combined.shape[:2]
@@ -412,7 +414,7 @@ class LaborRenderer:
 
         if hasattr(self.app, 'current_engine_shots'):
             blink_on = getattr(self.app, 'blink_state', True)
-            color_panel_overview = (0, 0, 255) if blink_on else (255, 0, 0)
+            color_panel_overview = (0, 0, 255) if blink_on else (255, 100, 0)
             color_panel_render = (133, 83, 255)
             for shot in self.app.current_engine_shots:
                 if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num:
@@ -437,7 +439,9 @@ class LaborRenderer:
             hx, hy = hl['pos']
             f_num = hl['frame']
                 # Der Subpixel-Multiplikator für perfekte OpenCV Fließkomma-Kreise
-            color = (255, 50, 200)
+            #color = (255, 50, 200)
+            color = (240, 120, 200)
+            #color = (220, 0, 0)
             shift, mult = 4, 16
 
                 # 1. Linke Seite (Röntgenblick - bleibt als reiner OpenCV-Kreis ohne Linsenverzerrung!)
@@ -453,7 +457,15 @@ class LaborRenderer:
             txt_x1 = int(round(hx * self.app.current_scale)) - vp_x
             txt_y  = int(round(hy * self.app.current_scale)) - vp_y
             r1_px  = int(round(base_r * self.app.current_scale))
-            cv2.putText(combined, f"#{f_num}", (txt_x1 - 25, txt_y - r1_px - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 2, cv2.LINE_8) 
+            cv2.putText(combined, f"#{f_num}", (txt_x1 - 25, txt_y - r1_px - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.6, color, 2, cv2.LINE_8) 
+            # 1. Einmal dicker schwarzer Hintergrund-Text (simuliert den Rand)
+            #cv2.putText(combined, f"#{f_num}", (txt_x1 - 25, txt_y - r1_px - 12), 
+            #            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 4, cv2.LINE_AA)
+            ## 2. Einmal dünner Flieder-Text im Kern darüber
+            #cv2.putText(combined, f"#{f_num}", (txt_x1 - 25, txt_y - r1_px - 12), 
+            #            cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 2, cv2.LINE_AA)
+            
+            
                 # 2. Rechte Seite (Die ungeschönte Wahrheit der Score-Berechnung!)
             echter_score_radius_px = getattr(self.app, 'current_radius_px', 15)
             scaled_x2_sub = int(round((hx * self.app.current_scale + self.app.current_img_w) * mult)) - int(vp_x * mult)
@@ -465,7 +477,7 @@ class LaborRenderer:
             
             txt_x2 = int(round(hx * self.app.current_scale)) + self.app.current_img_w - vp_x
             r2_px  = int(round(echter_score_radius_px * self.app.current_scale))
-            cv2.putText(combined, f"#{f_num}", (txt_x2 - 30, txt_y - r2_px - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3, cv2.LINE_8)
+            cv2.putText(combined, f"#{f_num}", (txt_x2 - 30, txt_y - r2_px - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.6, color, 3, cv2.LINE_8)
 
         #mode = self.app.view_mode_var.get()
         if mode == 4 and hasattr(self.app, 'current_engine_shots'):

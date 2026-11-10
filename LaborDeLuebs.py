@@ -1021,6 +1021,13 @@ class LaborApp:
 
         if dist < 5:  
             self.identify_shot_at_click(event.x, event.y)
+        else:
+            # =========================================================================
+            # ---> NEU: Panning beendet -> Wenn Detail-Export an ist, sofort neu zeichnen! <---
+            # =========================================================================
+            if self.package_data and self.package_data.get('config'):
+                if self.package_data['config'].getboolean('Erkennung', 'detail_export_aktiv', fallback=False):
+                    self.renderer.update_image_display(full_rebuild=False, push_to_gui=True)
 
     def apply_zoom_box(self, x1, y1, x2, y2):
         """Berechnet aus dem gezogenen Rahmen den neuen Zoom und zentriert den Ausschnitt."""
