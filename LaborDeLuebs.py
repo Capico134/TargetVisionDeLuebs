@@ -1195,6 +1195,7 @@ class LaborApp:
             self.highlighted_shot = {
                 'pos': best_shot['pos'], 
                 'frame': f_num, 
+                'cal_radius': best_shot.get('cal_radius', radius), # <--- NEU: Echter lokaler Radius dieses Schusses!
                 'time': time.time()
             }
             

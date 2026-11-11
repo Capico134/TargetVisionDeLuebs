@@ -467,7 +467,7 @@ class LaborRenderer:
             
             
                 # 2. Rechte Seite (Die ungeschönte Wahrheit der Score-Berechnung!)
-            echter_score_radius_px = getattr(self.app, 'current_radius_px', 15)
+            echter_score_radius_px = hl.get('cal_radius') or getattr(self.app, 'current_radius_px', 15)
             scaled_x2_sub = int(round((hx * self.app.current_scale + self.app.current_img_w) * mult)) - int(vp_x * mult)
             scaled_r2_sub = int(round(echter_score_radius_px * self.app.current_scale * mult))
             
@@ -499,6 +499,9 @@ class LaborRenderer:
                 cand = candidates[safe_idx]
                 hx, hy = cand['cx'], cand['cy']
                 
+                # ---> NEU: Nimm den exakt für diesen Kandidaten berechneten lokalen Radius! <---
+                cand_score_r = cand.get('cal_radius') or shot.get('cal_radius') or echter_score_radius_px
+                
                 if not cand['valid']:
                     color, status_text = (150, 150, 150), f"VERWORFEN (Riss: {cand.get('cov_new', 0.0):.1f}%)"
                 else:
@@ -512,7 +515,7 @@ class LaborRenderer:
 
                 scaled_x2_sub = int(round((hx * self.app.current_scale + self.app.current_img_w) * mult)) - int(vp_x * mult)
                 scaled_y_sub  = int(round(hy * self.app.current_scale * mult)) - int(vp_y * mult)
-                scaled_r2_sub = int(round(echter_score_radius_px * self.app.current_scale * mult))
+                scaled_r2_sub = int(round(cand_score_r * self.app.current_scale * mult))
                 
                 cand_mec = cand.get('mec_radius')
                 if cand_mec is not None and cand_mec > 0:
@@ -524,7 +527,7 @@ class LaborRenderer:
                 
                 txt_x2 = int(round(hx * self.app.current_scale)) + self.app.current_img_w - vp_x
                 txt_y = int(round(hy * self.app.current_scale)) - vp_y
-                r2_px = int(round(echter_score_radius_px * self.app.current_scale))
+                r2_px = int(round(cand_score_r * self.app.current_scale))
                 
                 text_offset_r = max(r2_px, int(round(cand_mec * self.app.current_scale))) if cand_mec else r2_px
                 

@@ -3,6 +3,7 @@ import numpy as np
 import time
 from datetime import datetime
 import math
+from HelperDeLuebs import Helfer  # <--- NEU: Für die Linsen-Mathematik
 
 class TargetDetector:
     """
@@ -63,12 +64,37 @@ class TargetDetector:
         self.grenzwert_hough = self.config.getfloat('Erkennung', 'grenzwert_hough', fallback=7.0)
         self.abriss_min_hebel = self.config.getfloat('Erkennung', 'abriss_min_hebel', fallback=0.0)
         
-        # ---> NEU: Optische Parameter cachen <---
+        # ---> NEU: Optische Parameter & Linsen-Geometrie komplett im RAM cachen <---
         self.caliber_durchmesser = self.config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
         self.px_x_links = self.config.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0)
         self.px_y_links = self.config.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0)
         self.px_x_rechts = self.config.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0)
         self.px_y_rechts = self.config.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0)
+        
+        aktive_scheibe = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
+        targets = self.dm.load_targets()
+        
+        self.lens_cache = {}
+        for s_key, s_str, c_sec in [('left', 'links', 'Crop_Links'), ('right', 'rechts', 'Crop_Rechts')]:
+            korr = self.config.getfloat('Kameras', f'linsen_verzerrung_{s_str}', fallback=0.0)
+            korr_r4 = self.config.getfloat('Kameras', f'linsen_verzerrung_{s_str}_r4', fallback=0.0)
+            cam_w = self.config.getint('Kameras', f'cam_width_{s_str}', fallback=1280)
+            cam_h = self.config.getint('Kameras', f'cam_height_{s_str}', fallback=720)
+            cut_l = self.config.getint(c_sec, 'cut_left', fallback=0)
+            cut_t = self.config.getint(c_sec, 'cut_top', fallback=0)
+            off_x = self.config.getint('Kameras', f'lens_offset_x_{s_str}', fallback=0)
+            off_y = self.config.getint('Kameras', f'lens_offset_y_{s_str}', fallback=0)
+            cfg_lim = self.config.getfloat('Kameras', f'linsen_verzerrung_limit_{s_str}', fallback=0.0)
+            
+            lcx, lcy = Helfer.get_optical_center(cam_w, cam_h, cut_l, cut_t, off_x, off_y)
+            r_lim = Helfer.get_r_limit(targets, aktive_scheibe, config_limit_mm=cfg_lim)
+            
+            self.lens_cache[s_key] = {
+                'korr': korr, 'korr_r4': korr_r4,
+                'lens_cx': lcx, 'lens_cy': lcy, 'r_limit_mm': r_lim,
+                'px_x': self.px_x_links if s_key == 'left' else self.px_x_rechts,
+                'px_y': self.px_y_links if s_key == 'left' else self.px_y_rechts
+            }
         
         self.blur_kernel_size = self.config.getint('Erkennung', 'blur_kernel_size', fallback=7)
 
@@ -349,12 +375,43 @@ class TargetDetector:
         return feedback
 
     def get_caliber_radius(self, side):
-        """Berechnet den dynamischen Pixel-Radius anhand der optischen Linsen-Kalibrierung."""
+        """Berechnet den dynamischen Pixel-Radius im Linsen-Zentrum (Basis)."""
         radius_mm = self.caliber_durchmesser / 2.0
         if side == 'left':
             return radius_mm * ((self.px_x_links + self.px_y_links) / 2.0)
         else:
             return radius_mm * ((self.px_x_rechts + self.px_y_rechts) / 2.0)
+
+    def get_local_caliber_radius(self, side, x_px, y_px):
+        """Berechnet den linsenkorrigierten, gemittelten Kaliber-Radius aus dem RAM-Cache."""
+        base_r_px = self.get_caliber_radius(side)
+        lc = self.lens_cache.get(side)
+        if not lc or (lc['korr'] == 0.0 and lc['korr_r4'] == 0.0):
+            return base_r_px
+            
+        korr, korr_r4, r_limit_mm = lc['korr'], lc['korr_r4'], lc['r_limit_mm']
+        
+        # 1. Wahre Position des Lochs auf der Pappe (in mm relativ zur Linsen-Mitte)
+        true_x_mm, true_y_mm = Helfer.undistort_point_mm(
+            x_px, y_px, lc['lens_cx'], lc['lens_cy'], lc['px_x'], lc['px_y'], korr, korr_r4, r_limit_mm
+        )
+        r_true_mm = math.hypot(true_x_mm, true_y_mm)
+        r_cal_mm = self.caliber_durchmesser / 2.0
+        
+        # 2. Tangentiale & Radiale Skalierung
+        if r_true_mm > 1e-4:
+            scale_tangential = Helfer.distort_radius(r_true_mm, korr, korr_r4, r_limit=r_limit_mm) / r_true_mm
+        else:
+            scale_tangential = 1.0
+            
+        r_in_mm = max(0.0, r_true_mm - r_cal_mm)
+        r_out_mm = r_true_mm + r_cal_mm
+        obs_in_mm = Helfer.distort_radius(r_in_mm, korr, korr_r4, r_limit=r_limit_mm)
+        obs_out_mm = Helfer.distort_radius(r_out_mm, korr, korr_r4, r_limit=r_limit_mm)
+        scale_radial = (obs_out_mm - obs_in_mm) / (r_out_mm - r_in_mm)
+        
+        avg_lens_scale = max(0.5, min(1.5, 0.5 * (scale_radial + scale_tangential)))
+        return base_r_px * avg_lens_scale
 
     def detect_new_shot(self, frame, side):
         current_caliber_radius = self.get_caliber_radius(side)
@@ -514,6 +571,12 @@ class TargetDetector:
                     update_mask_only = True
                     continue 
 
+                # =========================================================================
+                # ---> TEST: Lokalen Kaliber-Radius inkl. Linsenkorrektur für diese Kontur!
+                # =========================================================================
+                #WENN MAN DAS AUSKOMMENTIERT IST ALLES WIE VORHER!
+                current_caliber_radius = self.get_local_caliber_radius(side, rx + rw / 2.0, ry + rh / 2.0)
+
                 # Globale Variablen für diesen Treffer initialisieren
                 final_shot_score = 0.0
                 cx, cy = 0, 0
@@ -536,7 +599,8 @@ class TargetDetector:
                             'name': name, 'cx': float(c_x), 'cy': float(c_y), 
                             'score': final_score, 'cov_new': cov_new, 'valid': valid,
                             'base_pos': bp, 'end_pos': ep,
-                            'mec_radius': cand_radius # <--- NEU
+                            'mec_radius': cand_radius,
+                            'cal_radius': float(current_caliber_radius) # <--- NEU: Lokaler Prüf-Radius
                         })
                         
                         valid_str = "✅" if valid else f"❌ (Zu wenig Flächen-Ratio: < {min_coverage}%)"
@@ -1061,6 +1125,7 @@ class TargetDetector:
                         'cx': winner['cx'], 'cy': winner['cy'], 'area': area, 'score': winner['score'],
                         'winner_method': winner['name'],
                         'mec_radius': mec_radius,
+                        'cal_radius': float(current_caliber_radius), # <--- NEU: Für den Klick-Röntgenblick!
                         'base_pos': winner['base_pos'],
                         'end_pos': winner.get('end_pos', (winner['cx'], winner['cy'])), # <--- Zielpunkt sichern
                         'score_export_details': export_details, # <--- Sicheres Variablen-Mapping
