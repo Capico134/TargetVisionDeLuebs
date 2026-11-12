@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 import time
 import math
+import urllib.request
 
 # Deine echte Engine importieren
 from DetectionDeLuebs import TargetDetector
@@ -54,6 +55,58 @@ class SmartTestLogger:
                 self.stats[keyword] += 1
 
 # ==========================================
+# AUTO-DOWNLOADER FÜR EXTERNE TESTCASES
+# ==========================================
+REMOTE_BASE_URL = "https://deluebs.com/tv_testcases/"
+
+# Fallback-Liste, falls auf dem Webserver kein Directory-Listing (.htaccess: Options +Indexes) aktiv ist
+FALLBACK_ZIPS = [
+    "MATCH000031_verbessert.zip",
+    "MATCH000046_verbessert.zip",
+    "MATCH000051_verbessert.zip",
+    "MATCH000055_verbessert.zip",
+    "MATCH000056_verbessert.zip",
+    "MATCH000069_verbessert.zip",
+    "MATCH000092_verbessert.zip",
+]
+
+def ensure_testcases(test_dir):
+    """
+    Prüft, ob die Testcase-ZIPs lokal in 'test_dir' liegen.
+    Fehlende ZIPs werden automatisch von deluebs.com nachgeladen.
+    """
+    os.makedirs(test_dir, exist_ok=True)
+    
+    # 1. Versuche, alle .zip-Dateien dynamisch vom Server-Index zu lesen
+    remote_zips = []
+    try:
+        req = urllib.request.Request(REMOTE_BASE_URL, headers={'User-Agent': 'TargetVision-TestRunner'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            html = resp.read().decode('utf-8', errors='ignore')
+            # Findet alle href="...zip" Links auf der Index-Seite
+            found = re.findall(r'href=["\']([^"\']+\.zip)["\']', html, re.IGNORECASE)
+            remote_zips = sorted(list(set(os.path.basename(f) for f in found)))
+    except Exception:
+        pass
+
+    # 2. Wenn Directory-Listing aus ist (403 Forbidden), nutze die Fallback-Liste
+    if not remote_zips:
+        remote_zips = FALLBACK_ZIPS
+
+    # 3. Nur die Dateien herunterladen, die lokal noch NICHT existieren!
+    for zname in remote_zips:
+        local_path = os.path.join(test_dir, zname)
+        if not os.path.exists(local_path):
+            url = REMOTE_BASE_URL + zname
+            print(f"🌐 Lade fehlenden Testcase herunter: {zname} ...")
+            try:
+                req = urllib.request.Request(url, headers={'User-Agent': 'TargetVision-TestRunner'})
+                with urllib.request.urlopen(req, timeout=120) as resp, open(local_path, 'wb') as out_f:
+                    out_f.write(resp.read())
+            except Exception as e:
+                print(f"⚠️ Konnte '{zname}' nicht von {url} laden: {e}")
+
+# ==========================================
 # HAUPT-TEST-LOGIK
 # ==========================================
 def run_all_tests():
@@ -62,11 +115,10 @@ def run_all_tests():
     report_file = "test_report.txt"
     treffer_log_file = "treffer_log.txt"
     
-    if not os.path.exists(test_dir):
-        print(f"❌ Ordner '{test_dir}' nicht gefunden. Keine Tests ausgeführt.")
-        sys.exit(1)
+    # ---> NEU: Stellt sicher, dass der Ordner existiert und fehlende ZIPs geladen werden <---
+    ensure_testcases(test_dir)
 
-    zip_files = [f for f in os.listdir(test_dir) if f.endswith('.zip')]
+    zip_files = sorted([f for f in os.listdir(test_dir) if f.endswith('.zip')])
     if not zip_files:
         print(f"⚠️ Keine ZIP-Dateien im Ordner '{test_dir}' gefunden.")
         sys.exit(1)
@@ -163,21 +215,17 @@ def run_all_tests():
                 # 3. Echte Engine & ECHTEN StateManager aufbauen
                 dm_real = DateiManager()
                 d_dm = DummyDateiManager(dm_real)
-                d_sm = StateManager(config, d_dm)
                 
-                # =========================================================================
-                # ---> DER FIX: Wir zwingen den Test, die echten Zentren der match.json zu nutzen! <---
-                # =========================================================================
-                if "metadata" in original_match_data:
-                    meta = original_match_data["metadata"]
-                    if "center_l" in meta and meta["center_l"]:
-                        d_sm.set_nullpunkt('left', meta["center_l"][0], meta["center_l"][1])
-                    if "center_r" in meta and meta["center_r"]:
-                        d_sm.set_nullpunkt('right', meta["center_r"][0], meta["center_r"][1])
-                        
+                # Falls das ZIP eine eigene zielscheiben.json (Time-Capsule) enthält, diese nutzen!
+                targets_json_name = next((f for f in all_files if "zielscheiben.json" in f), None)
+                if targets_json_name:
+                    zip_targets = json.loads(zf.read(targets_json_name).decode('utf-8'))
+                    d_dm.load_targets = lambda: zip_targets
+                
+                d_sm = StateManager(config, d_dm)
                 detector = TargetDetector(config, d_dm, d_sm, smart_logger.log_callback)
                 
-                # 4. Bilder durch die Engine jagen
+                # 4. ERST Referenzbilder und Startmasken laden
                 for s in ['left', 'right']:
                     ref_name = next((f for f in all_files if f"referenz_{s}" in f), None)
                     if ref_name:
@@ -188,7 +236,18 @@ def run_all_tests():
                     if startmask_name:
                         startmask_bgr = cv2.imdecode(np.frombuffer(zf.read(startmask_name), np.uint8), cv2.IMREAD_COLOR)
                         state = d_sm.state_left if s == 'left' else d_sm.state_right
-                        state.cumulative_mask = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
+                        state.cumulative_mask = cv2.cvtColor(startmask_bgr, cv2.IMREAD_COLOR if len(startmask_bgr.shape)==2 else cv2.COLOR_BGR2GRAY)
+
+                # =========================================================================
+                # ---> DER FIX: ERST NACH set_reference_image die echten Zentren der match.json
+                # setzen, damit ninja_kalibrierungs_check sie nicht wieder überschreibt! <---
+                # =========================================================================
+                if "metadata" in original_match_data:
+                    meta = original_match_data["metadata"]
+                    if "center_l" in meta and meta["center_l"]:
+                        d_sm.set_nullpunkt('left', meta["center_l"][0], meta["center_l"][1])
+                    if "center_r" in meta and meta["center_r"]:
+                        d_sm.set_nullpunkt('right', meta["center_r"][0], meta["center_r"][1])
 
                 frame_counts = {'left': 0, 'right': 0}
 

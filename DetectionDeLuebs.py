@@ -74,6 +74,21 @@ class TargetDetector:
         aktive_scheibe = self.config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
         targets = self.dm.load_targets()
         
+        # =========================================================================
+        # BEISPIEL-STRUKTUR für self.lens_cache:
+        # {
+        #     'left': {
+        #         'korr':       -0.0004455,    # Linsenverzerrung k1
+        #         'korr_r4':     0.000000699,  # Linsenverzerrung k2 (r^4)
+        #         'lens_cx':     570.0,        # Optische Linsenmitte X (in Pixeln)
+        #         'lens_cy':     540.0,        # Optische Linsenmitte Y (in Pixeln)
+        #         'r_limit_mm':  25.0,         # Limit-Korsett für die Entzerrung in mm
+        #         'px_x':        18.9,         # Pixel pro mm (X-Achse)
+        #         'px_y':        18.9          # Pixel pro mm (Y-Achse)
+        #     },
+        #     'right': { ... analog ... }
+        # }
+        # =========================================================================
         self.lens_cache = {}
         for s_key, s_str, c_sec in [('left', 'links', 'Crop_Links'), ('right', 'rechts', 'Crop_Rechts')]:
             korr = self.config.getfloat('Kameras', f'linsen_verzerrung_{s_str}', fallback=0.0)
@@ -383,33 +398,30 @@ class TargetDetector:
             return radius_mm * ((self.px_x_rechts + self.px_y_rechts) / 2.0)
 
     def get_local_caliber_radius(self, side, x_px, y_px):
-        """Berechnet den linsenkorrigierten, gemittelten Kaliber-Radius aus dem RAM-Cache."""
+        """
+        Berechnet den linsenkorrigierten Kaliber-Radius exakt als Mittelwert 
+        der beiden Ellipsen-Halbachsen (radial & tangential) aus draw_smart_ellipse.
+        """
         base_r_px = self.get_caliber_radius(side)
         lc = self.lens_cache.get(side)
         if not lc or (lc['korr'] == 0.0 and lc['korr_r4'] == 0.0):
             return base_r_px
             
-        korr, korr_r4, r_limit_mm = lc['korr'], lc['korr_r4'], lc['r_limit_mm']
+        dx_mm = (x_px - lc['lens_cx']) / lc['px_x']
+        dy_mm = (y_px - lc['lens_cy']) / lc['px_y']
+        r_mm_center = math.hypot(dx_mm, dy_mm)
         
-        # 1. Wahre Position des Lochs auf der Pappe (in mm relativ zur Linsen-Mitte)
-        true_x_mm, true_y_mm = Helfer.undistort_point_mm(
-            x_px, y_px, lc['lens_cx'], lc['lens_cy'], lc['px_x'], lc['px_y'], korr, korr_r4, r_limit_mm
-        )
-        r_true_mm = math.hypot(true_x_mm, true_y_mm)
-        r_cal_mm = self.caliber_durchmesser / 2.0
-        
-        # 2. Tangentiale & Radiale Skalierung
-        if r_true_mm > 1e-4:
-            scale_tangential = Helfer.distort_radius(r_true_mm, korr, korr_r4, r_limit=r_limit_mm) / r_true_mm
-        else:
-            scale_tangential = 1.0
+        if r_mm_center <= 0.05:
+            return base_r_px
             
-        r_in_mm = max(0.0, r_true_mm - r_cal_mm)
-        r_out_mm = r_true_mm + r_cal_mm
-        obs_in_mm = Helfer.distort_radius(r_in_mm, korr, korr_r4, r_limit=r_limit_mm)
-        obs_out_mm = Helfer.distort_radius(r_out_mm, korr, korr_r4, r_limit=r_limit_mm)
-        scale_radial = (obs_out_mm - obs_in_mm) / (r_out_mm - r_in_mm)
+        # Exakt dieselbe Skalierungsberechnung wie in Helfer.draw_smart_ellipse (is_hit=True):
+        r_cal_mm = self.caliber_durchmesser / 2.0
+        scale_tangential, _ = Helfer.get_ellipse_scales(r_mm_center, lc['korr'], lc['korr_r4'], r_limit=lc['r_limit_mm'])
         
+        r_eval = abs(r_mm_center - (r_cal_mm / 2.0))
+        _, scale_radial = Helfer.get_ellipse_scales(r_eval, lc['korr'], lc['korr_r4'], r_limit=lc['r_limit_mm'])
+        
+        # Mittelwert aus beiden Ellipsen-Radien (große + kleine Halbachse durch 2)
         avg_lens_scale = max(0.5, min(1.5, 0.5 * (scale_radial + scale_tangential)))
         return base_r_px * avg_lens_scale
 
@@ -885,7 +897,7 @@ class TargetDetector:
                                     
                                     # Das Sicherheitsnetz für das "Hebel-Problem"
                                     min_hebel = self.abriss_min_hebel 
-                                    grenzwert_abriss = 4.58 
+                                    grenzwert_abriss = 2.4 #4.58 
                                     
                                     # ---> KANDIDAT 1: CoG (Classic - Riss-Mitte) <---
                                     d_cog_center = np.hypot(cog_x - cx_edge_center, cog_y - cy_edge_center)

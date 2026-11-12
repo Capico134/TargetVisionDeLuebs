@@ -573,10 +573,10 @@ class TargetTracker:
             # Fallback, falls OpenCV beim Prüfen eines toten Fensters meckert
             return True
 
-        if key == ord('q'): return True
-        elif key == ord('r'):
-            if self.nutze_kamera_links: self.trigger_reset_left = True
-            if self.nutze_kamera_rechts: self.trigger_reset_right = True
+        if key == ord('q'): pass #return True
+        elif key == ord('r'): pass
+            #if self.nutze_kamera_links: self.trigger_reset_left = True
+            #if self.nutze_kamera_rechts: self.trigger_reset_right = True
             
         elif key == 32:  # Leertaste (Space)
             is_file = False
