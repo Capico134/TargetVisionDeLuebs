@@ -542,14 +542,14 @@ class LaborApp:
         }
         
         self.root.title("Labor & Einstellungen - Lokale config.ini")
-        self.print_log("SYSTEM", "Stand-Alone Modus: Lokale config.ini geladen.")
-        # ---> NEU: Hier rufen wir das Cheat-Sheet auf! <---
-        self.print_help_banner()
-        
         self.lbl_image.config(text="Stand-Alone Modus aktiv.\n(Klicke auf 'Erweiterte Einstellungen')", fg="white")
 
-        # Exakt dieselbe Hilfsfunktion nutzen – keine Redundanz mehr!
+        # 1. ZUERST die UI füttern (hier passiert die Auto-Heilung & Befüllung von migrated_keys!)
         self.apply_config_to_ui(parser)
+
+        # 2. DANN erst das Log und das Help-Banner ausgeben!
+        self.print_log("SYSTEM", "Stand-Alone Modus: Lokale config.ini geladen.")
+        self.print_help_banner()
 
         ## ---> NEU: Migrator-Log auch im lokalen Modus ausgeben! <---
         #if hasattr(self, 'migrated_keys') and self.migrated_keys:

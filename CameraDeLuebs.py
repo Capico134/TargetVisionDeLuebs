@@ -227,7 +227,8 @@ class AsyncCamera:
             saveDC.SelectObject(saveBitMap)
 
             # Flag 2 = PW_RENDERFULLCONTENT (zwingt DirectComposition zum Zeichnen)
-            res = ctypes.windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 2)
+            #res = ctypes.windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 2)
+            res = ctypes.windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 0)
             if res == 0:
                 ctypes.windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 0)
 

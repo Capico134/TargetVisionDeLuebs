@@ -4,6 +4,9 @@ name: TargetVision Regression Tests
 on:
   push:
     branches: [ "main", "master" ]
+    paths-ignore:
+      - '**.md'      # Ignoriert Änderungen an der README.md
+      - 'docs/**'    # Ignoriert einen eventuellen Dokumentations-Ordner
   pull_request:
     branches: [ "main", "master" ]
 
