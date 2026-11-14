@@ -29,9 +29,10 @@ In diesem System stecken Algorithmen, die speziell für den rauen und optisch sc
 * **Selbstheilende Konfiguration:** Ein "Config-Spion" überwacht die Parameter im Hintergrund. Fehlende Werte werden durch sichere Fallbacks ersetzt und lückenlos für die Fehleranalyse protokolliert.
 
 ## 🚀 Installation & Start
-1. **Repo klonen** oder als ZIP herunterladen.
-2. **Konfiguration:** Die mitgelieferte `config.example.ini` beim ersten Start einfach ignorieren – das Programm erstellt automatisch eine frische `config.ini` mit hilfreichen Kommentaren für dein System.
-3. **Starten:** Führe einfach die `StartTargetVisionDeLuebs.bat` aus. Das Skript prüft und installiert automatisch alle benötigten Abhängigkeiten (`requirements.txt`) und startet anschließend direkt das System.
+1. **Python installieren:** Es wird empfohlen Python 3.12 zu verwenden. 
+2. **Repo klonen** oder als ZIP herunterladen.
+3. **Konfiguration:** Die mitgelieferte `config.example.ini` beim ersten Start einfach ignorieren – das Programm erstellt automatisch eine frische `config.ini` mit hilfreichen Kommentaren für dein System.
+4. **Starten:** Führe einfach die `StartTargetVisionDeLuebs.bat` aus. Das Skript prüft und installiert automatisch alle benötigten Abhängigkeiten (`requirements.txt`) und startet anschließend direkt das System.
 
 ### 🎨 Praxistipp: Hintergrund-Farbwerte (RGB) exakt ermitteln
 Damit die automatische Pausenerkennung (und die optionale Treffererkennung mittels Farb-Bonus) perfekt funktioniert, benötigt das System die exakten RGB-Farbwerte deiner Wand.
