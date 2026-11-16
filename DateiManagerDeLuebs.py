@@ -376,6 +376,10 @@ serien_gruppierung = 3
 treffer_zoom = 3
 # Anzeigedauer wie viele Sekunden reingezoomt wird
 treffer_anzeigedauer = 8
+
+[WM_Shot]
+# Pfad zum Übergabe-Ordner (lokal oder Netzlaufwerk, z.B. \\VereinsServer\WMShot\Import)
+export_pfad = savegames/wmshot_export
 """)
             self.write_log("SYSTEM: 🆕 Standard config.ini erstellt.")
 

@@ -1,6 +1,7 @@
 {
   "Luftpistole_10m": {
     "name": "Luftpistole 10m (DSB)",
+    "dsb_disziplin": "0210",
     "kaliber_mm": 4.5,
     "spiegel_durchmesser_mm": 59.5,
     "linienstaerke_mm": 0.2,
@@ -20,6 +21,7 @@
   },
   "Luftgewehr_10m": {
     "name": "Luftgewehr 10m (DSB)",
+    "dsb_disziplin": "0110",
     "kaliber_mm": 4.5,
     "spiegel_durchmesser_mm": 30.5,
     "linienstaerke_mm": 0.2,
@@ -39,6 +41,7 @@
   },
   "Laufende_Scheibe_10m": {
     "name": "Laufende Scheibe 10m (DSB/ISSF)",
+    "dsb_disziplin": "0510",
     "kaliber_mm": 4.5,
     "spiegel_durchmesser_mm": 30.5,
     "linienstaerke_mm": 0.2,
@@ -58,6 +61,7 @@
   },
   "Laufende_Scheibe_50m": {
     "name": "Laufende Scheibe 50m (DSB/ISSF)",
+    "dsb_disziplin": "0530",
     "kaliber_mm": 5.6,
     "spiegel_durchmesser_mm": 366.0,
     "linienstaerke_mm": 0.5,

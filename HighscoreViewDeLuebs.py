@@ -627,7 +627,9 @@ class HighscoreViewer:
             context_menu.add_command(label="📋 Log & Config anzeigen", command=self.show_text_log, font=('Arial', 14))
             context_menu.add_command(label="🔬 Im Labor öffnen", command=self.open_in_labor, font=('Arial', 14))
             context_menu.add_separator()
-            # ---> Dieser Befehl schnappt sich nun alle markierten Zeilen! <---
+            # ---> NEU: Offline-First Upload an WM-Shot <---
+            context_menu.add_command(label="📤 An WM-Shot übertragen", command=self.export_to_wmshot, font=('Arial', 14))
+            context_menu.add_separator()
             context_menu.add_command(label="🗑️ Match löschen", command=self.delete_selected_entries, font=('Arial', 14))
             context_menu.post(event.x_root, event.y_root)
 

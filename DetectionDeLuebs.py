@@ -10,7 +10,16 @@ class TargetDetector:
     Diese Klasse kümmert sich AUSSCHLIESSLICH um die Bilderkennung (Computer Vision).
     Sie weiß nichts von Fenstern, Buttons oder HUDs.
     """
+    
+    # =========================================================================
+    # ⚙️ HARD-SCHALTER FÜR DIE VERSCHIEBUNGSKORREKTUR (IMAGE REGISTRATION)
+    # True  = Verschiebungskorrektur ist aktiv.
+    # False = Verschiebungskorrektur ist hart abgeschaltet (Inaktiv).
+    # =========================================================================
+    APPLY_SHIFT_CORRECTION = False
+    
     def __init__(self, config, datei_manager, state_manager, log_callback):
+        
         self.config = config
         self.dm = datei_manager
         self.sm = state_manager
@@ -27,8 +36,11 @@ class TargetDetector:
         # Internes Gedächtnis des Detectors
         self.ref_left = None
         self.ref_right = None
-        #self.calib_feedback_left = None #JETZT IN DER GUI
-        #self.calib_feedback_right = None #JETZT IN DER GUI
+        
+        # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
+        self.last_aligned_left = None
+        self.last_aligned_right = None
+        # --------------------------------------------------
 
     def refresh_settings_from_config(self):
         """Lädt alle performance-kritischen Parameter aus der Config in schnelle Objekt-Attribute."""
@@ -122,13 +134,84 @@ class TargetDetector:
         if result is True:
             self.log("SYSTEM", f"📸 Debug-Bild gespeichert: {name}")
 
-    def normalize_brightness(self, ref, live):
+    def normalize_brightness(self, ref, live, side=None, state=None):
+        """Passt die Helligkeit an und führt optional die Verschiebungskorrektur aus."""
+        # 1. Helligkeit anpassen (Allgemein)
         mean_ref = cv2.mean(ref)[:3]
         mean_live = cv2.mean(live)[:3]
         diff = np.array(mean_ref) - np.array(mean_live)
         live_float = live.astype(np.float32)
         live_float += diff
-        return np.clip(live_float, 0, 255).astype(np.uint8)
+        live_normalized = np.clip(live_float, 0, 255).astype(np.uint8)
+
+        # =========================================================================
+        # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
+        # Dieser Block steuert die mechanische Bildregistrierung (Image Registration).
+        # Er wird nur ausgeführt, wenn APPLY_SHIFT_CORRECTION auf True steht.
+        # =========================================================================
+        if self.APPLY_SHIFT_CORRECTION and side is not None:
+            gray_ref = cv2.cvtColor(ref, cv2.COLOR_BGR2GRAY)
+            gray_live = cv2.cvtColor(live_normalized, cv2.COLOR_BGR2GRAY)
+
+            # Zentrum-ROI (innere 60%) + Hanning-Window gegen starre Bildränder
+            h, w = gray_ref.shape
+            y1, y2 = int(h * 0.2), int(h * 0.8)
+            x1, x2 = int(w * 0.2), int(w * 0.8)
+            hann = cv2.createHanningWindow((x2 - x1, y2 - y1), cv2.CV_32F)
+
+            roi_ref = gray_ref[y1:y2, x1:x2].astype(np.float32)
+            roi_live = gray_live[y1:y2, x1:x2].astype(np.float32)
+
+            # P-Anteil: Messung gegen die saubere Ur-Referenz (Drift-Bremse)
+            (dx_ref, dy_ref), resp_ref = cv2.phaseCorrelate(roi_ref, roi_live, window=hann)
+
+            # D-Anteil: Messung gegen das letzte bestätigte Trefferbild
+            last_aligned = self.last_aligned_left if side == 'left' else self.last_aligned_right
+            if last_aligned is not None and last_aligned.shape == ref.shape and len(self.sm.get_shots_for_side(side)) > 0:
+                gray_last = cv2.cvtColor(last_aligned, cv2.COLOR_BGR2GRAY)
+                roi_last = gray_last[y1:y2, x1:x2].astype(np.float32)
+                (dx_last, dy_last), resp_last = cv2.phaseCorrelate(roi_last, roi_live, window=hann)
+
+                w_sum = resp_ref + resp_last
+                if w_sum > 0:
+                    x_shift = (dx_ref * resp_ref + dx_last * resp_last) / w_sum
+                    y_shift = (dy_ref * resp_ref + dy_last * resp_last) / w_sum
+                else:
+                    x_shift, y_shift = dx_ref, dy_ref
+                anker_info = f"P-Ref:{dx_ref:+.2f} (w={resp_ref:.2f}) | D-Last:{dx_last:+.2f} (w={resp_last:.2f})"
+            else:
+                x_shift, y_shift = dx_ref, dy_ref
+                anker_info = f"Nur P-Ref:{dx_ref:+.2f} (w={resp_ref:.2f})"
+
+            dx = int(round(x_shift))
+            dy = int(round(y_shift))
+
+            if (abs(dx) >= 1 or abs(dy) >= 1) and abs(dx) < 15 and abs(dy) < 15:
+                err_unshifted = np.sum(cv2.absdiff(roi_ref, roi_live))
+                
+                m_direct = np.float32([[1, 0,  dx], [0, 1,  dy]])
+                m_inverse = np.float32([[1, 0, -dx], [0, 1, -dy]])
+                
+                cand_direct = cv2.warpAffine(live_normalized, m_direct, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_REPLICATE)
+                cand_inverse = cv2.warpAffine(live_normalized, m_inverse, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_REPLICATE)
+                
+                roi_dir = cv2.cvtColor(cand_direct[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY).astype(np.float32)
+                roi_inv = cv2.cvtColor(cand_inverse[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY).astype(np.float32)
+                
+                err_dir = np.sum(cv2.absdiff(roi_ref, roi_dir))
+                err_inv = np.sum(cv2.absdiff(roi_ref, roi_inv))
+                
+                if err_dir < err_unshifted and err_dir <= err_inv:
+                    live_normalized = cand_direct
+                    self.log(side, f"⚙️ Feinjustierung aktiv (Direkt): Bild um X:{+dx:+d}px, Y:{+dy:+d}px gerückt [{anker_info}].")
+                elif err_inv < err_unshifted and err_inv < err_dir:
+                    live_normalized = cand_inverse
+                    self.log(side, f"⚙️ Feinjustierung aktiv (Invers): Bild um X:{-dx:+d}px, Y:{-dy:+d}px gerückt [{anker_info}].")
+                else:
+                    self.log(side, f"🛡️ Feinjustierung verworfen (Kein Gewinn durch Shift X:{dx:+d}, Y:{dy:+d}) [{anker_info}].")
+        # =========================================================================
+
+        return live_normalized
 
     def calculate_hole_score(self, cx, cy, radius, thresh_new, thresh_raw, export_details=False):
         """
@@ -377,8 +460,14 @@ class TargetDetector:
         else:
             bgr_blur = frame.copy()
         
-        if side == 'left': self.ref_left = bgr_blur
-        else: self.ref_right = bgr_blur
+        if side == 'left': 
+            self.ref_left = bgr_blur
+            # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
+            self.last_aligned_left = bgr_blur.copy()
+        else: 
+            self.ref_right = bgr_blur
+            # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
+            self.last_aligned_right = bgr_blur.copy()
         self.save_debug_image(f"referenz_{side}", frame)
         feedback = None
         if self.ringwertung_aktiv:
@@ -448,9 +537,9 @@ class TargetDetector:
         else:
             current_bgr_blur = frame.copy()
             
-        # ---> DER FIX: 'side' als dritten Parameter übergeben <---
-        #current_normalized = self.normalize_brightness(reference_bgr, current_bgr_blur, side)
-        current_normalized = self.normalize_brightness(reference_bgr, current_bgr_blur)
+        #current_normalized = self.normalize_brightness(reference_bgr, current_bgr_blur)
+        # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR: side und state übergeben ---
+        current_normalized = self.normalize_brightness(reference_bgr, current_bgr_blur, side, state)
         
         #ALTE FARBERKENNUNG
         #diff_bgr = cv2.absdiff(reference_bgr, current_normalized) 
@@ -1175,6 +1264,13 @@ class TargetDetector:
             
             # Echte Treffer dem StateManager übergeben
             if new_shots_found_this_frame:
+                # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR: D-Anker aktualisieren ---
+                if self.APPLY_SHIFT_CORRECTION:
+                    if side == 'left':
+                        self.last_aligned_left = current_normalized.copy()
+                    else:
+                        self.last_aligned_right = current_normalized.copy()
+                # ----------------------------------------------------------------------
                 for s in self.sm.shots:
                     if s['side'] == side:
                         s['is_new'] = False
