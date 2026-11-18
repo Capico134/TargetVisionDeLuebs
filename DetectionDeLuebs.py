@@ -362,17 +362,32 @@ class TargetDetector:
         roi_ref = gray_ref[y1:y2, x1:x2].astype(np.float32)
         roi_live = gray_live[y1:y2, x1:x2].astype(np.float32)
         
-        (dx_c, dy_c), _ = cv2.phaseCorrelate(roi_ref, roi_live, window=hann)
+        # phaseCorrelate liefert den Shift UND die Response (Konfidenz zwischen 0.0 und 1.0)
+        (dx_c, dy_c), response = cv2.phaseCorrelate(roi_ref, roi_live, window=hann)
         
-        # Invertieren, da wir den Korrekturvektor brauchen (Gegenrichtung zur Messung!)
-        coarse_dx = int(round(-dx_c))
-        coarse_dy = int(round(-dy_c))
+        # ---> DIE ADAPTIVE WEICHE <---
+        # Ein typischer guter Wert für scharfe Bilder liegt oft über 0.05 (5%).
+        # Bei matschigen Analogbildern oder fehlendem schwarzen Spiegel bricht er ein.
+        CONFIDENCE_THRESHOLD = 0.04 
         
-        # Rausch-Filter für Grob-Shift: Nur bei echten mechanischen Sprüngen (> 1px) anwenden
-        if abs(coarse_dx) < 2 and abs(coarse_dy) < 2:
-            coarse_dx, coarse_dy = 0, 0
+        if response >= CONFIDENCE_THRESHOLD:
+            # 1. Bild ist scharf & kontrastreich genug -> Grobe Korrektur anwenden!
+            coarse_dx = int(round(-dx_c))
+            coarse_dy = int(round(-dy_c))
             
-        # Bild grob vorschieben (Ringe liegen jetzt wieder exakt übereinander)
+            # Rausch-Filter für Grob-Shift: Nur bei echten Sprüngen (> 1px)
+            if abs(coarse_dx) < 2 and abs(coarse_dy) < 2:
+                coarse_dx, coarse_dy = 0, 0
+                
+            fine_search_radius = 5  # Die Mikro-Leine (Wir liegen grob ja schon perfekt)
+            self.log(side, f"🔎 Grob-Ausrichtung (Sicherheit {response*100:.1f}%): Shift X:{coarse_dx:+d}, Y:{coarse_dy:+d}")
+        else:
+            # 2. Bild ist zu "matschig" oder kontextarm (Analog / 50m) -> Grob-Shift ignorieren!
+            coarse_dx, coarse_dy = 0, 0
+            fine_search_radius = 35  # Große Leine (50m Löcher liegen weit auseinander)
+            self.log(side, f"⚠️ Grob-Ausrichtung unsicher (Sicherheit {response*100:.1f}% < {CONFIDENCE_THRESHOLD*100:.1f}%). Nutze erweiterten Suchradius ({fine_search_radius}px).")
+
+        # Bild grob vorschieben (passiert nur, wenn Konfidenz hoch genug war)
         coarse_shifted = self._shift_image_exact(current_normalized, coarse_dx, coarse_dy)
 
         # Wenn noch gar keine Treffer da sind, bleibt es bei der Grob-Korrektur!
@@ -380,18 +395,16 @@ class TargetDetector:
             self.last_shift[side] = (coarse_dx, coarse_dy)
             if self.first_hit_frame.get(side) is None:
                 self.first_hit_frame[side] = coarse_shifted.copy()
-            self.log(side, f"⚙️ Verschiebungskorrektur (0 Anker): Grob-Shift X:{coarse_dx:+d}px, Y:{coarse_dy:+d}px.")
             return coarse_shifted, (coarse_dx, coarse_dy)
-
 
         # =========================================================================
         # STUFE 2: FEIN-AUSRICHTUNG (Die Schusslöcher)
         # =========================================================================
-        # Wir erzeugen das Diff-Bild auf Basis der bereits grob korrigierten Ringe!
+        # Wir erzeugen das Diff-Bild auf Basis der bereits (ggf.) grob korrigierten Ringe!
         thresh_raw_coarse = self.calculate_raw_diff_mask(reference_bgr, coarse_shifted, side)
         
-        # Winziger Suchradius! Die Schablone kann nicht mehr versehentlich auf neue Löcher rutschen.
-        max_shift = 5  
+        # ---> DER ADAPTIVE RADIUS <---
+        max_shift = fine_search_radius  
         target_mask = np.zeros((h, w), dtype=np.uint8)
         
         shift_bits = 4
