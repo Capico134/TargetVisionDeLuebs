@@ -10,14 +10,7 @@ class TargetDetector:
     Diese Klasse kümmert sich AUSSCHLIESSLICH um die Bilderkennung (Computer Vision).
     Sie weiß nichts von Fenstern, Buttons oder HUDs.
     """
-    
-    # =========================================================================
-    # ⚙️ HARD-SCHALTER FÜR DIE VERSCHIEBUNGSKORREKTUR (IMAGE REGISTRATION)
-    # True  = Verschiebungskorrektur ist aktiv.
-    # False = Verschiebungskorrektur ist hart abgeschaltet (Inaktiv).
-    # =========================================================================
-    APPLY_SHIFT_CORRECTION = False
-    
+   
     def __init__(self, config, datei_manager, state_manager, log_callback):
         
         self.config = config
@@ -36,6 +29,13 @@ class TargetDetector:
         # Internes Gedächtnis des Detectors
         self.ref_left = None
         self.ref_right = None
+        
+        # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
+        # Speichert den zuletzt angewendeten Verschiebungsvektor (dx, dy) je Seite
+        self.last_shift = {'left': (0, 0), 'right': (0, 0)}
+        # Speichert das allererste Bild, das erstmalig Treffer enthielt (0,0 Referenz)
+        self.first_hit_frame = {'left': None, 'right': None}
+        # --------------------------------------------------
         
         # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
         self.last_aligned_left = None
@@ -124,6 +124,9 @@ class TargetDetector:
             }
         
         self.blur_kernel_size = self.config.getint('Erkennung', 'blur_kernel_size', fallback=7)
+        # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
+        self.verschiebungskorrektur = self.config.getboolean('Erkennung', 'verschiebungskorrektur', fallback=False)
+        # --------------------------------------------------
 
     def save_debug_image(self, name, image):
         # Der Live-Manager schiebt das Bild in die Warteschlange.
@@ -134,84 +137,359 @@ class TargetDetector:
         if result is True:
             self.log("SYSTEM", f"📸 Debug-Bild gespeichert: {name}")
 
-    def normalize_brightness(self, ref, live, side=None, state=None):
-        """Passt die Helligkeit an und führt optional die Verschiebungskorrektur aus."""
-        # 1. Helligkeit anpassen (Allgemein)
+    def normalize_brightness(self, ref, live):
+        """Passt ausschließlich die globale Helligkeit des Live-Bildes an das Referenzbild an."""
         mean_ref = cv2.mean(ref)[:3]
         mean_live = cv2.mean(live)[:3]
         diff = np.array(mean_ref) - np.array(mean_live)
         live_float = live.astype(np.float32)
         live_float += diff
-        live_normalized = np.clip(live_float, 0, 255).astype(np.uint8)
+        return np.clip(live_float, 0, 255).astype(np.uint8)
+
+    def calculate_raw_diff_mask(self, reference_bgr, current_normalized, side):
+        """
+        ELA-Hilfsmethode: Berechnet das rohe binäre Differenzbild (thresh_raw) 
+        OHNE Abzug von Diff-Gesamt (inkl. Color-Hack und optionalem Farb-Bonus).
+        """
+        # NEUE FARBERKENNUNG
+        diff_bgr = cv2.absdiff(reference_bgr, current_normalized)
+        # ---> DER COLOR-HACK: Wir nehmen einfach den maximalen Ausschlag aus B, G oder R <---
+        # Verhindert, dass massive Rot-Änderungen von der Graustufen-Formel verschluckt werden!
+        diff_gray = np.max(diff_bgr, axis=2)
 
         # =========================================================================
-        # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
-        # Dieser Block steuert die mechanische Bildregistrierung (Image Registration).
-        # Er wird nur ausgeführt, wenn APPLY_SHIFT_CORRECTION auf True steht.
+        # ---> NEU: Der smoothe Farb-Bonus (NORMALIZED RGB / CHROMINANCE) <---
         # =========================================================================
-        if self.APPLY_SHIFT_CORRECTION and side is not None:
-            gray_ref = cv2.cvtColor(ref, cv2.COLOR_BGR2GRAY)
-            gray_live = cv2.cvtColor(live_normalized, cv2.COLOR_BGR2GRAY)
+        if self.farb_bonus_aktiv:
+            farb_bonus_limit = self.farb_bonus_limit
+            farb_bonus_kurve = self.farb_bonus_kurve
 
-            # Zentrum-ROI (innere 60%) + Hanning-Window gegen starre Bildränder
-            h, w = gray_ref.shape
-            y1, y2 = int(h * 0.2), int(h * 0.8)
-            x1, x2 = int(w * 0.2), int(w * 0.8)
-            hann = cv2.createHanningWindow((x2 - x1, y2 - y1), cv2.CV_32F)
+            bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
+            r_tgt = self.config.getint(bg_sec, 'rgb_r')
+            g_tgt = self.config.getint(bg_sec, 'rgb_g')
+            b_tgt = self.config.getint(bg_sec, 'rgb_b')
 
-            roi_ref = gray_ref[y1:y2, x1:x2].astype(np.float32)
-            roi_live = gray_live[y1:y2, x1:x2].astype(np.float32)
+            # 1. Ziel-Farbe normalisieren
+            sum_tgt = float(r_tgt + g_tgt + b_tgt)
+            if sum_tgt == 0: sum_tgt = 1.0
+            target_norm = np.array([b_tgt/sum_tgt, g_tgt/sum_tgt, r_tgt/sum_tgt], dtype=np.float32)
 
-            # P-Anteil: Messung gegen die saubere Ur-Referenz (Drift-Bremse)
-            (dx_ref, dy_ref), resp_ref = cv2.phaseCorrelate(roi_ref, roi_live, window=hann)
+            # 2. Live-Bild normalisieren
+            live_float = current_normalized.astype(np.float32)
+            live_sum = np.sum(live_float, axis=2, keepdims=True)
+            live_sum[live_sum == 0] = 1.0
+            live_norm = live_float / live_sum
 
-            # D-Anteil: Messung gegen das letzte bestätigte Trefferbild
-            last_aligned = self.last_aligned_left if side == 'left' else self.last_aligned_right
-            if last_aligned is not None and last_aligned.shape == ref.shape and len(self.sm.get_shots_for_side(side)) > 0:
-                gray_last = cv2.cvtColor(last_aligned, cv2.COLOR_BGR2GRAY)
-                roi_last = gray_last[y1:y2, x1:x2].astype(np.float32)
-                (dx_last, dy_last), resp_last = cv2.phaseCorrelate(roi_last, roi_live, window=hann)
+            # 3. Distanz berechnen (Faktor 1000 für schöne Werte)
+            dist_matrix = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
 
-                w_sum = resp_ref + resp_last
-                if w_sum > 0:
-                    x_shift = (dx_ref * resp_ref + dx_last * resp_last) / w_sum
-                    y_shift = (dy_ref * resp_ref + dy_last * resp_last) / w_sum
-                else:
-                    x_shift, y_shift = dx_ref, dy_ref
-                anker_info = f"P-Ref:{dx_ref:+.2f} (w={resp_ref:.2f}) | D-Last:{dx_last:+.2f} (w={resp_last:.2f})"
-            else:
-                x_shift, y_shift = dx_ref, dy_ref
-                anker_info = f"Nur P-Ref:{dx_ref:+.2f} (w={resp_ref:.2f})"
+            # ---> ELA-konforme Multiplikator-Logik mit Rausch-Plateau <---
+            multiplier = 1.0 - (dist_matrix / farb_bonus_limit)
+            multiplier = np.clip(multiplier * 1.15, 0.0, 1.0)
 
-            dx = int(round(x_shift))
-            dy = int(round(y_shift))
+            if farb_bonus_kurve != 1.0:
+                multiplier = multiplier ** farb_bonus_kurve
 
-            if (abs(dx) >= 1 or abs(dy) >= 1) and abs(dx) < 15 and abs(dy) < 15:
-                err_unshifted = np.sum(cv2.absdiff(roi_ref, roi_live))
-                
-                m_direct = np.float32([[1, 0,  dx], [0, 1,  dy]])
-                m_inverse = np.float32([[1, 0, -dx], [0, 1, -dy]])
-                
-                cand_direct = cv2.warpAffine(live_normalized, m_direct, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_REPLICATE)
-                cand_inverse = cv2.warpAffine(live_normalized, m_inverse, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_REPLICATE)
-                
-                roi_dir = cv2.cvtColor(cand_direct[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY).astype(np.float32)
-                roi_inv = cv2.cvtColor(cand_inverse[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY).astype(np.float32)
-                
-                err_dir = np.sum(cv2.absdiff(roi_ref, roi_dir))
-                err_inv = np.sum(cv2.absdiff(roi_ref, roi_inv))
-                
-                if err_dir < err_unshifted and err_dir <= err_inv:
-                    live_normalized = cand_direct
-                    self.log(side, f"⚙️ Feinjustierung aktiv (Direkt): Bild um X:{+dx:+d}px, Y:{+dy:+d}px gerückt [{anker_info}].")
-                elif err_inv < err_unshifted and err_inv < err_dir:
-                    live_normalized = cand_inverse
-                    self.log(side, f"⚙️ Feinjustierung aktiv (Invers): Bild um X:{-dx:+d}px, Y:{-dy:+d}px gerückt [{anker_info}].")
-                else:
-                    self.log(side, f"🛡️ Feinjustierung verworfen (Kein Gewinn durch Shift X:{dx:+d}, Y:{dy:+d}) [{anker_info}].")
+            # Diff-Werte bestrafen (abdunkeln)
+            diff_gray = np.clip(diff_gray.astype(np.float32) * multiplier, 0, 255).astype(np.uint8)
+
+        _, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY)
+        return thresh_raw
+
+    # =========================================================================
+    # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
+    # =========================================================================
+    def _shift_image_exact(self, img, dx, dy):
+        """
+        Verschiebt ein Bild exakt um ganzzahlige Pixel (dx, dy):
+        Positives dx schiebt den Bildinhalt nach RECHTS, negatives dx nach LINKS.
+        Positives dy schiebt den Bildinhalt nach UNTEN, negatives dy nach OBEN.
+        """
+        if dx == 0 and dy == 0:
+            return img.copy()
+        h, w = img.shape[:2]
+        # In OpenCV ohne WARP_INVERSE_MAP gilt: dst(x, y) = src(x - tx, y - ty).
+        # Damit der Inhalt um +dx wandert, muss tx = +dx in der Matrix stehen.
+        M = np.float32([[1, 0, float(dx)], [0, 1, float(dy)]])
+        return cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_REPLICATE)
+
+    def _export_shift_layers(self, side, shot_count, ref_00_img, orig_unshifted, target_mask,
+                             thresh_unshifted, thresh_shifted, orig_shifted, best_dx, best_dy,
+                             cov_zero, cov_best):
+        """
+        Exportiert alle Ebenen der Verschiebungskorrektur als echte mehrschichtige .ora (GIMP/Krita)
+        UND .svg (Inkscape/Browser) Datei mit 100% transparentem Hintergrund bei Masken/Diffs.
+        Wird NUR ausgeführt, wenn im Labor der Bilder-Export aktiviert ist!
+        """
+        # Prüfen, ob wir im Labor sind und der Bildexport-Haken aktiv ist
+        app = getattr(self.dm, 'app', None)
+        if not app or not hasattr(app, 'export_images_var') or not app.export_images_var.get():
+            return
+
+        import os
+        import zipfile
+        import base64
+
+        export_folder = getattr(self.dm, 'export_folder', 'labor_export')
+        os.makedirs(export_folder, exist_ok=True)
+        h, w = thresh_unshifted.shape[:2]
+
+        # Hilfsfunktion: Macht aus einer binären Maske (0/255) ein BGRA-Bild mit 100% transparentem Schwarz
+        def mask_to_bgra(mask, b, g, r, alpha=170, draw_outline=False):
+            bgra = np.zeros((h, w, 4), dtype=np.uint8)
+            active = mask > 127
+            bgra[active, 0] = b
+            bgra[active, 1] = g
+            bgra[active, 2] = r
+            bgra[active, 3] = alpha
+            if draw_outline:
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(bgra, contours, -1, (b, g, r, 255), 2)
+            return bgra
+
+        def bgr_to_bgra(bgr_img):
+            return cv2.cvtColor(bgr_img, cv2.COLOR_BGR2BGRA)
+
+        # 1. Ebene: Info & Verschiebungsvektor (Transparentes Overlay ganz oben)
+        info_bgra = np.zeros((h, w, 4), dtype=np.uint8)
+        box_overlay = np.zeros((110, 680, 4), dtype=np.uint8)
+        box_overlay[:, :] = (20, 20, 20, 210)
+        info_bgra[15:125, 15:695] = box_overlay
+
+        txt1 = f"Verschiebungskorrektur (Anker-Treffer: {shot_count}) | Seite: {side.upper()}"
+        txt2 = f"Korrektur-Vektor: X = {best_dx:+d} px, Y = {best_dy:+d} px"
+        txt3 = f"Treffer-Deckung: {cov_zero:.1f}% (unverschoben) -> {cov_best:.1f}% (korrigiert)"
+        cv2.putText(info_bgra, txt1, (30, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255, 255), 2)
+        cv2.putText(info_bgra, txt2, (30, 78), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255, 255), 2)
+        cv2.putText(info_bgra, txt3, (30, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.60, (100, 255, 100, 255), 2)
+
+        # Vektor-Pfeil in der Bildmitte zeichnen (20x gestreckt für klare Sichtbarkeit)
+        cx, cy = w // 2, h // 2
+        cv2.circle(info_bgra, (cx, cy), 5, (0, 255, 255, 255), -1)
+        if best_dx != 0 or best_dy != 0:
+            end_pt = (int(cx + best_dx * 20), int(cy + best_dy * 20))
+            cv2.arrowedLine(info_bgra, (cx, cy), end_pt, (0, 255, 255, 255), 3, tipLength=0.25)
+
+        # 2. Alle gewünschten Ebenen zusammenstellen (von oben nach unten im Ebenen-Stapel)
+        layers = [
+            ("07_Info_und_Vektor", info_bgra, "normal", 1.0),
+            ("06_Diff_Verschoben_GRUEN", mask_to_bgra(thresh_shifted, 0, 255, 0, alpha=160), "normal", 1.0),
+            ("05_Diff_Unverschoben_ROT", mask_to_bgra(thresh_unshifted, 0, 0, 255, alpha=160), "normal", 1.0),
+            ("04_Suchbereich_Alte_Treffer_CYAN", mask_to_bgra(target_mask, 255, 255, 0, alpha=90, draw_outline=True), "normal", 1.0),
+            ("03_Bild_Aktuell_Verschoben", bgr_to_bgra(orig_shifted), "normal", 1.0),
+            ("02_Bild_Aktuell_Unverschoben", bgr_to_bgra(orig_unshifted), "normal", 1.0),
+            ("01_Referenz_Bild1_0_0", bgr_to_bgra(ref_00_img), "normal", 1.0),
+        ]
+
+        ts = datetime.now().strftime('%H%M%S')
+        base_filename = f"ShiftLayers_Anker{shot_count:02d}_{side}_{ts}"
+        ora_path = os.path.join(export_folder, f"{base_filename}.ora")
+        svg_path = os.path.join(export_folder, f"{base_filename}.svg")
+
+        # A) OpenRaster (.ora) schreiben -> Direkt in GIMP / Krita / Paint.NET mit allen Ebenen zu öffnen!
+        stack_xml_lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            f'<image version="0.0.3" w="{w}" h="{h}" xres="72" yres="72">',
+            '  <stack>'
+        ]
+        svg_lines = [
+            f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+            f'xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="{w}" height="{h}" viewBox="0 0 {w} {h}">'
+        ]
+
+        with zipfile.ZipFile(ora_path, 'w', compression=zipfile.ZIP_STORED) as zf:
+            # mimetype muss laut Spezifikation unkomprimiert als erstes rein
+            zf.writestr('mimetype', 'image/openraster')
+
+            for idx, (l_name, bgra_img, _, opacity) in enumerate(layers):
+                ok, png_buf = cv2.imencode('.png', bgra_img)
+                if not ok:
+                    continue
+                png_bytes = png_buf.tobytes()
+                internal_path = f"data/{l_name}.png"
+                zf.writestr(internal_path, png_bytes)
+                stack_xml_lines.append(
+                    f'    <layer name="{l_name}" src="{internal_path}" x="0" y="0" opacity="{opacity:.2f}" visibility="visible" composite-op="svg:src-over"/>'
+                )
+
+            # Mini-Vorschaubild & Merged-Image für GIMP-Kompatibilität
+            ok_m, merged_buf = cv2.imencode('.png', bgr_to_bgra(orig_shifted))
+            if ok_m:
+                zf.writestr('mergedimage.png', merged_buf.tobytes())
+                thumb = cv2.resize(orig_shifted, (min(256, w), int(h * (min(256, w) / float(w)))))
+                _, thumb_buf = cv2.imencode('.png', thumb)
+                zf.writestr('Thumbnails/thumbnail.png', thumb_buf.tobytes())
+
+            stack_xml_lines.append('  </stack>')
+            stack_xml_lines.append('</image>')
+            zf.writestr('stack.xml', "\n".join(stack_xml_lines))
+
+        # B) Zusätzlich als .svg mit eingebetteten Inkscape-Ebenen speichern (in umgekehrter Reihenfolge: unten -> oben)
+        for l_name, bgra_img, _, opacity in reversed(layers):
+            ok, png_buf = cv2.imencode('.png', bgra_img)
+            if not ok:
+                continue
+            b64_str = base64.b64encode(png_buf.tobytes()).decode('ascii')
+            svg_lines.append(
+                f'  <g inkscape:groupmode="layer" id="{l_name}" inkscape:label="{l_name}" style="display:inline;opacity:{opacity:.2f}">'
+                f'<image x="0" y="0" width="{w}" height="{h}" xlink:href="data:image/png;base64,{b64_str}"/></g>'
+            )
+        svg_lines.append('</svg>')
+        with open(svg_path, 'w', encoding='utf-8') as f:
+            f.write("\n".join(svg_lines))
+
+        self.log("SYSTEM", f"📸 Ebenen-Paket gespeichert: {base_filename}.ora (GIMP) & .svg (Inkscape/Browser)")
+
+    # =========================================================================
+    # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
+    # =========================================================================
+    def align_frame_by_shots(self, reference_bgr, current_normalized, side):
+        """Zweistufige Image Registration: 1. Grob über Zielscheibe, 2. Fein über Schusslöcher"""
+        prev_shots = self.sm.get_shots_for_side(side)
+        h, w = current_normalized.shape[:2]
+
         # =========================================================================
+        # STUFE 1: GROB-AUSRICHTUNG (Die Ringe der Zielscheibe)
+        # Verhindert, dass der Algorithmus bei weiten OBS-Sprüngen auf neue Löcher springt!
+        # =========================================================================
+        gray_ref = cv2.cvtColor(reference_bgr, cv2.COLOR_BGR2GRAY)
+        gray_live = cv2.cvtColor(current_normalized, cv2.COLOR_BGR2GRAY)
+        
+        y1, y2 = int(h * 0.2), int(h * 0.8)
+        x1, x2 = int(w * 0.2), int(w * 0.8)
+        hann = cv2.createHanningWindow((x2 - x1, y2 - y1), cv2.CV_32F)
+        
+        roi_ref = gray_ref[y1:y2, x1:x2].astype(np.float32)
+        roi_live = gray_live[y1:y2, x1:x2].astype(np.float32)
+        
+        (dx_c, dy_c), _ = cv2.phaseCorrelate(roi_ref, roi_live, window=hann)
+        
+        # Invertieren, da wir den Korrekturvektor brauchen (Gegenrichtung zur Messung!)
+        coarse_dx = int(round(-dx_c))
+        coarse_dy = int(round(-dy_c))
+        
+        # Rausch-Filter für Grob-Shift: Nur bei echten mechanischen Sprüngen (> 1px) anwenden
+        if abs(coarse_dx) < 2 and abs(coarse_dy) < 2:
+            coarse_dx, coarse_dy = 0, 0
+            
+        # Bild grob vorschieben (Ringe liegen jetzt wieder exakt übereinander)
+        coarse_shifted = self._shift_image_exact(current_normalized, coarse_dx, coarse_dy)
 
-        return live_normalized
+        # Wenn noch gar keine Treffer da sind, bleibt es bei der Grob-Korrektur!
+        if not prev_shots:
+            self.last_shift[side] = (coarse_dx, coarse_dy)
+            if self.first_hit_frame.get(side) is None:
+                self.first_hit_frame[side] = coarse_shifted.copy()
+            self.log(side, f"⚙️ Verschiebungskorrektur (0 Anker): Grob-Shift X:{coarse_dx:+d}px, Y:{coarse_dy:+d}px.")
+            return coarse_shifted, (coarse_dx, coarse_dy)
+
+
+        # =========================================================================
+        # STUFE 2: FEIN-AUSRICHTUNG (Die Schusslöcher)
+        # =========================================================================
+        # Wir erzeugen das Diff-Bild auf Basis der bereits grob korrigierten Ringe!
+        thresh_raw_coarse = self.calculate_raw_diff_mask(reference_bgr, coarse_shifted, side)
+        
+        # Winziger Suchradius! Die Schablone kann nicht mehr versehentlich auf neue Löcher rutschen.
+        max_shift = 5  
+        target_mask = np.zeros((h, w), dtype=np.uint8)
+        
+        shift_bits = 4
+        multiplier = 1 << shift_bits
+        x_min_all, y_min_all = w, h
+        x_max_all, y_max_all = 0, 0
+
+        # Schablonen der alten Löcher zeichnen
+        for shot in prev_shots:
+            sx, sy = shot['pos']
+            r_local = shot.get('cal_radius') or self.get_local_caliber_radius(side, sx, sy)
+            sub_cx = int(round((sx - 0.5) * multiplier))
+            sub_cy = int(round((sy - 0.5) * multiplier))
+            sub_r  = int(round((r_local - 0.707 / 2.0) * multiplier))
+            cv2.circle(target_mask, (sub_cx, sub_cy), sub_r, 255, -1, cv2.LINE_8, shift=shift_bits)
+
+            r_pad = int(r_local) + max_shift + 2
+            x_min_all = min(x_min_all, max(0, int(sx) - r_pad))
+            y_min_all = min(y_min_all, max(0, int(sy) - r_pad))
+            x_max_all = max(x_max_all, min(w, int(sx) + r_pad))
+            y_max_all = max(y_max_all, min(h, int(sy) + r_pad))
+
+        total_template_pixels = cv2.countNonZero(target_mask)
+        if total_template_pixels == 0 or x_max_all <= x_min_all or y_max_all <= y_min_all:
+            self.last_shift[side] = (coarse_dx, coarse_dy)
+            return coarse_shifted, (coarse_dx, coarse_dy)
+
+        # Schnelle 2D-Korrelation im winzigen Suchfenster (CCOEFF_NORMED ignoriert Scheiben-Schlieren!)
+        t_x1 = max(0, x_min_all + max_shift)
+        t_y1 = max(0, y_min_all + max_shift)
+        t_x2 = min(w, x_max_all - max_shift)
+        t_y2 = min(h, y_max_all - max_shift)
+
+        if t_x2 <= t_x1 or t_y2 <= t_y1:
+            self.last_shift[side] = (coarse_dx, coarse_dy)
+            return coarse_shifted, (coarse_dx, coarse_dy)
+
+        template_crop = (target_mask[t_y1:t_y2, t_x1:t_x2]).astype(np.float32)
+        search_crop = (thresh_raw_coarse[
+            t_y1 - max_shift : t_y2 + max_shift,
+            t_x1 - max_shift : t_x2 + max_shift
+        ]).astype(np.float32)
+
+        res = cv2.matchTemplate(search_crop, template_crop, cv2.TM_CCOEFF_NORMED)
+        
+        # Den stärksten Peak finden
+        _, _, _, max_loc = cv2.minMaxLoc(res)
+        
+        # Korrektur-Vektor invertieren! (Gegenrichtung zum gemessenen Offset)
+        fine_dx = -(max_loc[0] - max_shift)
+        fine_dy = -(max_loc[1] - max_shift)
+
+        # Pixeldeckungen zählen
+        zero_hits = float(cv2.countNonZero(cv2.bitwise_and(thresh_raw_coarse, target_mask)))
+        cov_zero = (zero_hits / total_template_pixels) * 100.0
+
+        best_dx, best_dy = 0, 0
+        cov_best = cov_zero
+        final_shifted = coarse_shifted
+        thresh_raw_final = thresh_raw_coarse
+
+        # Wenn wir einen Fein-Shift haben, Härtetest durchführen
+        if fine_dx != 0 or fine_dy != 0:
+            cand_shifted = self._shift_image_exact(coarse_shifted, fine_dx, fine_dy)
+            cand_thresh = self.calculate_raw_diff_mask(reference_bgr, cand_shifted, side)
+            verified_hits = float(cv2.countNonZero(cv2.bitwise_and(cand_thresh, target_mask)))
+
+            # Fein-Shift darf nur greifen, wenn er TATSÄCHLICH besser ist als 0,0
+            if verified_hits > zero_hits:
+                best_dx, best_dy = fine_dx, fine_dy
+                final_shifted = cand_shifted
+                thresh_raw_final = cand_thresh
+                cov_best = (verified_hits / total_template_pixels) * 100.0
+                
+        total_dx = coarse_dx + best_dx
+        total_dy = coarse_dy + best_dy
+
+        if total_dx != 0 or total_dy != 0:
+            self.log(side, f"⚙️ Verschiebungskorrektur ({len(prev_shots)} Anker): Grob X:{coarse_dx:+d} Y:{coarse_dy:+d} | Fein X:{best_dx:+d} Y:{best_dy:+d} (Deckung: {cov_zero:.1f}% -> {cov_best:.1f}%).")
+        else:
+            self.log(side, f"🛡️ Verschiebungskorrektur ({len(prev_shots)} Anker): X:+0px, Y:+0px ist optimal (Deckung: {cov_zero:.1f}%).")
+
+        # Optionaler Ebenen-Export
+        ref_00 = self.first_hit_frame.get(side)
+        if ref_00 is None: 
+            ref_00 = reference_bgr
+            
+        self._export_shift_layers(
+            side=side, shot_count=len(prev_shots), ref_00_img=ref_00,
+            orig_unshifted=current_normalized, target_mask=target_mask,
+            thresh_unshifted=self.calculate_raw_diff_mask(reference_bgr, current_normalized, side),
+            thresh_shifted=thresh_raw_final, orig_shifted=final_shifted,
+            best_dx=total_dx, best_dy=total_dy, cov_zero=cov_zero, cov_best=cov_best
+        )
+
+        self.last_shift[side] = (total_dx, total_dy)
+        return final_shifted, (total_dx, total_dy)
+    # =========================================================================
 
     def calculate_hole_score(self, cx, cy, radius, thresh_new, thresh_raw, export_details=False):
         """
@@ -463,11 +741,13 @@ class TargetDetector:
         if side == 'left': 
             self.ref_left = bgr_blur
             # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
-            self.last_aligned_left = bgr_blur.copy()
+            self.last_shift['left'] = (0, 0)
+            self.first_hit_frame['left'] = None
         else: 
             self.ref_right = bgr_blur
             # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
-            self.last_aligned_right = bgr_blur.copy()
+            self.last_shift['right'] = (0, 0)
+            self.first_hit_frame['right'] = None
         self.save_debug_image(f"referenz_{side}", frame)
         feedback = None
         if self.ringwertung_aktiv:
@@ -531,80 +811,35 @@ class TargetDetector:
             return False
         
         k = self.blur_kernel_size
-        
         if k > 0 and k % 2 == 1:
             current_bgr_blur = cv2.GaussianBlur(frame, (k, k), 0) 
         else:
             current_bgr_blur = frame.copy()
             
-        #current_normalized = self.normalize_brightness(reference_bgr, current_bgr_blur)
-        # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR: side und state übergeben ---
-        current_normalized = self.normalize_brightness(reference_bgr, current_bgr_blur, side, state)
-        
-        #ALTE FARBERKENNUNG
-        #diff_bgr = cv2.absdiff(reference_bgr, current_normalized) 
-        #diff_gray = cv2.cvtColor(diff_bgr, cv2.COLOR_BGR2GRAY)
-        #_, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY) 
-        
-        #NEUE FARBERKENNUNG
-        diff_bgr = cv2.absdiff(reference_bgr, current_normalized) 
-        # ---> DER COLOR-HACK: Wir nehmen einfach den maximalen Ausschlag aus B, G oder R <---
-        # Verhindert, dass massive Rot-Änderungen von der Graustufen-Formel verschluckt werden!
-        diff_gray = np.max(diff_bgr, axis=2) 
-        
+        # 1. Helligkeit anpassen
+        current_normalized = self.normalize_brightness(reference_bgr, current_bgr_blur)
+
         # =========================================================================
-        # ---> NEU: Der smoothe Farb-Bonus (NORMALIZED RGB / CHROMINANCE) <---
+        # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR (SCHRITT 1) ---
+        # Korrigiert die Bildposition anhand der alten Treffer-Landmarks
+        # =========================================================================
+        applied_shift = (0, 0)
+        if self.verschiebungskorrektur:
+            current_normalized, applied_shift = self.align_frame_by_shots(
+                reference_bgr, current_normalized, side
+            )
         # =========================================================================
 
+        # SCHRITT 2: Rohes Diff-Bild des (ggf. verschobenen) Bildes erzeugen
+        # (Nutzt dieselbe gemeinsame Methode, um perfekt sauber zu arbeiten!)
+        thresh_raw = self.calculate_raw_diff_mask(reference_bgr, current_normalized, side)
 
-        
-        if self.farb_bonus_aktiv:
-            farb_bonus_limit = self.farb_bonus_limit
-            farb_bonus_kurve = self.farb_bonus_kurve
-            
-            bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
-            r_tgt = self.config.getint(bg_sec, 'rgb_r')
-            g_tgt = self.config.getint(bg_sec, 'rgb_g')
-            b_tgt = self.config.getint(bg_sec, 'rgb_b')
-            
-            # 1. Ziel-Farbe normalisieren
-            sum_tgt = float(r_tgt + g_tgt + b_tgt)
-            if sum_tgt == 0: sum_tgt = 1.0
-            target_norm = np.array([b_tgt/sum_tgt, g_tgt/sum_tgt, r_tgt/sum_tgt], dtype=np.float32)
-            
-            # 2. Live-Bild normalisieren
-            live_float = current_normalized.astype(np.float32)
-            live_sum = np.sum(live_float, axis=2, keepdims=True)
-            live_sum[live_sum == 0] = 1.0 
-            live_norm = live_float / live_sum
-            
-            # 3. Distanz berechnen (Faktor 1000 für schöne Werte)
-            dist_matrix = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
-            
-            # =========================================================================
-            # ---> NEU: ELA-konforme Multiplikator-Logik mit Rausch-Plateau <---
-            # =========================================================================
-            multiplier = 1.0 - (dist_matrix / farb_bonus_limit)
-            
-            # Boost um 15% (Rausch-Ausgleich), aber hart bei 1.0 abriegeln!
-            multiplier = np.clip(multiplier * 1.15, 0.0, 1.0)
-            
-            if farb_bonus_kurve != 1.0:
-                multiplier = multiplier ** farb_bonus_kurve
-            
-            # Diff-Werte bestrafen (abdunkeln)
-            diff_gray = np.clip(diff_gray.astype(np.float32) * multiplier, 0, 255).astype(np.uint8)
-
-        _, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY)
-        
-        ## ---> NEU: Leere Leinwand für die siegreichen Abrisskanten dieses Frames <---
-        #frame_abrisskanten = np.zeros_like(thresh_raw)
-
-        # 1. ERST die alten Treffer vom rohen Live-Diff abziehen
+        # Ab hier läuft deine gewohnte Masken-Verarbeitung weiter:
         if state.cumulative_mask is not None:
             if thresh_raw.shape != state.cumulative_mask.shape:
                 self.log(side, "⚠️ Maskengröße inkompatibel (Crop)! Setze Maske zurück.", True)
                 state.cumulative_mask = np.zeros_like(thresh_raw)
+
                 
             # =========================================================================
             # ---> DER FIX: Schutz gegen tanzende Löcher (Kamerawackler) & JPG-Artefakte
@@ -1206,11 +1441,16 @@ class TargetDetector:
                                     'cx': cx, 'cy': cy, 'area': area, 'score': final_shot_score,
                                     'winner_method': winning_method,
                                     'mec_radius': new_mec_radius,
+                                    'cal_radius': float(current_caliber_radius),
+                                    # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
+                                    'shift_x': int(applied_shift[0]),
+                                    'shift_y': int(applied_shift[1]),
+                                    # --------------------------------------------------
                                     'base_pos': winner.get('base_pos', (cx, cy)),
                                     'end_pos': winner.get('end_pos', (cx, cy)),
-                                    'score_export_details': export_details, # <--- Sicheres Variablen-Mapping
-                                    'outer_edge': current_outer_edge, # <--- NEU: Die grüne Kante retten
-                                    'frag_info': f"Frag {c_idx+1}/{len(contours)}" # <--- NEU: Welches Fragment hat gewonnen?
+                                    'score_export_details': export_details,
+                                    'outer_edge': current_outer_edge,
+                                    'frag_info': f"Frag {c_idx+1}/{len(contours)}"
                                 }
                             else:
                                 msg = f"⚠️ Treffer ignoriert: Fragment (Fläche {area:.1f}px | Score {final_shot_score:.1f}) verliert Sichel-Duell gegen besseres Fragment ({existing_shot['score']:.1f})!"
@@ -1226,12 +1466,16 @@ class TargetDetector:
                         'cx': winner['cx'], 'cy': winner['cy'], 'area': area, 'score': winner['score'],
                         'winner_method': winner['name'],
                         'mec_radius': mec_radius,
-                        'cal_radius': float(current_caliber_radius), # <--- NEU: Für den Klick-Röntgenblick!
+                        'cal_radius': float(current_caliber_radius),
+                        # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
+                        'shift_x': int(applied_shift[0]),
+                        'shift_y': int(applied_shift[1]),
+                        # --------------------------------------------------
                         'base_pos': winner['base_pos'],
-                        'end_pos': winner.get('end_pos', (winner['cx'], winner['cy'])), # <--- Zielpunkt sichern
-                        'score_export_details': export_details, # <--- Sicheres Variablen-Mapping
-                        'outer_edge': current_outer_edge, # <--- NEU: Die grüne Kante retten
-                        'frag_info': f"Frag {c_idx+1}/{len(contours)}" # <--- NEU: Welches Fragment hat gewonnen?
+                        'end_pos': winner.get('end_pos', (winner['cx'], winner['cy'])),
+                        'score_export_details': export_details,
+                        'outer_edge': current_outer_edge,
+                        'frag_info': f"Frag {c_idx+1}/{len(contours)}"
                     })
                     # ---> NEU: Exakt ausgerichtete Bestätigungs-Zeile <---
                     area_str = f"{area:>6.1f}"
@@ -1264,13 +1508,13 @@ class TargetDetector:
             
             # Echte Treffer dem StateManager übergeben
             if new_shots_found_this_frame:
-                # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR: D-Anker aktualisieren ---
-                if self.APPLY_SHIFT_CORRECTION:
-                    if side == 'left':
-                        self.last_aligned_left = current_normalized.copy()
-                    else:
-                        self.last_aligned_right = current_normalized.copy()
-                # ----------------------------------------------------------------------
+                # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
+                # Merke das allererste Bild, das einen ECHTEN bestätigten Treffer enthält (0,0 Referenz für Layer-Export)
+                if self.first_hit_frame.get(side) is None:
+                    self.first_hit_frame[side] = current_normalized.copy()
+                # --------------------------------------------------
+
+                # Alte Schüsse als "nicht mehr neu" markieren
                 for s in self.sm.shots:
                     if s['side'] == side:
                         s['is_new'] = False
@@ -1285,18 +1529,19 @@ class TargetDetector:
                 for sd in new_shots_found_this_frame:
                     
                     # 1. Schuss komplett und sauber übergeben (Einfach & Allgemein)
+                    # HINWEIS: Hier wandern 'shift_x' und 'shift_y' automatisch über 'sd' als Metadaten mit in den StateManager!
                     shot = self.sm.add_shot(side, sd['cx'], sd['cy'], cv_data=sd)
                     
                     # 2. Werte für den Log-Ausdruck berechnen (Lesbar)
                     shot_num = sum(1 for s in self.sm.shots if s['side'] == side)
                     durchmesser_mm = (shot.get('mec_radius', 0.0) * 2) / avg_px_pro_mm if avg_px_pro_mm > 0 else 0
                     
-                    # ---> NEU: Die siegreiche Methode UND das Fragment auslesen
+                    # Die siegreiche Methode UND das Fragment auslesen
                     base_method = shot.get('winner_method', 'Unbekannt')
                     frag_info = sd.get('frag_info', '')
                     winner_method = f"{base_method} [{frag_info}]" if frag_info else base_method
                     
-                    # ---> NEU: Perfekt formatiert & 1:1 ausgerichtet mit "NEUES LOCH" <---
+                    # Perfekt formatiert & 1:1 ausgerichtet mit "NEUES LOCH"
                     ring_str = f"{shot['score']:>4.{decimals}f}"
                     raw_str = f"{shot.get('raw_score', 0.0):>6.3f}"
                     area_str = f"{shot.get('area', 0.0):>6.1f}"
@@ -1307,7 +1552,7 @@ class TargetDetector:
                     
                     cv_score_str = f"{shot.get('cv_score', 0.0):>5.1f}"
                     
-                    # Die Methode wird mit <36 auf eine feste Breite gezwungen (Platz für Name + [Frag x/y])
+                    # Die Methode wird mit <36 auf eine feste Breite gezwungen
                     ziel_right = f" - Ziel X:{shot['cx']:>6.2f} Y:{shot['cy']:>6.2f} -> Score: {cv_score_str} | {winner_method:<36} | MEC-Ø: {durchmesser_mm:>5.2f}mm 💥"
                     
                     self.log(side, f"{padded_left}{ziel_right}")
