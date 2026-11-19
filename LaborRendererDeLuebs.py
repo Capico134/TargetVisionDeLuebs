@@ -648,6 +648,36 @@ class LaborRenderer:
                     cv2.putText(combined, inf_str, (edge_x - 60, edge_y + (25 if edge_y < 50 else -15)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2, cv2.LINE_AA)
         
         
+        # =========================================================================
+        # ---> NEU ELA: Verschiebungs-Vektor statisch als GUI-Overlay auf die linke Hälfte! <---
+        # =========================================================================
+        cache_idx = current_frame_num - 1
+        if cache_idx in self.app.frame_cache.get(side, {}):
+            dx, dy = self.app.frame_cache[side][cache_idx].get('shift', (0, 0))
+            if dx != 0 or dy != 0:
+                container_h = combined.shape[0]
+                start_x, start_y = 100, container_h - 40
+                
+                # EXAKTE MATHEMATIK: Der Vektor entspricht 1:1 der sichtbaren Verschiebung im GUI!
+                ui_dx = int(round(dx * self.app.current_scale))
+                ui_dy = int(round(dy * self.app.current_scale))
+                end_x = start_x + ui_dx
+                end_y = start_y + ui_dy
+                
+                color_vec = (0, 220, 255) # Ein etwas weicheres, professionelleres Gelb
+                
+                # Dezentere Linien und Punkte
+                if abs(ui_dx) > 2 or abs(ui_dy) > 2:
+                    cv2.circle(combined, (start_x, start_y), 3, color_vec, -1, cv2.LINE_AA)
+                    cv2.arrowedLine(combined, (start_x, start_y), (end_x, end_y), color_vec, 1, tipLength=0.2, line_type=cv2.LINE_AA)
+                
+                # Feinerer, kleinerer Text (Font-Scale 0.45 statt 0.65, dünnere Outline)
+                txt = f"SHIFT: X {dx:+d} | Y {dy:+d}"
+                #cv2.putText(combined, txt, (start_x - 10, start_y - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2, cv2.LINE_AA)
+                cv2.putText(combined, txt, (start_x - 10, start_y - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_vec, 1, cv2.LINE_AA)
+        # =========================================================================
+
+        
         #ZEICHNEN!!!!!!!!!!!!!!!!!!'''''''''''!!!!!!!!!!!!!!!!!!
         self.app.base_combined_img = combined.copy()
         self.app.base_combined_img_rgb = cv2.cvtColor(combined, cv2.COLOR_BGR2RGB)

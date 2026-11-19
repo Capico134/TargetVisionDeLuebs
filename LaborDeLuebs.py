@@ -1701,7 +1701,7 @@ class LaborApp:
                 
                 img = self.get_img(side_origs[i])
                 
-                # ---> ELA FIX: Bei JEDEM Frame alte Diffs löschen, damit Geisterbilder nicht den Cache vergiften! <---
+                # ---> ELA FIX: Bei JEDEM Frame alte Diffs löschen ...
                 d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
                 d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
                 d_dm.debug_images.pop(f"letzte_abrisskante_{side}", None)
@@ -1720,12 +1720,9 @@ class LaborApp:
                     else:
                         history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
                         
-                    # ---> ZIEL-BILD: Details aktivieren (falls vom Nutzer gewünscht) <---
                     detector.detail_export_aktiv = detail_export
                 else:
                     self.print_log(None, f"\n--- BILD #{i+1} ".ljust(61, "-"))
-                    
-                    # ---> FAST-FORWARD: Striktes Verbot für Monsterdaten! <---
                     detector.detail_export_aktiv = False
                         
                 shots_before = len(d_sm.shots)
@@ -1734,11 +1731,17 @@ class LaborApp:
                 
                 for j in range(shots_before, shots_after):
                     d_sm.shots[j]['labor_frame_num'] = i + 1
-                    
-                # ---> DEN FRAME IN DEN CACHE LEGEN <---
-                temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
                 
-                # ---> ELA RAM-DIÄT: Wir schneiden die Monsterdaten rigoros ab, BEVOR sie in den Cache gehen! <---
+                # =========================================================================
+                # ---> NEU ELA: Das Zielbild für die Übersicht korrigieren! <---
+                # =========================================================================
+                if i == target_idx:
+                    dx, dy = detector.last_shift.get(side, (0, 0))
+                    if dx != 0 or dy != 0:
+                        live_img = detector._shift_image_exact(live_img, dx, dy)
+                # =========================================================================
+                    
+                temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
                 cache_shots = copy.deepcopy(d_sm.shots)
                 for s in cache_shots:
                     s.pop('score_export_details', None)
@@ -1749,7 +1752,8 @@ class LaborApp:
                     'diff_letzter_treffer': safe_copy(d_dm.debug_images.get(f"diff_letzter_treffer_{side}")),
                     'diff_letzte_verworfene': safe_copy(d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}")),
                     'letzte_abrisskante': safe_copy(d_dm.debug_images.get(f"letzte_abrisskante_{side}")),
-                    'log_text': self.log_text.get("1.0", tk.END)
+                    'log_text': self.log_text.get("1.0", tk.END),
+                    'shift': detector.last_shift.get(side, (0, 0)) # <--- WICHTIG: Shift im Cache merken!
                 }
     
             # ---------------------------------------------------------
@@ -1760,16 +1764,19 @@ class LaborApp:
                 live_img = img.copy()
                 clean_live_img = img.copy()
                 
+                # =========================================================================
+                # ---> NEU ELA: Shift aus dem Cache für die Übersicht anwenden! <---
+                # =========================================================================
+                if target_idx in self.frame_cache[side]:
+                    dx, dy = self.frame_cache[side][target_idx].get('shift', (0, 0))
+                    if dx != 0 or dy != 0:
+                        live_img = detector._shift_image_exact(live_img, dx, dy)
+                # =========================================================================
+                
                 if target_idx in self.frame_cache[side]:
                     cached_log = self.frame_cache[side][target_idx].get('log_text', '')
                     if cached_log:
                         self.log_text.insert(tk.END, cached_log.rstrip('\n') + '\n')
-                
-                if (target_idx - 1) >= 0 and (target_idx - 1) in self.frame_cache[side]:
-                    prev_mask = self.frame_cache[side][target_idx - 1]['mask']
-                    history_mask = safe_copy(prev_mask)
-                    if history_mask is None:
-                        history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
                 else:
                     # ---> ELA-FIX: Vor Bild #1 (target_idx == 0) gibt es nur die 
                     # optionale Start-Maske (Fortsetzung) oder ein komplett leeres Blatt! <---
@@ -1877,21 +1884,17 @@ class LaborApp:
             # ==========================================================
             # ---> NEU: Den echten RAW-Diff-Wert berechnen (Modus 4) <---
             # ==========================================================
-            if len(ref_img.shape) == 3 and 'clean_live_img' in locals():
+            if len(ref_img.shape) == 3 and 'live_img' in locals():
                 k = self.blur_kernel_size_var.get()
                 
-                # 1. Wir nutzen zwingend das saubere Bild OHNE gezeichnete Kreise!
-                #live_blur = cv2.GaussianBlur(clean_live_img, (k, k), 0)
-                
-                # Die Engine nutzt intern self.ref_left, und das ist geblurrt gespeichert.
-                #ref_blur = cv2.GaussianBlur(ref_img, (k, k), 0)
-                #---> ELA-FIX: Wenn Blur auf 0 steht, Weichzeichnen überspringen (Originalbild nutzen) <---
+                # ---> DER FIX: Wir nutzen zwingend das korrigierte Bild (live_img), 
+                # damit die Engine-Overlays exakt über den RAW-Pixeln liegen!
                 if k > 0 and k % 2 == 1:
-                    live_blur = cv2.GaussianBlur(clean_live_img, (k, k), 0)
+                    live_blur = cv2.GaussianBlur(live_img, (k, k), 0)
                     ref_blur = cv2.GaussianBlur(ref_img, (k, k), 0)
                 else:
-                    live_blur = clean_live_img.copy()
-                    ref_blur = ref_img.copy()                                           
+                    live_blur = live_img.copy()
+                    ref_blur = ref_img.copy()                                        
                 
                 norm_live = detector.normalize_brightness(ref_blur, live_blur)
                 diff_bgr = cv2.absdiff(ref_blur, norm_live)
