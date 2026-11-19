@@ -12,7 +12,6 @@ import configparser
 import LoggerDeLuebs
 from DetectionDeLuebs import TargetDetector
 from DateiManagerDeLuebs import DateiManager
-from DateiManagerDeLuebs import DateiManager
 from AuditedConfig import AuditedConfigParser
 
 class MatchDetailWindow(tk.Toplevel):
@@ -105,15 +104,60 @@ class MatchDetailWindow(tk.Toplevel):
                 avg_px_r = (px_x_r + px_y_r) / 2.0
                 self.radius_right = (offizielles_kaliber_mm / 2.0) * avg_px_r
                 
-                try: self.orig_img_l = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_left.png")))
-                except KeyError:
-                    try: self.orig_img_l = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_left.jpg")))
-                    except KeyError: pass
+                # ---> DER FIX: Robuste Bildsuche, die garantiert ein Bild aus dem ZIP holt! <---
+                def get_best_image_from_zip(side):
+                    # 1. Prio: Das Originalbild des allerletzten Schusses! (Ist am sichersten)
+                    orig_files = [f for f in zipf.namelist() if f.startswith("debug_bilder/Schuss_") and f.endswith("_orig.png") and f"_{side}_" in f]
+                    if orig_files:
+                        orig_files.sort() # Sortiert chronologisch, das Letzte gewinnt
+                        try: return Image.open(io.BytesIO(zipf.read(orig_files[-1])))
+                        except KeyError: pass
+                    
+                    # 2. Prio: Letzte Aufnahme (Falls GUI lief, aber kein Schuss fiel)
+                    for ext in ['.png', '.jpg']:
+                        try: return Image.open(io.BytesIO(zipf.read(f"debug_bilder/letzte_aufnahme_{side}{ext}")))
+                        except KeyError: pass
+                        
+                    # 3. Prio: Cumulative Orig (Für ganz alte Savegames vor dem Update)
+                    for ext in ['.png', '.jpg']:
+                        try: return Image.open(io.BytesIO(zipf.read(f"debug_bilder/cumulative_orig_{side}{ext}")))
+                        except KeyError: pass
+                        
+                    # 4. Prio: Referenzbild (Das nackte Blatt Papier ohne Löcher)
+                    for ext in ['.png', '.jpg']:
+                        try: return Image.open(io.BytesIO(zipf.read(f"debug_bilder/referenz_{side}{ext}")))
+                        except KeyError: pass
+                        
+                    return None
+
+                self.orig_img_l = get_best_image_from_zip('left')
+                self.orig_img_r = get_best_image_from_zip('right')
                 
-                try: self.orig_img_r = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_right.png")))
-                except KeyError:
-                    try: self.orig_img_r = Image.open(io.BytesIO(zipf.read("debug_bilder/letzte_aufnahme_right.jpg")))
-                    except KeyError: pass
+                # =========================================================================
+                # ---> NEU ELA: Originalbilder dynamisch anhand der JSON-Daten verschieben!
+                # =========================================================================
+                def shift_pil_image(img, side_char):
+                    if img is None: 
+                        return None
+                    # Wir suchen den allerletzten Treffer dieser Seite in der Timeline
+                    last_shot = next((s for s in reversed(self.timeline) if s['s'] == side_char), None)
+                    if not last_shot: 
+                        return img
+                    
+                    dx = last_shot.get('shift_x', 0)
+                    dy = last_shot.get('shift_y', 0)
+                    if dx == 0 and dy == 0: 
+                        return img
+                    
+                    # Verschieben: Wir erstellen einen leeren Hintergrund (35,35,35 passend zur GUI) 
+                    # und kleben das Bild um dx, dy verschoben darauf!
+                    shifted = Image.new(img.mode, img.size, (35, 35, 35))
+                    shifted.paste(img, (dx, dy))
+                    return shifted
+                    
+                self.orig_img_l = shift_pil_image(self.orig_img_l, 'l')
+                self.orig_img_r = shift_pil_image(self.orig_img_r, 'r')
+                # =========================================================================
                 
         except Exception as e:
             messagebox.showerror("Fehler beim Lesen", f"Das ZIP konnte nicht gelesen werden:\n{e}")
@@ -648,6 +692,22 @@ class HighscoreViewer:
         import subprocess
         # Startet das Labor völlig autark und übergibt direkt den ZIP-Pfad
         subprocess.Popen(["python", "LaborDeLuebs.py", zip_path])
+
+    def export_to_wmshot(self):
+        """Platzhalter für den WM-Shot Export (wird finalisiert, sobald das Import-Format feststeht)."""
+        selected = self.tree.selection()
+        if not selected:
+            return
+
+        match_ids = [int(self.tree.item(item, "values")[0]) for item in selected]
+        ids_str = ", ".join(f"MATCH{mid:06d}" for mid in match_ids)
+
+        messagebox.showinfo(
+            "WM-Shot Schnittstelle (Vorbereitung)",
+            f"Ausgewählte Matches für den Export:\n{ids_str}\n\n"
+            "Die Schnittstelle ist vorbereitet! Sobald das gewünschte WM-Shot-Importformat "
+            "(z. B. DISAG/CSV) feststeht, wird hier direkt die Übergabedatei erzeugt."
+        )
 
     def delete_selected_entries(self):
         selected_items = self.tree.selection()

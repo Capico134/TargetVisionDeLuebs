@@ -282,6 +282,15 @@ class TargetTracker:
         if y1 >= y2 or x1 >= x2: return frame 
         return frame[y1:y2, x1:x2]
 
+    def _get_shifted_frame(self, frame, side):
+        """ELA: Verschiebt das Kamera-Rohbild passend zum aktuell berechneten Shift."""
+        if frame is None or not self.detector.verschiebungskorrektur:
+            return frame
+        dx, dy = self.detector.last_shift.get(side, (0, 0))
+        if dx == 0 and dy == 0:
+            return frame
+        return self.detector._shift_image_exact(frame, dx, dy)
+
     def process_camera(self, frame, state):
         if frame is None: return
 
@@ -327,7 +336,8 @@ class TargetTracker:
                         
                         shot_found = self.detector.check_background_and_evaluate(frame, state) 
                         if shot_found: 
-                            self.renderer.trigger_zoom(state.side, frame)
+                            zoom_frame = self._get_shifted_frame(frame, state.side)
+                            self.renderer.trigger_zoom(state.side, zoom_frame)
                             self.flush_camera_buffers(2) 
                         self.log(state.side, "-" * 60)
         else:
@@ -337,7 +347,13 @@ class TargetTracker:
                 
                 shot_found = self.detector.check_background_and_evaluate(frame, state)
                 if shot_found: 
-                    self.renderer.trigger_zoom(state.side, frame)
+                    # ---> ELA FIX: Zoom-Bild ebenfalls verschieben! <---
+                    dx, dy = self.detector.last_shift.get(state.side, (0, 0))
+                    if dx != 0 or dy != 0:
+                        zoom_frame = self.detector._shift_image_exact(frame, dx, dy)
+                    else:
+                        zoom_frame = frame
+                    self.renderer.trigger_zoom(state.side, zoom_frame)
                     self.flush_camera_buffers(2)
 
 #    def read_frames(self):
@@ -866,6 +882,27 @@ class TargetTracker:
                         log_msg = f"Speichere Match für {player_name_l} / {player_name_r}..." if player_name_l != player_name_r else f"Speichere Match für {player_name_l}..."
                         self.log("SYSTEM", log_msg, True)
                         
+                        # =====================================================================
+                        # ---> NEU: Das visuelle Lade-Fenster (Blockiert den Nutzer während dem Speichern)
+                        # =====================================================================
+                        wait_root = tk.Tk()
+                        wait_root.withdraw()
+                        wait_dialog = tk.Toplevel(wait_root)
+                        wait_dialog.title("Speichern...")
+                        wait_dialog.geometry("350x130")
+                        wait_dialog.attributes('-topmost', True)
+                        wait_dialog.resizable(False, False)
+                        
+                        screen_w, screen_h = wait_dialog.winfo_screenwidth(), wait_dialog.winfo_screenheight()
+                        wait_dialog.geometry(f"+{(screen_w - 350) // 2}+{(screen_h - 130) // 2}")
+                        
+                        lbl_status = tk.Label(wait_dialog, text="⏳ Match wird gespeichert...\nBitte warten.", font=('Arial', 12, 'bold'))
+                        lbl_status.pack(expand=True)
+                        
+                        # ---> ELA-MAGIC: Zwingt das OS, das Fenster JETZT zu zeichnen, bevor wir blockieren!
+                        wait_dialog.update() 
+                        # =====================================================================
+
                         backup_mask_l = self.sm.state_left.cumulative_mask.copy() if (self.nutze_kamera_links and self.sm.state_left and self.sm.state_left.cumulative_mask is not None) else None
                         backup_mask_r = self.sm.state_right.cumulative_mask.copy() if (self.nutze_kamera_rechts and self.sm.state_right and self.sm.state_right.cumulative_mask is not None) else None
                         
@@ -879,6 +916,7 @@ class TargetTracker:
                         if not os.path.exists(path_r): path_r = os.path.join(self.dm.DEBUG_FOLDER, "referenz_right.png")
                         best_orig_r = cv2.imread(path_r) if os.path.exists(path_r) else None
                         
+                        # Hier startet der harte, blockierende I/O-Vorgang...
                         if self.sm.save_current_match(player_name_l, player_name_r):
                             self.log("SYSTEM", "Match erfolgreich gespeichert!", True)
                             
@@ -905,8 +943,38 @@ class TargetTracker:
                             for _ in range(10): 
                                 if self.nutze_kamera_links: self.cap_left.read()
                                 if self.nutze_kamera_rechts: self.cap_right.read()
+                                
+                            # =====================================================================
+                            # ---> NEU: Das Lade-Fenster verwandelt sich in ein Erfolgs-Popup!
+                            # =====================================================================
+                            lbl_status.config(text="🏆 Match erfolgreich gespeichert!", fg='#2E7D32')
+                            wait_dialog.title("Erfolg")
+                            
+                            def close_success(e=None):
+                                wait_dialog.destroy()
+                                wait_root.destroy()
+                                
+                            btn_ok = tk.Button(wait_dialog, text="OK", command=close_success, font=('Arial', 11, 'bold'), bg='#4CAF50', fg='white', width=12)
+                            btn_ok.pack(pady=10)
+                            
+                            wait_dialog.bind('<Return>', close_success)
+                            wait_dialog.bind('<Escape>', close_success)
+                            wait_dialog.protocol("WM_DELETE_WINDOW", close_success)
+                            
+                            wait_dialog.focus_force()
+                            wait_root.wait_window(wait_dialog)
+                            # =====================================================================
+                            
                         else:
                             self.log("SYSTEM", "Speichern abgebrochen (Keine Treffer).", True)
+                            wait_dialog.destroy()
+                            wait_root.destroy()
+                            
+                            err_root = tk.Tk()
+                            err_root.withdraw()
+                            err_root.attributes('-topmost', True)
+                            messagebox.showinfo("Abbruch", "Speichern abgebrochen (Keine Treffer).", master=err_root)
+                            err_root.destroy()
                     return
 
             if getattr(self.renderer, 'btn_labor_coords', None):
@@ -1386,19 +1454,26 @@ class TargetTracker:
             
             # Jetzt bekommen wir die Info, ob die Kamera was geliefert hat
             (frame_l, new_l), (frame_r, new_r) = self.read_frames() 
-            self.last_frame_l = frame_l 
-            self.last_frame_r = frame_r 
             
             self.process_resets(frame_l, frame_r)
             self.process_edits()
             
-            # ---> DER PERFORMANCE-BOOST: OpenCV pausiert, bis ein neues Bild da ist! <---
+            # ---> Die Engine arbeitet immer mit dem rohen, unverschobenen Bild! <---
             if self.nutze_kamera_links and new_l: 
                 self.process_camera(frame_l, self.sm.state_left)
             if self.nutze_kamera_rechts and new_r: 
                 self.process_camera(frame_r, self.sm.state_right)
+                
+            # =========================================================================
+            # ---> ELA FIX: Kamerabild LIVE für das Display verschieben! <---
+            # Die Kreise, Buttons und das Fadenkreuz bleiben absolut fest im UI.
+            # Nur die rohen Bildpixel werden unter der UI hin- und hergeschoben!
+            # =========================================================================
+            self.last_frame_l = self._get_shifted_frame(frame_l, 'left')
+            self.last_frame_r = self._get_shifted_frame(frame_r, 'right')
             
             if time.time() - blink_timer > 0.3:
+                # ... (Rest bleibt gleich) ...
                 blink_state = not blink_state
                 blink_timer = time.time()
             

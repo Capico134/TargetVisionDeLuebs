@@ -38,8 +38,8 @@ class TargetDetector:
         # --------------------------------------------------
         
         # --- AUSSCHLIESSLICH FÜR VERSCHIEBUNGSKORREKTUR ---
-        self.last_aligned_left = None
-        self.last_aligned_right = None
+        #self.last_aligned_left = None
+        #self.last_aligned_right = None
         # --------------------------------------------------
 
     def refresh_settings_from_config(self):

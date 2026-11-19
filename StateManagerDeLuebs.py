@@ -424,10 +424,11 @@ class StateManager:
                 "x": round(float(s['pos'][0]), 4),
                 "y": round(float(s['pos'][1]), 4),
                 "a": round(float(s['area']), 1),
-                # ---> DER FIX: Speichern in JSON mit dynamischen Dezimalstellen <---
                 "score": round(float(s.get('score', 0.0)), decimals),
                 "cv_score": round(float(s.get('cv_score', 0.0)), 1),
                 "winner_method": str(s.get('winner_method', 'Unbekannt')),
+                "shift_x": int(s.get('shift_x', 0)),
+                "shift_y": int(s.get('shift_y', 0)),
                 "edited": bool(s.get('is_edited', False))
             })
 
