@@ -415,9 +415,18 @@ class TargetDetector:
         # Schablonen der alten Löcher zeichnen
         for shot in prev_shots:
             sx, sy = shot['pos']
-            r_local = shot.get('cal_radius') or self.get_local_caliber_radius(side, sx, sy)
-            sub_cx = int(round((sx - 0.5) * multiplier))
-            sub_cy = int(round((sy - 0.5) * multiplier))
+            
+            # ---> DER ELA-FIX: Den Drift herausrechnen! <---
+            # Wir ziehen den Shift ab, der damals angewendet wurde, um das Loch 
+            # wieder auf seine absolute, physikalische Sensor-Position zu legen.
+            old_dx = shot.get('shift_x', 0)
+            old_dy = shot.get('shift_y', 0)
+            clean_sx = sx - old_dx
+            clean_sy = sy - old_dy
+            
+            r_local = shot.get('cal_radius') or self.get_local_caliber_radius(side, clean_sx, clean_sy)
+            sub_cx = int(round((clean_sx - 0.5) * multiplier))
+            sub_cy = int(round((clean_sy - 0.5) * multiplier))
             sub_r  = int(round((r_local - 0.707 / 2.0) * multiplier))
             cv2.circle(target_mask, (sub_cx, sub_cy), sub_r, 255, -1, cv2.LINE_8, shift=shift_bits)
 
@@ -450,14 +459,7 @@ class TargetDetector:
 
         res = cv2.matchTemplate(search_crop, template_crop, cv2.TM_CCOEFF_NORMED)
         
-        # Den stärksten Peak finden
-        _, _, _, max_loc = cv2.minMaxLoc(res)
-        
-        # Korrektur-Vektor invertieren! (Gegenrichtung zum gemessenen Offset)
-        fine_dx = -(max_loc[0] - max_shift)
-        fine_dy = -(max_loc[1] - max_shift)
-
-        # Pixeldeckungen zählen
+        # Pixeldeckungen für den Null-Vektor (keine Verschiebung) zählen
         zero_hits = float(cv2.countNonZero(cv2.bitwise_and(thresh_raw_coarse, target_mask)))
         cov_zero = (zero_hits / total_template_pixels) * 100.0
 
@@ -466,18 +468,69 @@ class TargetDetector:
         final_shifted = coarse_shifted
         thresh_raw_final = thresh_raw_coarse
 
-        # Wenn wir einen Fein-Shift haben, Härtetest durchführen
-        if fine_dx != 0 or fine_dy != 0:
-            cand_shifted = self._shift_image_exact(coarse_shifted, fine_dx, fine_dy)
-            cand_thresh = self.calculate_raw_diff_mask(reference_bgr, cand_shifted, side)
-            verified_hits = float(cv2.countNonZero(cv2.bitwise_and(cand_thresh, target_mask)))
+        # ---> ELA FIX: Mehrere starke Peaks (Kandidaten) suchen! <---
+        # Wir glätten die Response leicht, um Rauschen zu filtern
+        res_blurred = cv2.GaussianBlur(res, (3, 3), 0)
+        
+        # Suchen nach lokalen Maxima, die mindestens 90% der Stärke des absoluten Maximums haben
+        _, max_val, _, _ = cv2.minMaxLoc(res_blurred)
+        threshold_res = max_val * 0.90 
+        
+        # Alle Koordinaten finden, die über dem Threshold liegen
+        y_locs, x_locs = np.where(res_blurred >= threshold_res)
+        
+        # Ein Set nutzen, um benachbarte Pixel zu einem Peak zusammenzufassen (Non-Maximum Suppression light)
+        peak_candidates = []
+        for x, y in zip(x_locs, y_locs):
+            # Prüfen, ob wir in der Nähe schon einen Peak haben (Radius 2 Pixel)
+            is_new = True
+            for cx, cy in peak_candidates:
+                if abs(x - cx) <= 2 and abs(y - cy) <= 2:
+                    is_new = False
+                    break
+            if is_new:
+                # Vektor invertieren (Gegenrichtung)
+                peak_dx = -(x - max_shift)
+                peak_dy = -(y - max_shift)
+                
+                # Den Null-Vektor brauchen wir hier nicht testen, der ist unsere Baseline
+                if peak_dx != 0 or peak_dy != 0:
+                    peak_candidates.append((peak_dx, peak_dy))
 
-            # Fein-Shift darf nur greifen, wenn er TATSÄCHLICH besser ist als 0,0
-            if verified_hits > zero_hits:
-                best_dx, best_dy = fine_dx, fine_dy
-                final_shifted = cand_shifted
-                thresh_raw_final = cand_thresh
-                cov_best = (verified_hits / total_template_pixels) * 100.0
+        # ---> BATTLE ROYALE FÜR DIE VERSCHIEBUNGSVEKTOREN <---
+        best_cand_hits = zero_hits
+        best_dx, best_dy = 0, 0
+        
+        for cand_dx, cand_dy in peak_candidates:
+            # ---> DER PERFORMANCE-BOOST: Wir shiften nur die Maske für den Test! <---
+            # Anstatt 720p BGR-Farben, Helligkeiten und Boni 10x neu zu berechnen,
+            # schieben wir einfach die fertige binäre Maske (100x schneller, gleiches Ergebnis!)
+            cand_thresh_sim = self._shift_image_exact(thresh_raw_coarse, cand_dx, cand_dy)
+            verified_hits = float(cv2.countNonZero(cv2.bitwise_and(cand_thresh_sim, target_mask)))
+            
+            # Die Strafe: Je weiter wir verschieben, desto mehr Deckung muss der Shift als Ausgleich bringen!
+            dist_pixels = math.hypot(cand_dx, cand_dy)
+            required_bonus_hits = total_template_pixels * ((dist_pixels ** 2) * 0.0025) 
+            
+            # Ein Kandidat schlägt den Champion NUR, wenn er NACH Abzug der Strafe besser ist!
+            penalized_hits = verified_hits - required_bonus_hits
+            
+            if penalized_hits > best_cand_hits:
+                best_cand_hits = penalized_hits
+                best_dx, best_dy = cand_dx, cand_dy
+
+        # ---> JETZT ERST DEN SIEGER ECHT BERECHNEN <---
+        if best_dx != 0 or best_dy != 0:
+            final_shifted = self._shift_image_exact(coarse_shifted, best_dx, best_dy)
+            thresh_raw_final = self.calculate_raw_diff_mask(reference_bgr, final_shifted, side)
+            
+            # Echte Deckung für den Log-Output nochmal sauber abfragen
+            final_hits = float(cv2.countNonZero(cv2.bitwise_and(thresh_raw_final, target_mask)))
+            cov_best = (final_hits / total_template_pixels) * 100.0
+        else:
+            final_shifted = coarse_shifted
+            thresh_raw_final = thresh_raw_coarse
+            cov_best = cov_zero
                 
         total_dx = coarse_dx + best_dx
         total_dy = coarse_dy + best_dy

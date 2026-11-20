@@ -359,6 +359,9 @@ class LaborApp:
             if not parser.has_option('Erkennung', 'detail_export_aktiv'):
                 parser.set('Erkennung', 'detail_export_aktiv', 'no')
                 self.migrated_keys.append('detail_export_aktiv')
+            if not parser.has_option('Erkennung', 'verschiebungskorrektur'):
+                parser.set('Erkennung', 'verschiebungskorrektur', 'no')
+                self.migrated_keys.append('verschiebungskorrektur')            
             if not parser.has_option('Kameras', 'kamera_backend'):
                 parser.set('Kameras', 'kamera_backend', 'AUTO')
                 self.migrated_keys.append('kamera_backend')

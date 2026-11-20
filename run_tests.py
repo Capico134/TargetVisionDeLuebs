@@ -68,6 +68,10 @@ FALLBACK_ZIPS = [
     "MATCH000056_verbessert.zip",
     "MATCH000069_verbessert.zip",
     "MATCH000092_verbessert.zip",
+    "MATCH000163_ohneVersch.zip",
+    "MATCH000164_mitVersch.zip",
+    "MATCH000166_mehrfachversch.zip",
+    
 ]
 
 def ensure_testcases(test_dir):
@@ -101,10 +105,13 @@ def ensure_testcases(test_dir):
             print(f"🌐 Lade fehlenden Testcase herunter: {zname} ...")
             try:
                 req = urllib.request.Request(url, headers={'User-Agent': 'TargetVision-TestRunner'})
-                with urllib.request.urlopen(req, timeout=120) as resp, open(local_path, 'wb') as out_f:
-                    out_f.write(resp.read())
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    data = resp.read()
+                with open(local_path, 'wb') as out_f:
+                    out_f.write(data)
             except Exception as e:
-                print(f"⚠️ Konnte '{zname}' nicht von {url} laden: {e}")
+                print(f"❌ KRITISCH: Konnte '{zname}' nicht von {url} laden: {e}")
+                sys.exit(1)
 
 # ==========================================
 # HAUPT-TEST-LOGIK

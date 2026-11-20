@@ -325,6 +325,7 @@ grenzwert_hough = 7.0
 abriss_min_hebel = 0.0
 blur_kernel_size = 7
 detail_export_aktiv = no
+verschiebungskorrektur = no
 
 [Timing]
 # Bildwiederholrate/Haupttakt in Millisekunden (33 ms entspricht ca. 30 FPS).
