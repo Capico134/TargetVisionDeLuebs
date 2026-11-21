@@ -1742,6 +1742,7 @@ class LaborApp:
                     dx, dy = detector.last_shift.get(side, (0, 0))
                     if dx != 0 or dy != 0:
                         live_img = detector._shift_image_exact(live_img, dx, dy)
+                        clean_live_img = detector._shift_image_exact(clean_live_img, dx, dy) # <--- DIESE ZEILE FEHLTE!
                 # =========================================================================
                     
                 temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
@@ -1774,6 +1775,7 @@ class LaborApp:
                     dx, dy = self.frame_cache[side][target_idx].get('shift', (0, 0))
                     if dx != 0 or dy != 0:
                         live_img = detector._shift_image_exact(live_img, dx, dy)
+                        clean_live_img = detector._shift_image_exact(clean_live_img, dx, dy) # <--- DIESE ZEILE FEHLTE!
                 # =========================================================================
                 
                 if target_idx in self.frame_cache[side]:
@@ -1887,17 +1889,17 @@ class LaborApp:
             # ==========================================================
             # ---> NEU: Den echten RAW-Diff-Wert berechnen (Modus 4) <---
             # ==========================================================
-            if len(ref_img.shape) == 3 and 'live_img' in locals():
+            if len(ref_img.shape) == 3 and 'clean_live_img' in locals():
                 k = self.blur_kernel_size_var.get()
                 
-                # ---> DER FIX: Wir nutzen zwingend das korrigierte Bild (live_img), 
-                # damit die Engine-Overlays exakt über den RAW-Pixeln liegen!
+                # 1. Wir nutzen zwingend das saubere Bild OHNE gezeichnete Kreise!
+                #---> ELA-FIX: Wenn Blur auf 0 steht, Weichzeichnen überspringen (Originalbild nutzen) <---
                 if k > 0 and k % 2 == 1:
-                    live_blur = cv2.GaussianBlur(live_img, (k, k), 0)
+                    live_blur = cv2.GaussianBlur(clean_live_img, (k, k), 0)
                     ref_blur = cv2.GaussianBlur(ref_img, (k, k), 0)
                 else:
-                    live_blur = live_img.copy()
-                    ref_blur = ref_img.copy()                                        
+                    live_blur = clean_live_img.copy()
+                    ref_blur = ref_img.copy()                                           
                 
                 norm_live = detector.normalize_brightness(ref_blur, live_blur)
                 diff_bgr = cv2.absdiff(ref_blur, norm_live)
@@ -1945,20 +1947,28 @@ class LaborApp:
                     self.last_color_multiplier = None
     
                 # ---> NEU: Wir führen den Threshold VORHER aus, genau wie die Engine! <---
-    
-    
                 hit_tol = self.hit_tolerance_var.get()
                 _, thresh_raw = cv2.threshold(raw_diff, hit_tol, 255, cv2.THRESH_BINARY)
                 self.last_thresh_raw = thresh_raw.copy()
     
                 self.last_raw_diff = raw_diff.copy() # Für die farbige Anzeige
                 
-                if 'history_mask' in locals():
+                # =================================================================
+                # ---> DER ELA-BUGFIX: History-Maske beim Rückwärts-Springen laden!
+                # =================================================================
+                if 'history_mask' in locals() and history_mask is not None:
                     self.last_history_mask = history_mask.copy()
                 else:
-                    self.last_history_mask = np.zeros((h, w), dtype=np.uint8)        
+                    # Dieser Block greift nur, wenn wir durch den Lazy Cache rückwärts springen
+                    # und die history_mask oben nicht durch die Engine definiert wurde!
+                    if target_idx > 0 and (target_idx - 1) in self.frame_cache[side]:
+                        self.last_history_mask = self.frame_cache[side][target_idx - 1]['mask'].copy()
+                    else:
+                        if startmask_name:
+                            self.last_history_mask = startmask_gray.copy()
+                        else:
+                            self.last_history_mask = np.zeros((h, w), dtype=np.uint8)
     
-            #self._is_batch_calculating = False
             self.renderer.update_image_display()
             
         finally:

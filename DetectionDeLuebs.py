@@ -234,17 +234,28 @@ class TargetDetector:
         os.makedirs(export_folder, exist_ok=True)
         h, w = thresh_unshifted.shape[:2]
 
-        # Hilfsfunktion: Macht aus einer binären Maske (0/255) ein BGRA-Bild mit 100% transparentem Schwarz
-        def mask_to_bgra(mask, b, g, r, alpha=170, draw_outline=False):
+        # ---> ELA-FIX: Erlaubt harte Kanten ODER weiche Heatmaps! <---
+        def mask_to_bgra(mask, b, g, r, base_alpha=170, draw_outline=False, soft=False):
             bgra = np.zeros((h, w, 4), dtype=np.uint8)
-            active = mask > 127
-            bgra[active, 0] = b
-            bgra[active, 1] = g
-            bgra[active, 2] = r
-            bgra[active, 3] = alpha
-            if draw_outline:
-                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                cv2.drawContours(bgra, contours, -1, (b, g, r, 255), 2)
+            if soft:
+                # Weiche Heatmap: Grauwert der Maske bestimmt die Transparenz!
+                # (100% Weiß in der Maske = base_alpha in der Grafik)
+                alpha_channel = (mask.astype(np.float32) / 255.0 * base_alpha).astype(np.uint8)
+                active = alpha_channel > 0
+                bgra[active, 0] = b
+                bgra[active, 1] = g
+                bgra[active, 2] = r
+                bgra[active, 3] = alpha_channel[active]
+            else:
+                # Klassisch harte Kante
+                active = mask > 127
+                bgra[active, 0] = b
+                bgra[active, 1] = g
+                bgra[active, 2] = r
+                bgra[active, 3] = base_alpha
+                if draw_outline:
+                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    cv2.drawContours(bgra, contours, -1, (b, g, r, 255), 2)
             return bgra
 
         def bgr_to_bgra(bgr_img):
@@ -267,15 +278,16 @@ class TargetDetector:
         cx, cy = w // 2, h // 2
         cv2.circle(info_bgra, (cx, cy), 5, (0, 255, 255, 255), -1)
         if best_dx != 0 or best_dy != 0:
-            end_pt = (int(cx + best_dx * 20), int(cy + best_dy * 20))
-            cv2.arrowedLine(info_bgra, (cx, cy), end_pt, (0, 255, 255, 255), 3, tipLength=0.25)
+            end_pt = (int(cx + best_dx * 1), int(cy + best_dy * 1))
+            cv2.arrowedLine(info_bgra, (cx, cy), end_pt, (0, 255, 255, 255), 1, tipLength=0.25)
 
         # 2. Alle gewünschten Ebenen zusammenstellen (von oben nach unten im Ebenen-Stapel)
         layers = [
             ("07_Info_und_Vektor", info_bgra, "normal", 1.0),
-            ("06_Diff_Verschoben_GRUEN", mask_to_bgra(thresh_shifted, 0, 255, 0, alpha=160), "normal", 1.0),
-            ("05_Diff_Unverschoben_ROT", mask_to_bgra(thresh_unshifted, 0, 0, 255, alpha=160), "normal", 1.0),
-            ("04_Suchbereich_Alte_Treffer_CYAN", mask_to_bgra(target_mask, 255, 255, 0, alpha=90, draw_outline=True), "normal", 1.0),
+            ("06_Diff_Verschoben_GRUEN", mask_to_bgra(thresh_shifted, 0, 255, 0, base_alpha=160), "normal", 1.0),
+            ("05_Diff_Unverschoben_ROT", mask_to_bgra(thresh_unshifted, 0, 0, 255, base_alpha=160), "normal", 1.0),
+            # ---> NEU: 'soft=True' zeichnet das weiche Gravitationsfeld exakt so, wie die Mathematik es berechnet! <---
+            ("04_Suchbereich_Heatmap_CYAN", mask_to_bgra(target_mask, 255, 255, 0, base_alpha=180, soft=True), "normal", 1.0),
             ("03_Bild_Aktuell_Verschoben", bgr_to_bgra(orig_shifted), "normal", 1.0),
             ("02_Bild_Aktuell_Unverschoben", bgr_to_bgra(orig_unshifted), "normal", 1.0),
             ("01_Referenz_Bild1_0_0", bgr_to_bgra(ref_00_img), "normal", 1.0),
@@ -403,6 +415,12 @@ class TargetDetector:
         # Wir erzeugen das Diff-Bild auf Basis der bereits (ggf.) grob korrigierten Ringe!
         thresh_raw_coarse = self.calculate_raw_diff_mask(reference_bgr, coarse_shifted, side)
         
+        # ---> MAGIC NUMBERS FÜR WEICHEN SUCHBEREICH (WEIGHTED TEMPLATE) <---
+        # Setze boost auf 0.0 und blur auf 0, um alles auf den harten Standard zurückzusetzen
+        magic_radius_boost = 3.0  # Erweitert den Schablonen-Kreis um X Pixel
+        magic_blur_kernel = 9     # Muss ungerade sein (z.B. 5, 9, 15)
+        # -------------------------------------------------------------------
+
         # ---> DER ADAPTIVE RADIUS <---
         max_shift = fine_search_radius  
         target_mask = np.zeros((h, w), dtype=np.uint8)
@@ -417,27 +435,35 @@ class TargetDetector:
             sx, sy = shot['pos']
             
             # ---> DER ELA-FIX: Den Drift herausrechnen! <---
-            # Wir ziehen den Shift ab, der damals angewendet wurde, um das Loch 
-            # wieder auf seine absolute, physikalische Sensor-Position zu legen.
             old_dx = shot.get('shift_x', 0)
             old_dy = shot.get('shift_y', 0)
             clean_sx = sx - old_dx
             clean_sy = sy - old_dy
             
             r_local = shot.get('cal_radius') or self.get_local_caliber_radius(side, clean_sx, clean_sy)
+            
+            # ---> NEU: Radius für den weichen Trichter vergrößern <---
+            r_local += magic_radius_boost
+            
             sub_cx = int(round((clean_sx - 0.5) * multiplier))
             sub_cy = int(round((clean_sy - 0.5) * multiplier))
             sub_r  = int(round((r_local - 0.707 / 2.0) * multiplier))
             cv2.circle(target_mask, (sub_cx, sub_cy), sub_r, 255, -1, cv2.LINE_8, shift=shift_bits)
 
             r_pad = int(r_local) + max_shift + 2
-            x_min_all = min(x_min_all, max(0, int(sx) - r_pad))
-            y_min_all = min(y_min_all, max(0, int(sy) - r_pad))
-            x_max_all = max(x_max_all, min(w, int(sx) + r_pad))
-            y_max_all = max(y_max_all, min(h, int(sy) + r_pad))
+            x_min_all = min(x_min_all, max(0, int(clean_sx) - r_pad))
+            y_min_all = min(y_min_all, max(0, int(clean_sy) - r_pad))
+            x_max_all = max(x_max_all, min(w, int(clean_sx) + r_pad))
+            y_max_all = max(y_max_all, min(h, int(clean_sy) + r_pad))
 
-        total_template_pixels = cv2.countNonZero(target_mask)
-        if total_template_pixels == 0 or x_max_all <= x_min_all or y_max_all <= y_min_all:
+        # ---> DER 1-ZEILER FÜR DAS WEICHE STERNBILD <---
+        if magic_blur_kernel > 0:
+            target_mask = cv2.GaussianBlur(target_mask, (magic_blur_kernel, magic_blur_kernel), 0)
+
+        # ---> NEU: Die Gesamtpixel als Gewichtungssumme berechnen (statt hartem countNonZero) <---
+        total_template_pixels = float(np.sum(target_mask)) / 255.0
+
+        if total_template_pixels <= 0 or x_max_all <= x_min_all or y_max_all <= y_min_all:
             self.last_shift[side] = (coarse_dx, coarse_dy)
             return coarse_shifted, (coarse_dx, coarse_dy)
 
@@ -459,8 +485,8 @@ class TargetDetector:
 
         res = cv2.matchTemplate(search_crop, template_crop, cv2.TM_CCOEFF_NORMED)
         
-        # Pixeldeckungen für den Null-Vektor (keine Verschiebung) zählen
-        zero_hits = float(cv2.countNonZero(cv2.bitwise_and(thresh_raw_coarse, target_mask)))
+        # ---> NEU: Pixeldeckungen über gewichtete Summe (np.sum) zählen <---
+        zero_hits = float(np.sum(cv2.bitwise_and(thresh_raw_coarse, target_mask))) / 255.0
         cov_zero = (zero_hits / total_template_pixels) * 100.0
 
         best_dx, best_dy = 0, 0
@@ -469,50 +495,37 @@ class TargetDetector:
         thresh_raw_final = thresh_raw_coarse
 
         # ---> ELA FIX: Mehrere starke Peaks (Kandidaten) suchen! <---
-        # Wir glätten die Response leicht, um Rauschen zu filtern
         res_blurred = cv2.GaussianBlur(res, (3, 3), 0)
-        
-        # Suchen nach lokalen Maxima, die mindestens 90% der Stärke des absoluten Maximums haben
         _, max_val, _, _ = cv2.minMaxLoc(res_blurred)
         threshold_res = max_val * 0.90 
         
-        # Alle Koordinaten finden, die über dem Threshold liegen
         y_locs, x_locs = np.where(res_blurred >= threshold_res)
         
-        # Ein Set nutzen, um benachbarte Pixel zu einem Peak zusammenzufassen (Non-Maximum Suppression light)
         peak_candidates = []
         for x, y in zip(x_locs, y_locs):
-            # Prüfen, ob wir in der Nähe schon einen Peak haben (Radius 2 Pixel)
             is_new = True
             for cx, cy in peak_candidates:
                 if abs(x - cx) <= 2 and abs(y - cy) <= 2:
                     is_new = False
                     break
             if is_new:
-                # Vektor invertieren (Gegenrichtung)
                 peak_dx = -(x - max_shift)
                 peak_dy = -(y - max_shift)
-                
-                # Den Null-Vektor brauchen wir hier nicht testen, der ist unsere Baseline
                 if peak_dx != 0 or peak_dy != 0:
                     peak_candidates.append((peak_dx, peak_dy))
 
         # ---> BATTLE ROYALE FÜR DIE VERSCHIEBUNGSVEKTOREN <---
         best_cand_hits = zero_hits
-        best_dx, best_dy = 0, 0
         
         for cand_dx, cand_dy in peak_candidates:
-            # ---> DER PERFORMANCE-BOOST: Wir shiften nur die Maske für den Test! <---
-            # Anstatt 720p BGR-Farben, Helligkeiten und Boni 10x neu zu berechnen,
-            # schieben wir einfach die fertige binäre Maske (100x schneller, gleiches Ergebnis!)
             cand_thresh_sim = self._shift_image_exact(thresh_raw_coarse, cand_dx, cand_dy)
-            verified_hits = float(cv2.countNonZero(cv2.bitwise_and(cand_thresh_sim, target_mask)))
             
-            # Die Strafe: Je weiter wir verschieben, desto mehr Deckung muss der Shift als Ausgleich bringen!
+            # ---> NEU: Gewichtete Deckung für die Kandidaten! <---
+            verified_hits = float(np.sum(cv2.bitwise_and(cand_thresh_sim, target_mask))) / 255.0
+            
             dist_pixels = math.hypot(cand_dx, cand_dy)
             required_bonus_hits = total_template_pixels * ((dist_pixels ** 2) * 0.0025) 
             
-            # Ein Kandidat schlägt den Champion NUR, wenn er NACH Abzug der Strafe besser ist!
             penalized_hits = verified_hits - required_bonus_hits
             
             if penalized_hits > best_cand_hits:
@@ -524,8 +537,8 @@ class TargetDetector:
             final_shifted = self._shift_image_exact(coarse_shifted, best_dx, best_dy)
             thresh_raw_final = self.calculate_raw_diff_mask(reference_bgr, final_shifted, side)
             
-            # Echte Deckung für den Log-Output nochmal sauber abfragen
-            final_hits = float(cv2.countNonZero(cv2.bitwise_and(thresh_raw_final, target_mask)))
+            # ---> NEU: Gewichtete Deckung für den endgültigen Sieger! <---
+            final_hits = float(np.sum(cv2.bitwise_and(thresh_raw_final, target_mask))) / 255.0
             cov_best = (final_hits / total_template_pixels) * 100.0
         else:
             final_shifted = coarse_shifted
