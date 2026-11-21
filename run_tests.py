@@ -117,13 +117,16 @@ def ensure_testcases(test_dir):
 # HAUPT-TEST-LOGIK
 # ==========================================
 def run_all_tests():
-    start_time = time.time() 
+    start_time_total = time.time() 
     test_dir = "testcases"
     report_file = "test_report.txt"
     treffer_log_file = "treffer_log.txt"
     
     # ---> NEU: Stellt sicher, dass der Ordner existiert und fehlende ZIPs geladen werden <---
     ensure_testcases(test_dir)
+    
+    # ---> NEU ELA: Stoppuhr für reine OpenCV/Engine-Zeit starten! <---
+    start_time_engine = time.time()
 
     zip_files = sorted([f for f in os.listdir(test_dir) if f.endswith('.zip')])
     if not zip_files:
@@ -335,14 +338,17 @@ def run_all_tests():
 
     # ZUSAMMENFASSUNG
     end_time = time.time()
-    duration = end_time - start_time
+    duration_total = end_time - start_time_total
+    duration_engine = end_time - start_time_engine
+    duration_download = duration_total - duration_engine
     
     log("\n" + "="*70)
     log("📊 TEST ZUSAMMENFASSUNG")
     log("="*70)
-    log(f"Insgesamt ausgeführt: {passed_count + failed_count} Matches (in {duration:.2f} Sekunden)")
-    log(f"Insgesamt gefundene Treffer: {total_valid_hits}")
-    log(f"{C_GREEN}Erfolgreich (PASS): {passed_count}{C_END}")
+    log(f"Insgesamt ausgeführt: {passed_count + failed_count} Matches")
+    log(f"⏱️ Zeitbedarf Gesamt: {duration_total:.2f} s")
+    log(f"   -> davon Download: {duration_download:.2f} s")
+    log(f"   -> davon Engine:   {duration_engine:.2f} s")
     if failed_count > 0:
         log(f"{C_RED}Fehlgeschlagen (FAIL): {failed_count}{C_END}")
     else:

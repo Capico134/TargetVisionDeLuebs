@@ -257,7 +257,7 @@ class LaborApp:
     def update_calib_sliders(self):
         """Holt die echten Config-Werte der aktuell aktiven Kamera in die GUI-Slider"""
         if getattr(self, 'package_data', None) and self.package_data.get('config'):
-            parser = self.package_data['config']
+            config_ram = self.package_data['config']
             side = self.active_camera_var.get()
             seite_str = "links" if side == 'left' else "rechts"
             
@@ -266,17 +266,17 @@ class LaborApp:
                 self.calib_outer_frame.config(text=f" Kalibrierung: Kamera {seite_str.capitalize()} ")
             
             # ---> NEU: Sektion sicherstellen, anstatt bei Fehlen abzubrechen! <---
-            if not parser.has_section('Kameras'):
-                parser.add_section('Kameras')
+            if not config_ram.has_section('Kameras'):
+                config_ram.add_section('Kameras')
                 
-            val_x = parser.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-            val_y = parser.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-            val_fisch = parser.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0) 
-            val_r4 = parser.getfloat('Kameras', f'linsen_verzerrung_{seite_str}_r4', fallback=0.0) 
+            val_x = config_ram.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
+            val_y = config_ram.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
+            val_fisch = config_ram.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0) 
+            val_r4 = config_ram.getfloat('Kameras', f'linsen_verzerrung_{seite_str}_r4', fallback=0.0) 
             
-            val_off_x = parser.getint('Kameras', f'lens_offset_x_{seite_str}', fallback=0)
-            val_off_y = parser.getint('Kameras', f'lens_offset_y_{seite_str}', fallback=0)
-            val_limit = parser.getfloat('Kameras', f'linsen_verzerrung_limit_{seite_str}', fallback=0.0) # <--- NEU
+            val_off_x = config_ram.getint('Kameras', f'lens_offset_x_{seite_str}', fallback=0)
+            val_off_y = config_ram.getint('Kameras', f'lens_offset_y_{seite_str}', fallback=0)
+            val_limit = config_ram.getfloat('Kameras', f'linsen_verzerrung_limit_{seite_str}', fallback=0.0) # <--- NEU
             
             if hasattr(self, 'orig_calib'):
                 self.original_values[str(self.calib_x_var)] = self.orig_calib[f"{side}_x"]
@@ -325,22 +325,22 @@ class LaborApp:
 
 
 
-    def apply_config_to_ui(self, parser):
-        """Zentrale Methode: Füttert alle UI-Slider mit den Werten eines ConfigParsers."""
-        if parser:
-            if not parser.has_section('Erkennung'):
-                parser.add_section('Erkennung')
+    def apply_config_to_ui(self, config_ram):
+        """Zentrale Methode: Füttert alle UI-Slider mit den Werten eines Configconfig_rams."""
+        if config_ram:
+            if not config_ram.has_section('Erkennung'):
+                config_ram.add_section('Erkennung')
                 
             self.original_values = {}
             
             # 1. SONDERFALL: Nur noch Legacy-Migration für Uralt-Configs (Pixel zu mm)
-            if not parser.has_option('Erkennung', 'caliber_durchmesser') and parser.has_option('Erkennung', 'caliber_radius'):
-                alt_r = parser.getfloat('Erkennung', 'caliber_radius', fallback=15.0)
-                px_x = parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0) if parser.has_section('Kameras') else 5.0
-                px_y = parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0) if parser.has_section('Kameras') else 5.0
+            if not config_ram.has_option('Erkennung', 'caliber_durchmesser') and config_ram.has_option('Erkennung', 'caliber_radius'):
+                alt_r = config_ram.getfloat('Erkennung', 'caliber_radius', fallback=15.0)
+                px_x = config_ram.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0) if config_ram.has_section('Kameras') else 5.0
+                px_y = config_ram.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0) if config_ram.has_section('Kameras') else 5.0
                 avg_px = (px_x + px_y) / 2.0
                 calc_durchmesser = (alt_r / avg_px) * 2.0 if avg_px > 0 else 4.5
-                parser.set('Erkennung', 'caliber_durchmesser', str(round(calc_durchmesser, 2)))
+                config_ram.set('Erkennung', 'caliber_durchmesser', str(round(calc_durchmesser, 2)))
 
             # 2. DIE MAGIE: Automatische Zuweisung ALLER registrierten Slider
             self.migrated_keys = [] # <--- NEU: Merkliste für den Migrator
@@ -349,27 +349,27 @@ class LaborApp:
             # ---> DER FIX: Den Slider-losen Parameter einfach mit auf die Liste packen! <---
             # !!!!!!!!!!!!!!!!!!!!!! DIE ECHTE LAZY INJECTION !!!!!!!!!!!!!!!!!!!!!!
             # =========================================================================
-            if not parser.has_section('Zielscheibe'):
-                parser.add_section('Zielscheibe')
-            if not parser.has_option('Zielscheibe', 'ringwertung_nachkommastellen'):
-                parser.set('Zielscheibe', 'ringwertung_nachkommastellen', '1')
+            if not config_ram.has_section('Zielscheibe'):
+                config_ram.add_section('Zielscheibe')
+            if not config_ram.has_option('Zielscheibe', 'ringwertung_nachkommastellen'):
+                config_ram.set('Zielscheibe', 'ringwertung_nachkommastellen', '1')
                 self.migrated_keys.append('ringwertung_nachkommastellen')
-            if not parser.has_section('Erkennung'):
-                parser.add_section('Erkennung')
-            if not parser.has_option('Erkennung', 'detail_export_aktiv'):
-                parser.set('Erkennung', 'detail_export_aktiv', 'no')
+            if not config_ram.has_section('Erkennung'):
+                config_ram.add_section('Erkennung')
+            if not config_ram.has_option('Erkennung', 'detail_export_aktiv'):
+                config_ram.set('Erkennung', 'detail_export_aktiv', 'no')
                 self.migrated_keys.append('detail_export_aktiv')
-            if not parser.has_option('Erkennung', 'verschiebungskorrektur'):
-                parser.set('Erkennung', 'verschiebungskorrektur', 'no')
+            if not config_ram.has_option('Erkennung', 'verschiebungskorrektur'):
+                config_ram.set('Erkennung', 'verschiebungskorrektur', 'no')
                 self.migrated_keys.append('verschiebungskorrektur')            
-            if not parser.has_option('Kameras', 'kamera_backend'):
-                parser.set('Kameras', 'kamera_backend', 'AUTO')
+            if not config_ram.has_option('Kameras', 'kamera_backend'):
+                config_ram.set('Kameras', 'kamera_backend', 'AUTO')
                 self.migrated_keys.append('kamera_backend')
-            if not parser.has_option('Kameras', 'kamera_codec'):
-                parser.set('Kameras', 'kamera_codec', 'MJPG')
+            if not config_ram.has_option('Kameras', 'kamera_codec'):
+                config_ram.set('Kameras', 'kamera_codec', 'MJPG')
                 self.migrated_keys.append('kamera_codec')
-            if not parser.has_option('Kameras', 'kamera_init_modus'):
-                parser.set('Kameras', 'kamera_init_modus', 'PRE')
+            if not config_ram.has_option('Kameras', 'kamera_init_modus'):
+                config_ram.set('Kameras', 'kamera_init_modus', 'PRE')
                 self.migrated_keys.append('kamera_init_modus')   
                 
             # =========================================================================
@@ -381,16 +381,16 @@ class LaborApp:
                 fallback_val = tk_var.get() # Den GUI-Standardwert als Rettungsanker nehmen
                 
                 # ---> NEU: Fehlt der Key in der ZIP-Config? Dann ab auf die Merkliste! <---
-                if not parser.has_option('Erkennung', key):
+                if not config_ram.has_option('Erkennung', key):
                     self.migrated_keys.append(key)
                 
                 # Wir rufen absichtlich die get-Methoden MIT Fallback auf.
                 if isinstance(tk_var, tk.BooleanVar):
-                    val = parser.getboolean('Erkennung', key, fallback=fallback_val)
+                    val = config_ram.getboolean('Erkennung', key, fallback=fallback_val)
                 elif isinstance(tk_var, tk.IntVar):
-                    val = parser.getint('Erkennung', key, fallback=fallback_val)
+                    val = config_ram.getint('Erkennung', key, fallback=fallback_val)
                 elif isinstance(tk_var, tk.DoubleVar):
-                    val = parser.getfloat('Erkennung', key, fallback=fallback_val)
+                    val = config_ram.getfloat('Erkennung', key, fallback=fallback_val)
                         
                 # DER ELA-FIX: Erst die Baseline setzen, DANN den Trace auslösen!
                 self.original_values[str(tk_var)] = val
@@ -399,34 +399,34 @@ class LaborApp:
             # =================================================================
             # ---> ELA FIX: Echte Originalwerte der Kameras für den Mittelklick sichern <---
             # =================================================================
-            if not parser.has_section('Kameras'):
-                parser.add_section('Kameras')
+            if not config_ram.has_section('Kameras'):
+                config_ram.add_section('Kameras')
             
             # ---> NEU: Manuelle Prüfung der Linsen-Offsets für den Legacy Migrator <---
             for s in ['links', 'rechts']:
                 for axis in ['x', 'y']:
                     key = f"lens_offset_{axis}_{s}"
-                    if not parser.has_option('Kameras', key):
-                        parser.set('Kameras', key, "0")
+                    if not config_ram.has_option('Kameras', key):
+                        config_ram.set('Kameras', key, "0")
                         self.migrated_keys.append(key)
             
             # Da wir auch hier getfloat MIT Fallback nutzen, werden fehlende 
-            # Kamera-Parameter (wie 'linsen_verzerrung) sofort vom Parser geheilt!
+            # Kamera-Parameter (wie 'linsen_verzerrung) sofort vom config_ram geheilt!
             self.orig_calib = {
-                'left_x': parser.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0),
-                'left_y': parser.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0),
-                'left_fisch': parser.getfloat('Kameras', 'linsen_verzerrung_links', fallback=0.0),
-                'left_r4': parser.getfloat('Kameras', 'linsen_verzerrung_links_r4', fallback=0.0),
-                'left_off_x': parser.getint('Kameras', 'lens_offset_x_links', fallback=0), # <--- HIER ERGÄNZEN
-                'left_off_y': parser.getint('Kameras', 'lens_offset_y_links', fallback=0),
-                'right_x': parser.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0),
-                'right_y': parser.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0),
-                'right_fisch': parser.getfloat('Kameras', 'linsen_verzerrung_rechts', fallback=0.0),
-                'right_r4': parser.getfloat('Kameras', 'linsen_verzerrung_rechts_r4', fallback=0.0),
-                'right_off_x': parser.getint('Kameras', 'lens_offset_x_rechts', fallback=0),
-                'right_off_y': parser.getint('Kameras', 'lens_offset_y_rechts', fallback=0),
-                'left_limit': parser.getfloat('Kameras', 'linsen_verzerrung_limit_links', fallback=0.0),
-                'right_limit': parser.getfloat('Kameras', 'linsen_verzerrung_limit_rechts', fallback=0.0),
+                'left_x': config_ram.getfloat('Kameras', 'px_pro_mm_x_links', fallback=5.0),
+                'left_y': config_ram.getfloat('Kameras', 'px_pro_mm_y_links', fallback=5.0),
+                'left_fisch': config_ram.getfloat('Kameras', 'linsen_verzerrung_links', fallback=0.0),
+                'left_r4': config_ram.getfloat('Kameras', 'linsen_verzerrung_links_r4', fallback=0.0),
+                'left_off_x': config_ram.getint('Kameras', 'lens_offset_x_links', fallback=0), # <--- HIER ERGÄNZEN
+                'left_off_y': config_ram.getint('Kameras', 'lens_offset_y_links', fallback=0),
+                'right_x': config_ram.getfloat('Kameras', 'px_pro_mm_x_rechts', fallback=5.0),
+                'right_y': config_ram.getfloat('Kameras', 'px_pro_mm_y_rechts', fallback=5.0),
+                'right_fisch': config_ram.getfloat('Kameras', 'linsen_verzerrung_rechts', fallback=0.0),
+                'right_r4': config_ram.getfloat('Kameras', 'linsen_verzerrung_rechts_r4', fallback=0.0),
+                'right_off_x': config_ram.getint('Kameras', 'lens_offset_x_rechts', fallback=0),
+                'right_off_y': config_ram.getint('Kameras', 'lens_offset_y_rechts', fallback=0),
+                'left_limit': config_ram.getfloat('Kameras', 'linsen_verzerrung_limit_links', fallback=0.0),
+                'right_limit': config_ram.getfloat('Kameras', 'linsen_verzerrung_limit_rechts', fallback=0.0),
             }
             
             # ---> NEU: Initialen Push der Kalibrierungsdaten in die Slider erzwingen, 
@@ -437,9 +437,9 @@ class LaborApp:
             # ---> SCHRITT 1: Kompletten Original-Snapshot ALLER Config-Werte sichern <---
             # =================================================================
             self.orig_config_snapshot = {}
-            for sec in parser.sections():
+            for sec in config_ram.sections():
                 self.orig_config_snapshot[sec] = {}
-                for k, v in parser.items(sec):
+                for k, v in config_ram.items(sec):
                     self.orig_config_snapshot[sec][k] = str(v).strip()
 
     def get_orig_config_value(self, section, key, fallback=None):
@@ -488,15 +488,15 @@ class LaborApp:
         self.print_log("SYSTEM", "[ESC]                  : Aktionen abbrechen / Kalibrierungs-Klick zurück")
         self.print_log("SYSTEM", "----------------------------------------------------------------------")    
 
-        # ---> NEU: Alle fehlenden / geheilten Parameter aus GUI & AuditedConfigParser sammeln <---
-        parser = self.package_data.get('config') if getattr(self, 'package_data', None) else None
+        # ---> NEU: Alle fehlenden / geheilten Parameter aus GUI & AuditedConfigconfig_ram sammeln <---
+        config_ram = self.package_data.get('config') if getattr(self, 'package_data', None) else None
         alle_ergaenzten = []
         
         if getattr(self, 'migrated_keys', None):
             alle_ergaenzten.extend(self.migrated_keys)
             
-        if parser and hasattr(parser, 'healed_parameters'):
-            for item in parser.healed_parameters:
+        if config_ram and hasattr(config_ram, 'healed_parameters'):
+            for item in config_ram.healed_parameters:
                 # 'item' hat das Format "[Sektion] key" -> wir prüfen, ob der Key schon gelistet ist
                 key_only = item.split("] ")[-1] if "] " in item else item
                 if key_only not in alle_ergaenzten and item not in alle_ergaenzten:
@@ -507,11 +507,11 @@ class LaborApp:
             self.print_log("SYSTEM", f"🔧 Auto-Heilung: {len(alle_ergaenzten)} fehlende Parameter mit Standardwerten ergänzt:")
             self.print_log("SYSTEM", f"   -> {keys_str}")
             
-        if parser and getattr(parser, 'migrated_parameters', None):
-            mig_str = ", ".join([f"{old_k} -> {new_k}" for _, old_k, new_k, _ in parser.migrated_parameters])
+        if config_ram and getattr(config_ram, 'migrated_parameters', None):
+            mig_str = ", ".join([f"{old_k} -> {new_k}" for _, old_k, new_k, _ in config_ram.migrated_parameters])
             self.print_log("SYSTEM", f"🔄 Legacy-Übersetzung: {mig_str}")
             
-        if alle_ergaenzten or (parser and getattr(parser, 'migrated_parameters', None)):
+        if alle_ergaenzten or (config_ram and getattr(config_ram, 'migrated_parameters', None)):
             self.print_log("SYSTEM", "----------------------------------------------------------------------")
             
     def get_img(self, name):
@@ -524,21 +524,21 @@ class LaborApp:
         # ---> DER FIX: Cache leeren, damit frisch von der Festplatte gelesen wird! <---
         #self.dm.targets_cache = None
         
-        parser = self.dm.load_or_create_config()
+        config_ram = self.dm.load_or_create_config()
         
         #Das macht jetzt schon AuditedConfig.py
         ## ---> NEU: Fehlende Keys auch bei lokaler Config ergänzen! <---
-        #if parser:
-        #    if not parser.has_section('Erkennung'):
-        #        parser.add_section('Erkennung')
+        #if config_ram:
+        #    if not config_ram.has_section('Erkennung'):
+        #        config_ram.add_section('Erkennung')
         #    for key, tk_var in self.registered_sliders.items():
-        #        if not parser.has_option('Erkennung', key):
+        #        if not config_ram.has_option('Erkennung', key):
         #            # Key fehlt -> mit GUI-Wert ergänzen
-        #            parser.set('Erkennung', key, str(tk_var.get()))
+        #            config_ram.set('Erkennung', key, str(tk_var.get()))
         
         self.frame_cache = {'left': {}, 'right': {}}
         self.package_data = {
-            'config': parser,
+            'config': config_ram,
             'images': {},
             'match_data': None,
             'targets': self.dm.load_targets()  # <--- BOOM! Symmetrie zur Config hergestellt!
@@ -548,7 +548,7 @@ class LaborApp:
         self.lbl_image.config(text="Stand-Alone Modus aktiv.\n(Klicke auf 'Erweiterte Einstellungen')", fg="white")
 
         # 1. ZUERST die UI füttern (hier passiert die Auto-Heilung & Befüllung von migrated_keys!)
-        self.apply_config_to_ui(parser)
+        self.apply_config_to_ui(config_ram)
 
         # 2. DANN erst das Log und das Help-Banner ausgeben!
         self.print_log("SYSTEM", "Stand-Alone Modus: Lokale config.ini geladen.")
@@ -589,9 +589,9 @@ class LaborApp:
             #else:
             #    self.dm.targets_cache = None
                 
-            parser = self.package_data.get('config')
+            config_ram = self.package_data.get('config')
             
-            self.apply_config_to_ui(parser)
+            self.apply_config_to_ui(config_ram)
             self.original_match_data = self.package_data.get('match_data')
             
             # =========================================================================
@@ -1123,15 +1123,15 @@ class LaborApp:
             
             # In die Konfiguration der AKTUELLEN Kamera schreiben
             if getattr(self, 'package_data', None) and self.package_data.get('config'):
-                parser = self.package_data['config']
+                config_ram = self.package_data['config']
                 side_str = "Hintergrund_Links" if self.current_side == 'left' else "Hintergrund_Rechts"
                 
-                if not parser.has_section(side_str):
-                    parser.add_section(side_str)
+                if not config_ram.has_section(side_str):
+                    config_ram.add_section(side_str)
                 
-                parser.set(side_str, 'rgb_r', str(r_val))
-                parser.set(side_str, 'rgb_g', str(g_val))
-                parser.set(side_str, 'rgb_b', str(b_val))
+                config_ram.set(side_str, 'rgb_r', str(r_val))
+                config_ram.set(side_str, 'rgb_g', str(g_val))
+                config_ram.set(side_str, 'rgb_b', str(b_val))
                 
                 self.print_log("SYSTEM", f"🎨 WANDFARBE GEUPDATET ({side_str}): RGB({r_val}, {g_val}, {b_val}) gepickt an Position X:{real_x}, Y:{real_y}")
                 
@@ -2345,10 +2345,10 @@ class LaborApp:
             # =========================================================================
             # NEU: 6. ELA Export mit zentralem Overwrite-Schutz
             # =========================================================================
-            parser = self.package_data.get('config')
-            if parser:
+            config_ram = self.package_data.get('config')
+            if config_ram:
                 string_io = io.StringIO()
-                parser.write(string_io)
+                config_ram.write(string_io)
                 new_ini_str = string_io.getvalue()
             else:
                 new_ini_str = None
@@ -2395,10 +2395,10 @@ class LaborApp:
         print("="*60)
 
         if self.package_data and 'config' in self.package_data:
-            parser = self.package_data['config']
+            config_ram = self.package_data['config']
             
-            for section in parser.sections():
-                for key, curr_val_raw in parser.items(section):
+            for section in config_ram.sections():
+                for key, curr_val_raw in config_ram.items(section):
                     curr_val = str(curr_val_raw).strip()
                     orig_val = self.get_orig_config_value(section, key, fallback=None)
                     
@@ -2547,36 +2547,36 @@ class LaborApp:
                 shutil.copy2(current_path, backup_vorher_path)
 
             # 1. & 2. RAM-Config in String wandeln und Bulk-Update-Dict bauen
-            parser = self.package_data.get('config')
+            config_ram = self.package_data.get('config')
             updates = {}
-            if parser:
+            if config_ram:
                 if apply_mode == "CHANGED":
                     # ---> SMART SAVE: Wir patchen gezielt nur die geänderten (section, key)-Paare in die lokale Config <---
-                    disk_parser = self.dm.load_or_create_config()
+                    disk_config_ram = self.dm.load_or_create_config()
                     for sec, key, _, curr_val in changed_items:
-                        val_actual = parser.get(sec, key, fallback=curr_val)
-                        if not disk_parser.has_section(sec):
-                            disk_parser.add_section(sec)
-                        disk_parser.set(sec, key, str(val_actual))
+                        val_actual = config_ram.get(sec, key, fallback=curr_val)
+                        if not disk_config_ram.has_section(sec):
+                            disk_config_ram.add_section(sec)
+                        disk_config_ram.set(sec, key, str(val_actual))
                         
                         if sec not in updates:
                             updates[sec] = {}
                         updates[sec][key] = str(val_actual)
                     
                     string_io = io.StringIO()
-                    disk_parser.write(string_io)
+                    disk_config_ram.write(string_io)
                     new_ini_str = string_io.getvalue()
                     
                 else:
                     # ---> NORMAL SAVE (ALL) <---
                     string_io = io.StringIO()
-                    parser.write(string_io)
+                    config_ram.write(string_io)
                     new_ini_str = string_io.getvalue()
                     
                     # Übernimm ALLES in das Update-Dictionary
-                    for section in parser.sections():
+                    for section in config_ram.sections():
                         updates[section] = {}
-                        for key, val in parser.items(section):
+                        for key, val in config_ram.items(section):
                             updates[section][key] = str(val)
             else:
                 new_ini_str = None

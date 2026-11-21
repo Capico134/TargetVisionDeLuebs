@@ -415,7 +415,7 @@ class TargetTracker:
         if not package: return
         
         # 1. Wir laden den NEUEN Parser aus dem Labor-Paket
-        new_parser = package['config']
+        new_config = package['config']
         
         # 2. Wir definieren alle "tiefen" Systemeinstellungen, die einen Neustart erzwingen
         reboot_required = False
@@ -441,11 +441,11 @@ class TargetTracker:
             # Sicherheitscheck: Falls eine Sektion in der alten Config fehlen sollte
             if not self.config.has_section(section):
                 self.config.add_section(section)
-            if not new_parser.has_section(section):
-                new_parser.add_section(section)
+            if not new_config.has_section(section):
+                new_config.add_section(section)
                 
             old_val = self.config.get(section, key, fallback=None)
-            new_val = new_parser.get(section, key, fallback=None)
+            new_val = new_config.get(section, key, fallback=None)
             
             if str(old_val).strip() != str(new_val).strip():
                 reboot_required = True
