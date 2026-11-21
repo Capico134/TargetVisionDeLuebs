@@ -833,9 +833,15 @@ class LaborApp:
             real_x = int(raw_x / self.current_scale)
             real_y = int(abs_y / self.current_scale)
             
+            ## Schutzplanken gegen Out-of-Bounds
+            #if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
+            #    orig_h, orig_w = self.last_clean_live_img.shape[:2]
+            #    real_x = max(0, min(real_x, orig_w - 1))
+            #    real_y = max(0, min(real_y, orig_h - 1))
+
             # Schutzplanken gegen Out-of-Bounds
-            if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
-                orig_h, orig_w = self.last_clean_live_img.shape[:2]
+            if hasattr(self, 'last_live_img') and self.last_live_img is not None:
+                orig_h, orig_w = self.last_live_img.shape[:2]
                 real_x = max(0, min(real_x, orig_w - 1))
                 real_y = max(0, min(real_y, orig_h - 1))
 
@@ -1113,13 +1119,18 @@ class LaborApp:
         real_x = int(raw_x / self.current_scale)
         real_y = int(abs_y / self.current_scale)
 
-        if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
-            orig_h, orig_w = self.last_clean_live_img.shape[:2]
+        #if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
+        #    orig_h, orig_w = self.last_clean_live_img.shape[:2]
+        #    real_x = max(0, min(real_x, orig_w - 1))
+        #    real_y = max(0, min(real_y, orig_h - 1))
+        # Schutzplanken gegen Out-of-Bounds
+        if hasattr(self, 'last_live_img') and self.last_live_img is not None:
+            orig_h, orig_w = self.last_live_img.shape[:2]
             real_x = max(0, min(real_x, orig_w - 1))
             real_y = max(0, min(real_y, orig_h - 1))
             
             # Farbe auslesen (BGR)
-            b_val, g_val, r_val = self.last_clean_live_img[real_y, real_x]
+            b_val, g_val, r_val = self.last_live_img[real_y, real_x]
             
             # In die Konfiguration der AKTUELLEN Kamera schreiben
             if getattr(self, 'package_data', None) and self.package_data.get('config'):
@@ -1588,7 +1599,7 @@ class LaborApp:
     
                 # ZUWEISUNG: Links saubere Referenz, Rechts in Ansicht 5 das Bild mit Löchern!
                 self.last_live_img = ref_img                # Linke UI-Hälfte
-                self.last_clean_live_img = cum_orig_img     # Rechte UI-Hälfte (nur in Modus 5)
+                #self.last_clean_live_img = cum_orig_img     # Rechte UI-Hälfte (nur in Modus 5)
                 self.last_diff_img = np.zeros_like(ref_img)
                 self.last_diff_gesamt_img = mask_img
                 self.last_ref_img = ref_img
@@ -1715,7 +1726,7 @@ class LaborApp:
                     self.print_log(None, "▼"*70)
                     
                     live_img = img.copy()
-                    clean_live_img = img.copy()
+                    #clean_live_img = img.copy()
                     
                     temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
                     if temp_state.cumulative_mask is not None:
@@ -1742,7 +1753,7 @@ class LaborApp:
                     dx, dy = detector.last_shift.get(side, (0, 0))
                     if dx != 0 or dy != 0:
                         live_img = detector._shift_image_exact(live_img, dx, dy)
-                        clean_live_img = detector._shift_image_exact(clean_live_img, dx, dy) # <--- DIESE ZEILE FEHLTE!
+                        #clean_live_img = detector._shift_image_exact(clean_live_img, dx, dy) # <--- DIESE ZEILE FEHLTE!
                 # =========================================================================
                     
                 temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
@@ -1766,7 +1777,7 @@ class LaborApp:
             if start_idx > target_idx:
                 img = self.get_img(side_origs[target_idx])
                 live_img = img.copy()
-                clean_live_img = img.copy()
+                #clean_live_img = img.copy()
                 
                 # =========================================================================
                 # ---> NEU ELA: Shift aus dem Cache für die Übersicht anwenden! <---
@@ -1775,7 +1786,7 @@ class LaborApp:
                     dx, dy = self.frame_cache[side][target_idx].get('shift', (0, 0))
                     if dx != 0 or dy != 0:
                         live_img = detector._shift_image_exact(live_img, dx, dy)
-                        clean_live_img = detector._shift_image_exact(clean_live_img, dx, dy) # <--- DIESE ZEILE FEHLTE!
+                        #clean_live_img = detector._shift_image_exact(clean_live_img, dx, dy) # <--- DIESE ZEILE FEHLTE!
                 # =========================================================================
                 
                 if target_idx in self.frame_cache[side]:
@@ -1876,7 +1887,7 @@ class LaborApp:
     
             # Bilder für butterweiches Zoomen im RAM zwischenspeichern
             self.last_live_img = live_img
-            self.last_clean_live_img = clean_live_img.copy() # <--- NEU: Das nackte Bild retten!
+            #self.last_clean_live_img = clean_live_img.copy() # <--- NEU: Das nackte Bild retten!
             self.last_diff_img = diff_img
             self.last_diff_gesamt_img = diff_gesamt_img
             self.last_ref_img = ref_img
@@ -1889,16 +1900,16 @@ class LaborApp:
             # ==========================================================
             # ---> NEU: Den echten RAW-Diff-Wert berechnen (Modus 4) <---
             # ==========================================================
-            if len(ref_img.shape) == 3 and 'clean_live_img' in locals():
+            if len(ref_img.shape) == 3 and 'live_img' in locals():
                 k = self.blur_kernel_size_var.get()
                 
                 # 1. Wir nutzen zwingend das saubere Bild OHNE gezeichnete Kreise!
                 #---> ELA-FIX: Wenn Blur auf 0 steht, Weichzeichnen überspringen (Originalbild nutzen) <---
                 if k > 0 and k % 2 == 1:
-                    live_blur = cv2.GaussianBlur(clean_live_img, (k, k), 0)
+                    live_blur = cv2.GaussianBlur(live_img, (k, k), 0)
                     ref_blur = cv2.GaussianBlur(ref_img, (k, k), 0)
                 else:
-                    live_blur = clean_live_img.copy()
+                    live_blur = live_img.copy()
                     ref_blur = ref_img.copy()                                           
                 
                 norm_live = detector.normalize_brightness(ref_blur, live_blur)
