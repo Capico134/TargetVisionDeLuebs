@@ -227,6 +227,11 @@ class LaborContext:
             color_dist = None
             color_multiplier = None
             
+            # =========================================================================
+            # ---> LAZY EVALUATION (MODUS 4 / RAW-DIFF) <---
+            # Wir nutzen die offizielle Engine-Methode (keine Redundanz!), fordern aber 
+            # mit return_details=True die internen Matrizen (raw_diff, color) an!
+            # =========================================================================
             if i == target_idx and len(ref_img.shape) == 3:
                 k = app.blur_kernel_size_var.get()
                 if k > 0 and k % 2 == 1:
@@ -237,39 +242,11 @@ class LaborContext:
                     ref_blur = ref_img.copy()                                           
                 
                 norm_live = detector.normalize_brightness(ref_blur, live_blur)
-                diff_bgr = cv2.absdiff(ref_blur, norm_live)
-                raw_diff = np.max(diff_bgr, axis=2) 
                 
-                if app.farb_bonus_aktiv_var.get():
-                    bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
-                    r_tgt = self.config.getint(bg_sec, 'rgb_r', fallback=0)
-                    g_tgt = self.config.getint(bg_sec, 'rgb_g', fallback=0)
-                    b_tgt = self.config.getint(bg_sec, 'rgb_b', fallback=0)
-                    
-                    sum_tgt = float(r_tgt + g_tgt + b_tgt)
-                    if sum_tgt == 0: sum_tgt = 1.0
-                    target_norm = np.array([b_tgt/sum_tgt, g_tgt/sum_tgt, r_tgt/sum_tgt], dtype=np.float32)
-                    
-                    live_float = norm_live.astype(np.float32)
-                    live_sum = np.sum(live_float, axis=2, keepdims=True)
-                    live_sum[live_sum == 0] = 1.0
-                    live_norm = live_float / live_sum
-                    
-                    color_dist = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
-                    
-                    limit = app.farb_bonus_limit_var.get()
-                    multiplier = 1.0 - (color_dist / limit)
-                    multiplier = np.clip(multiplier * 1.15, 0.0, 1.0)
-                    
-                    kurve = app.farb_bonus_kurve_var.get()
-                    if kurve != 1.0:
-                        multiplier = multiplier ** kurve
-                    
-                    color_multiplier = multiplier 
-                    raw_diff = np.clip(raw_diff.astype(np.float32) * multiplier, 0, 255).astype(np.uint8)
-
-                hit_tol = app.hit_tolerance_var.get()
-                _, thresh_raw = cv2.threshold(raw_diff, hit_tol, 255, cv2.THRESH_BINARY)
+                # ---> DELEGATION AN DIE ENGINE <---
+                thresh_raw, raw_diff, color_dist, color_multiplier = detector.calculate_raw_diff_mask(
+                    ref_blur, norm_live, side, return_details=True
+                )
 
             ctx = FrameContext(
                 frame_number=i,
@@ -304,14 +281,6 @@ class LaborContext:
             ctx = self.frame_cache[side][target_idx]
             
             if ctx.raw_diff is None and len(ctx.ref_img.shape) == 3:
-            
-            # =========================================================================
-            # ---> LAZY EVALUATION (MODUS 4 / RAW-DIFF) <---
-            # Die Berechnung der absoluten Matrix-Differenzen (inkl. Blur und Farb-Multiplikator) 
-            # kostet massiv CPU-Leistung. Wir führen diesen Codeblock AUSSCHLIESSLICH 
-            # für den Frame aus, der am Ende der Schleife tatsächlich auf dem Monitor landet!
-            # =========================================================================
-            if i == target_idx and len(ref_img.shape) == 3:
                 k = app.blur_kernel_size_var.get()
                 if k > 0 and k % 2 == 1:
                     live_blur = cv2.GaussianBlur(ctx.clean_live_img, (k, k), 0)
@@ -321,41 +290,16 @@ class LaborContext:
                     ref_blur = ctx.ref_img.copy()                                           
                 
                 norm_live = detector.normalize_brightness(ref_blur, live_blur)
-                diff_bgr = cv2.absdiff(ref_blur, norm_live)
-                lazy_raw = np.max(diff_bgr, axis=2) 
                 
-                if app.farb_bonus_aktiv_var.get():
-                    bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
-                    r_tgt = self.config.getint(bg_sec, 'rgb_r', fallback=0)
-                    g_tgt = self.config.getint(bg_sec, 'rgb_g', fallback=0)
-                    b_tgt = self.config.getint(bg_sec, 'rgb_b', fallback=0)
-                    
-                    sum_tgt = float(r_tgt + g_tgt + b_tgt)
-                    if sum_tgt == 0: sum_tgt = 1.0
-                    target_norm = np.array([b_tgt/sum_tgt, g_tgt/sum_tgt, r_tgt/sum_tgt], dtype=np.float32)
-                    
-                    live_float = norm_live.astype(np.float32)
-                    live_sum = np.sum(live_float, axis=2, keepdims=True)
-                    live_sum[live_sum == 0] = 1.0
-                    live_norm = live_float / live_sum
-                    
-                    ctx.color_dist = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
-                    limit = app.farb_bonus_limit_var.get()
-                    multiplier = 1.0 - (ctx.color_dist / limit)
-                    multiplier = np.clip(multiplier * 1.15, 0.0, 1.0)
-                    
-                    kurve = app.farb_bonus_kurve_var.get()
-                    if kurve != 1.0:
-                        multiplier = multiplier ** kurve
-                    
-                    ctx.color_multiplier = multiplier 
-                    lazy_raw = np.clip(lazy_raw.astype(np.float32) * multiplier, 0, 255).astype(np.uint8)
-
-                hit_tol = app.hit_tolerance_var.get()
-                _, lazy_thresh = cv2.threshold(lazy_raw, hit_tol, 255, cv2.THRESH_BINARY)
+                # ---> DELEGATION AN DIE ENGINE (DRY-PRINZIP) <---
+                lazy_thresh, lazy_raw, lazy_cdist, lazy_cmult = detector.calculate_raw_diff_mask(
+                    ref_blur, norm_live, side, return_details=True
+                )
                 
                 ctx.raw_diff = lazy_raw
                 ctx.thresh_raw = lazy_thresh
+                ctx.color_dist = lazy_cdist
+                ctx.color_multiplier = lazy_cmult
             
             cached_log = ctx.log_text
             if cached_log:

@@ -146,19 +146,24 @@ class TargetDetector:
         live_float += diff
         return np.clip(live_float, 0, 255).astype(np.uint8)
 
-    def calculate_raw_diff_mask(self, reference_bgr, current_normalized, side):
+    def calculate_raw_diff_mask(self, reference_bgr, current_normalized, side, return_details=False):
         """
-        ELA-Hilfsmethode: Berechnet das rohe binäre Differenzbild (thresh_raw) 
+        Berechnet das rohe binäre Differenzbild (thresh_raw) 
         OHNE Abzug von Diff-Gesamt (inkl. Color-Hack und optionalem Farb-Bonus).
+        
+        Wenn return_details=True (nur für Labor-Ansicht 4), werden zusätzlich das 
+        weiche raw_diff Bild und die Farb-Matrizen zurückgegeben.
         """
         # NEUE FARBERKENNUNG
         diff_bgr = cv2.absdiff(reference_bgr, current_normalized)
         # ---> DER COLOR-HACK: Wir nehmen einfach den maximalen Ausschlag aus B, G oder R <---
-        # Verhindert, dass massive Rot-Änderungen von der Graustufen-Formel verschluckt werden!
         diff_gray = np.max(diff_bgr, axis=2)
 
+        color_dist = None
+        color_multiplier = None
+
         # =========================================================================
-        # ---> NEU: Der smoothe Farb-Bonus (NORMALIZED RGB / CHROMINANCE) <---
+        # ---> Der smoothe Farb-Bonus (NORMALIZED RGB / CHROMINANCE) <---
         # =========================================================================
         if self.farb_bonus_aktiv:
             farb_bonus_limit = self.farb_bonus_limit
@@ -181,19 +186,26 @@ class TargetDetector:
             live_norm = live_float / live_sum
 
             # 3. Distanz berechnen (Faktor 1000 für schöne Werte)
-            dist_matrix = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
+            color_dist = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
 
             # ---> ELA-konforme Multiplikator-Logik mit Rausch-Plateau <---
-            multiplier = 1.0 - (dist_matrix / farb_bonus_limit)
+            multiplier = 1.0 - (color_dist / farb_bonus_limit)
             multiplier = np.clip(multiplier * 1.15, 0.0, 1.0)
 
             if farb_bonus_kurve != 1.0:
                 multiplier = multiplier ** farb_bonus_kurve
 
+            color_multiplier = multiplier 
+
             # Diff-Werte bestrafen (abdunkeln)
             diff_gray = np.clip(diff_gray.astype(np.float32) * multiplier, 0, 255).astype(np.uint8)
 
         _, thresh_raw = cv2.threshold(diff_gray, self.hit_tolerance, 255, cv2.THRESH_BINARY)
+        
+        # ---> SEIDEN-MUSTER: Erweiterter Output für das Labor <---
+        if return_details:
+            return thresh_raw, diff_gray, color_dist, color_multiplier
+            
         return thresh_raw
 
     # =========================================================================
