@@ -20,6 +20,8 @@ from DetectionDeLuebs import TargetDetector
 from LaborRendererDeLuebs import LaborRenderer
 from LaborUIDeLuebs import LaborUIBuilder
 
+from LaborContextDeLuebs import LaborContext, FrameContext  # <--- DIESE ZEILE NEU HINZUFÜGEN!
+
 from DateiManagerDeLuebs import DateiManager
 from StateManagerDeLuebs import StateManager
 from KalibrierungDeLuebs import Kalibrator
@@ -30,41 +32,41 @@ import tools.MatchIntegrity as MatchIntegrity  # <--- NEU
 #from HandbuchDeLuebs import PARAMETER_LEXIKON
 
            
-class DummyDateiManager:
-    def __init__(self, app):
-        self.app = app
-        self.debug_images = {}
-        self.export_folder = "labor_export"
-        
-    def get_current_version(self):
-        """Leitet die Versionsabfrage an den echten DateiManager weiter."""
-        return self.app.dm.get_current_version()
-        
-    def save_debug_image(self, name, image):
-        self.debug_images[name] = image.copy()
-        if self.app.export_images_var.get():
-            import os
-            import cv2
-            if not os.path.exists(self.export_folder):
-                os.makedirs(self.export_folder)
-            path = os.path.join(self.export_folder, f"{name}.png")
-            cv2.imwrite(path, image, [cv2.IMWRITE_PNG_COMPRESSION, 3])
-            return True  # <--- NEU: Meldet "Ja, physisch auf Festplatte exportiert!"
-            
-        return False # <--- NEU: Meldet "Wurde nur stumm im RAM abgelegt."
-            
-    def load_targets(self):
-        # 1. PRIO: Nutze zwingend die historische zielscheiben.json aus dem ZIP-Archiv (Zeitkapsel)!
-        if getattr(self.app, 'package_data', None) and self.app.package_data.get('targets'):
-            return self.app.package_data['targets']
-            
-        # 2. FALLBACK: Das ZIP ist von früher und hat keine JSON an Bord. 
-        # Wir nehmen die tagesaktuelle aus der Gegenwart von der Festplatte.
-        return self.app.dm.load_targets()
-        
-    def write_log(self, msg):
-        # ---> NEU: Stummschaltung für den StateManager <---
-        pass
+#class DummyDateiManager:
+#    def __init__(self, app):
+#        self.app = app
+#        self.debug_images = {}
+#        self.export_folder = "labor_export"
+#        
+#    def get_current_version(self):
+#        """Leitet die Versionsabfrage an den echten DateiManager weiter."""
+#        return self.app.dm.get_current_version()
+#        
+#    def save_debug_image(self, name, image):
+#        self.debug_images[name] = image.copy()
+#        if self.app.export_images_var.get():
+#            import os
+#            import cv2
+#            if not os.path.exists(self.export_folder):
+#                os.makedirs(self.export_folder)
+#            path = os.path.join(self.export_folder, f"{name}.png")
+#            cv2.imwrite(path, image, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+#            return True  # <--- NEU: Meldet "Ja, physisch auf Festplatte exportiert!"
+#            
+#        return False # <--- NEU: Meldet "Wurde nur stumm im RAM abgelegt."
+#            
+#    def load_targets(self):
+#        # 1. PRIO: Nutze zwingend die historische zielscheiben.json aus dem ZIP-Archiv (Zeitkapsel)!
+#        if getattr(self.app, 'package_data', None) and self.app.package_data.get('targets'):
+#            return self.app.package_data['targets']
+#            
+#        # 2. FALLBACK: Das ZIP ist von früher und hat keine JSON an Bord. 
+#        # Wir nehmen die tagesaktuelle aus der Gegenwart von der Festplatte.
+#        return self.app.dm.load_targets()
+#        
+#    def write_log(self, msg):
+#        # ---> NEU: Stummschaltung für den StateManager <---
+#        pass
 
 
 # ==========================================
@@ -99,7 +101,9 @@ class LaborApp:
         self.dm = DateiManager() # <--- NEU: Unser zentraler ELA-Werkzeugkasten
         self.package_data = None # <--- NEU: Speichert das entpackte ZIP im RAM
         
-        self.frame_cache = {'left': {}, 'right': {}}
+        self.labor_context = LaborContext(None, self.dm)  # <--- SEIDEN-MUSTER: Unser neuer Manager!
+        
+        
         self.current_zip_path = None
         self.all_files = []
         self.orig_files = []
@@ -526,6 +530,9 @@ class LaborApp:
         
         config_ram = self.dm.load_or_create_config()
         
+        # ---> ELA-FIX: Den LaborContext frisch mit der neuen Config aufbauen! <---
+        self.labor_context = LaborContext(config_ram, self.dm)
+        
         #Das macht jetzt schon AuditedConfig.py
         ## ---> NEU: Fehlende Keys auch bei lokaler Config ergänzen! <---
         #if config_ram:
@@ -569,7 +576,9 @@ class LaborApp:
         if filepath:
             self._is_loading = True # <--- NEU: Ladesperre AKTIVIEREN
             
-            self.frame_cache = {'left': {}, 'right': {}}
+            #self.frame_cache = {'left': {}, 'right': {}}
+            #self.labor_context.reset()
+            
             self.current_zip_path = filepath
             # Vorläufiger Titel (damit was dasteht, falls das Laden einer Riesen-ZIP kurz dauert)
             self.root.title(f"Labor & Einstellungen  -  {os.path.basename(filepath)}")
@@ -590,6 +599,9 @@ class LaborApp:
             #    self.dm.targets_cache = None
                 
             config_ram = self.package_data.get('config')
+            
+            # ---> ELA-FIX: Den LaborContext frisch mit der ZIP-Config aufbauen! <---
+            self.labor_context = LaborContext(config_ram, self.dm)
             
             self.apply_config_to_ui(config_ram)
             self.original_match_data = self.package_data.get('match_data')
@@ -775,7 +787,8 @@ class LaborApp:
             if hasattr(self, '_param_timer') and self._param_timer is not None:
                 self.root.after_cancel(self._param_timer)
                 self._param_timer = None
-            self.frame_cache = {'left': {}, 'right': {}}
+            # ---> ELA-FIX: Den ECHTEN Cache im Model leeren! <---
+            self.labor_context.reset()
             self.process_and_display()
             return
             
@@ -787,7 +800,8 @@ class LaborApp:
     def _apply_param_change(self):
         """Die eigentliche Ausführung nach dem Zeitpuffer"""
         self._param_timer = None
-        self.frame_cache = {'left': {}, 'right': {}}
+        # ---> ELA-FIX: Den ECHTEN Cache im Model leeren! <---
+        self.labor_context.reset()
         self.process_and_display()
 
     def on_mouse_move(self, event):
@@ -1070,8 +1084,12 @@ class LaborApp:
         self.zoom_factor = max(0.2, min(self.zoom_factor * zoom_multiplier, self.max_zoom_factor))
         print("apply_zoom_box - zoom_factor: ", self.zoom_factor)
         
-        # Neuen Maßstab ermitteln
-        h, w = self.last_live_img.shape[:2] if hasattr(self, 'last_live_img') and self.last_live_img is not None else (720, 1280)
+        # ---> SEIDEN-MUSTER FIX: Echte Auflösung aus dem Kontext-Paket holen! <---
+        if hasattr(self, 'current_context') and self.current_context and self.current_context.live_img is not None:
+            h, w = self.current_context.live_img.shape[:2]
+        else:
+            h, w = 720, 1280
+            
         new_scale = (550.0 / h) * self.zoom_factor
         
         # Mittelpunkt der Box im aktuellen Anzeigebild
@@ -1123,14 +1141,15 @@ class LaborApp:
         #    orig_h, orig_w = self.last_clean_live_img.shape[:2]
         #    real_x = max(0, min(real_x, orig_w - 1))
         #    real_y = max(0, min(real_y, orig_h - 1))
-        # Schutzplanken gegen Out-of-Bounds
-        if hasattr(self, 'last_live_img') and self.last_live_img is not None:
-            orig_h, orig_w = self.last_live_img.shape[:2]
+        # ---> SEIDEN-MUSTER FIX: Kontext statt last_live_img nutzen <---
+        ctx = getattr(self, 'current_context', None)
+        if ctx and ctx.live_img is not None:
+            orig_h, orig_w = ctx.live_img.shape[:2]
             real_x = max(0, min(real_x, orig_w - 1))
             real_y = max(0, min(real_y, orig_h - 1))
             
             # Farbe auslesen (BGR)
-            b_val, g_val, r_val = self.last_live_img[real_y, real_x]
+            b_val, g_val, r_val = ctx.live_img[real_y, real_x]
             
             # In die Konfiguration der AKTUELLEN Kamera schreiben
             if getattr(self, 'package_data', None) and self.package_data.get('config'):
@@ -1597,20 +1616,31 @@ class LaborApp:
                 cum_orig_name = next((f for f in self.all_files if f"cumulative_orig_{side}" in f), None)
                 cum_orig_img = self.get_img(cum_orig_name) if cum_orig_name else ref_img.copy()
     
-                # ZUWEISUNG: Links saubere Referenz, Rechts in Ansicht 5 das Bild mit Löchern!
-                self.last_live_img = ref_img                # Linke UI-Hälfte
-                #self.last_clean_live_img = cum_orig_img     # Rechte UI-Hälfte (nur in Modus 5)
-                self.last_diff_img = np.zeros_like(ref_img)
-                self.last_diff_gesamt_img = mask_img
-                self.last_ref_img = ref_img
+                # =====================================================================
+                # ---> SEIDEN-MUSTER: Frame 0 bekommt auch sein eigenes Daten-Paket! <---
+                # =====================================================================
+                self.current_context = FrameContext(
+                    frame_number=0,
+                    shots=[],
+                    orig_img=ref_img.copy(),
+                    ref_img=ref_img.copy(),
+                    live_img=ref_img.copy(),
+                    clean_live_img=cum_orig_img.copy(),
+                    history_mask=np.zeros((h, w), dtype=np.uint8),
+                    diff_image=np.zeros_like(ref_img),
+                    diff_gesamt_image=mask_img.copy() if mask_img is not None else np.zeros((h, w), dtype=np.uint8),
+                    abrisskante=None,
+                    shift_vector=(0, 0),
+                    log_text=self.log_text.get("1.0", tk.END),
+                    is_cached_run=True
+                )
+                
+                # ---> DER FIX: Wir müssen Modus 4 manuell nullen, da er nicht im Cache liegt! <---
                 self.last_raw_diff = np.zeros((h, w), dtype=np.uint8)
                 self.last_thresh_raw = np.zeros((h, w), dtype=np.uint8)
-                self.last_history_mask = np.zeros((h, w), dtype=np.uint8)
-                # ---> NEU: Geister-Abrisskante beim Zurückspringen löschen! <---
-                self.last_abrisskante = None
                 
                 self.renderer.update_image_display()
-                return 
+                return
                 
             # ==========================================================
             # ---> NORMALE SCHÜSSE (Index > 0) <---
@@ -1620,232 +1650,31 @@ class LaborApp:
             
             self._is_batch_calculating = True 
             
-            #self.image_frame.config(text=f" Live-Labor (Mausrad = Zoom | Klick = Bewegen | Rechtsklick = Reset)  |  📄 {orig_name} ")
+            # ---> ELA-FIX: Den Dummy-Manager bauen und mitgeben! <---
+            #d_dm = DummyDateiManager(self)
             
-            # 1. DUMMYS AUFBAUEN
-            # ---> ELA FIX <---
-            d_config = self.package_data['config']
-            d_dm = DummyDateiManager(self)
-            d_sm = StateManager(d_config, d_dm)
+            # ---> SEIDEN-MUSTER: Wir übergeben die Kontrolle komplett an den Context! <---
+            self.current_context = self.labor_context.process_frames(
+                self, target_idx, side, side_origs, self.all_files, self.get_img#, d_dm
+            )
             
-            # 2. ECHTE ENGINE STARTEN
-            detector = TargetDetector(d_config, d_dm, d_sm, self.print_log)
-            
-            ref_name = next((f for f in self.all_files if f"referenz_{side}" in f), None)
-            if not ref_name: return
-            ref_img = self.get_img(ref_name)
-            detector.set_reference_image(ref_img, side)
-            
-            # =========================================================================
-            # ---> ELA FIX: Beschütze das echte Zentrum vor der Auto-Erkennung! <---
-            # =========================================================================
-            if getattr(self, 'original_match_data', None):
-                meta = self.original_match_data.get('metadata', {})
-                center_key = 'center_l' if side == 'left' else 'center_r'
-                if meta.get(center_key):
-                    cx, cy = meta[center_key][0], meta[center_key][1]
-                    d_sm.set_nullpunkt(side, cx, cy)
-                    self.print_log("SYSTEM", f"🎯 Aktiver Nullpunkt {side.upper()} (aus Match-Daten): X:{cx:.2f} Y:{cy:.2f}")
-            
-            startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{side}" in f), None)
-            if startmask_name:
-                startmask_bgr = self.get_img(startmask_name)
-                startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
-                state = d_sm.state_left if side == 'left' else d_sm.state_right
-                state.cumulative_mask = startmask_gray
-                #self.print_log("SYSTEM", f"Fortsetzung erkannt! Start-Maske für {side} geladen.")
-                # Wenn du das Startmasken-Log bei der Zeitreise nicht sehen willst, 
-                # wird es jetzt auch geschluckt!
-                self.print_log(None, f"[SYSTEM] Fortsetzung erkannt! Start-Maske für {side} geladen.")
-            
-            # 3. TIME-TRAVEL SIMULATION (Der echte, saubere Lazy Timeline Cache)
-            start_idx = 0
-            
-            def safe_copy(img_obj):
-                return img_obj.copy() if img_obj is not None else None
-    
-            # ---------------------------------------------------------
-            # ---> ELA: LAZY TIMELINE CACHE <---
-            # ---------------------------------------------------------
-            detail_export = d_config.getboolean('Erkennung', 'detail_export_aktiv', fallback=False)
-            
-            best_cached_idx = -1
-            # ---> ELA FIX: Wenn Detail-Export an ist, dürfen wir max. das BILD DAVOR aus dem Cache laden.
-            # So wird das Zielbild IMMER einmal frisch und MIT Details berechnet! <---
-            start_search_idx = target_idx - 1 if detail_export else target_idx
-            
-            for i in range(start_search_idx, -1, -1):
-                if i in self.frame_cache[side]:
-                    best_cached_idx = i
-                    break
-                    
-            if best_cached_idx >= 0:
-                cached_data = self.frame_cache[side][best_cached_idx]
-                
-                d_sm.shots = copy.deepcopy(cached_data['shots'])
-                temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
-                temp_state.cumulative_mask = safe_copy(cached_data['mask'])
-                
-                d_dm.debug_images[f"diff_letzter_treffer_{side}"] = safe_copy(cached_data.get('diff_letzter_treffer'))
-                d_dm.debug_images[f"diff_letzte_verworfene_auswertung_{side}"] = safe_copy(cached_data.get('diff_letzte_verworfene'))
-                d_dm.debug_images[f"letzte_abrisskante_{side}"] = safe_copy(cached_data.get('letzte_abrisskante'))
-                
-                start_idx = best_cached_idx + 1
-                
-                if start_idx <= target_idx:
-                    self.print_log("SYSTEM", f"⚡ Lazy-Cache: Überspringe die ersten {start_idx} Bilder, setze Zeitreise bei Bild #{start_idx + 1} fort...")
-    
-            # ---------------------------------------------------------
-            # Dynamische Ausführungs-Schleife ab start_idx
-            # ---------------------------------------------------------
-            # ---> NEU: Log-Hinweis ab 10 zu berechnenden Bildern <---
-            frames_zu_rechnen = (target_idx + 1) - start_idx
-            if frames_zu_rechnen >= 10:
-                self.update_frame_title(f"⏳ [Zeitreise] Berechne größere Distanz ({frames_zu_rechnen} Frames)... Bitte warten.")
-            self.root.update()
-            
-            for i in range(start_idx, target_idx + 1):
-                ################## HIER WARTE-CURSOR #####################################
-                #self.root.config(cursor="watch")
-                #self.lbl_image.config(cursor="watch")
-                #if hasattr(self, 'img_container'):
-                #    self.img_container.config(cursor="watch")
-                #self.root.update()   
-                ################## HIER WARTE-CURSOR #####################################
-                
-                img = self.get_img(side_origs[i])
-                
-                # ---> ELA FIX: Bei JEDEM Frame alte Diffs löschen ...
-                d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
-                d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
-                d_dm.debug_images.pop(f"letzte_abrisskante_{side}", None)
-                
-                if i == target_idx:
-                    self.print_log(None, "\n" + "▼"*70)
-                    self.print_log(None, f"███  START DER LIVE-ANALYSE FÜR BILD-AUFNAHME ({i+1})  ███")
-                    self.print_log(None, "▼"*70)
-                    
-                    live_img = img.copy()
-                    #clean_live_img = img.copy()
-                    
-                    temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
-                    if temp_state.cumulative_mask is not None:
-                        history_mask = temp_state.cumulative_mask.copy()
-                    else:
-                        history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
-                        
-                    detector.detail_export_aktiv = detail_export
-                else:
-                    self.print_log(None, f"\n--- BILD #{i+1} ".ljust(61, "-"))
-                    detector.detail_export_aktiv = False
-                        
-                shots_before = len(d_sm.shots)
-                detector.detect_new_shot(img, side)
-                shots_after = len(d_sm.shots)
-                
-                for j in range(shots_before, shots_after):
-                    d_sm.shots[j]['labor_frame_num'] = i + 1
-                
-                # =========================================================================
-                # ---> NEU ELA: Das Zielbild für die Übersicht korrigieren! <---
-                # =========================================================================
-                if i == target_idx:
-                    dx, dy = detector.last_shift.get(side, (0, 0))
-                    if dx != 0 or dy != 0:
-                        live_img = detector._shift_image_exact(live_img, dx, dy)
-                        #clean_live_img = detector._shift_image_exact(clean_live_img, dx, dy) # <--- DIESE ZEILE FEHLTE!
-                # =========================================================================
-                    
-                temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
-                cache_shots = copy.deepcopy(d_sm.shots)
-                for s in cache_shots:
-                    s.pop('score_export_details', None)
-                    
-                self.frame_cache[side][i] = {
-                    'shots': cache_shots,
-                    'mask': safe_copy(temp_state.cumulative_mask),
-                    'diff_letzter_treffer': safe_copy(d_dm.debug_images.get(f"diff_letzter_treffer_{side}")),
-                    'diff_letzte_verworfene': safe_copy(d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}")),
-                    'letzte_abrisskante': safe_copy(d_dm.debug_images.get(f"letzte_abrisskante_{side}")),
-                    'log_text': self.log_text.get("1.0", tk.END),
-                    'shift': detector.last_shift.get(side, (0, 0)) # <--- WICHTIG: Shift im Cache merken!
-                }
-    
-            # ---------------------------------------------------------
-            # Fallback für reine Cache-Ladevorgänge (0-ms-Render)
-            # ---------------------------------------------------------
-            if start_idx > target_idx:
-                img = self.get_img(side_origs[target_idx])
-                live_img = img.copy()
-                #clean_live_img = img.copy()
-                
-                # =========================================================================
-                # ---> NEU ELA: Shift aus dem Cache für die Übersicht anwenden! <---
-                # =========================================================================
-                if target_idx in self.frame_cache[side]:
-                    dx, dy = self.frame_cache[side][target_idx].get('shift', (0, 0))
-                    if dx != 0 or dy != 0:
-                        live_img = detector._shift_image_exact(live_img, dx, dy)
-                        #clean_live_img = detector._shift_image_exact(clean_live_img, dx, dy) # <--- DIESE ZEILE FEHLTE!
-                # =========================================================================
-                
-                if target_idx in self.frame_cache[side]:
-                    cached_log = self.frame_cache[side][target_idx].get('log_text', '')
-                    if cached_log:
-                        self.log_text.insert(tk.END, cached_log.rstrip('\n') + '\n')
-                else:
-                    # ---> ELA-FIX: Vor Bild #1 (target_idx == 0) gibt es nur die 
-                    # optionale Start-Maske (Fortsetzung) oder ein komplett leeres Blatt! <---
-                    if startmask_name:
-                        history_mask = startmask_gray.copy()
-                    else:
-                        history_mask = np.zeros(img.shape[:2], dtype=np.uint8)
-                        
-                self.print_log(None, "\n" + "▼"*70)
-                self.print_log(None, f"███  BILD #{target_idx+1} DIREKT AUS DEM CACHE GELADEN (0 ms)  ███")
-                self.print_log(None, "▼"*70)
-    
-            # 4. VISUALISIERUNG DER ENGINE-ERGEBNISSE
-            # Hole das Diff-Bild direkt aus dem Dummy-DateiManager der Engine!
-            # ---> NEU: Ringwertung aus dem StateManager in die GUI schreiben (MIT SCHUSS-NUMMER) <---
-            side_shots = [s for s in d_sm.shots if s['side'] == side]
-            lines = []
-            
-            # ---> DER FIX: Auslesen der Nachkommastellen direkt aus der Config! <---
-            decimals = d_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
-            
-            for i, s in enumerate(side_shots):
-                # DER FIX: Wir verlassen uns stur auf die Frame-Nummer, nicht auf "is_new"!
-                if s.get('labor_frame_num') == self.current_index:
-                    lines.append(f"🎯 #{i+1}: {s['score']:.{decimals}f}")
-                    
-            if lines:
-                self.lbl_current_scores.config(text="\n".join(lines), fg="#27ae60")
-            else:
-                self.lbl_current_scores.config(text="- keine -", fg="gray")
-                
-                
-            diff_img = d_dm.debug_images.get(f"diff_letzter_treffer_{side}")
-            if diff_img is None:
-                diff_img = d_dm.debug_images.get(f"diff_letzte_verworfene_auswertung_{side}")
-            if diff_img is None:
-                diff_img = np.zeros_like(live_img)
-            
-            if len(diff_img.shape) == 2:
-                diff_img = cv2.cvtColor(diff_img, cv2.COLOR_GRAY2BGR)
-                
+            # Falls beim Verarbeiten etwas schiefging (z.B. keine Bilder gefunden)
+            if not self.current_context:
+                self.print_log("SYSTEM", f"FEHLER: Konnte den Kontext für Bild {target_idx + 1} nicht erstellen.")
+                return
+
             # ---> Die Zeichen-Logik wurde komplett in LaborRendererDeLuebs verlagert! <---
             
-            # 1. Radius berechnen
-            r_erkennung = round(detector.get_caliber_radius(side))
-            r_offiziell = round(self.official_radius_px)
+            # 1. Radius berechnen (Holen wir uns noch kurz aus der Config, da es GUI/Render-Spezifisch ist)
+            # ---> DER FIX: Zwingend in einen ganzzahligen Pixelwert (Integer) verwandeln! <---
+            r_erkennung = int(round(self.official_radius_px)) 
             self.current_radius_px = r_erkennung
             
             # 2. Original-Treffer filtern
             if getattr(self, 'original_match_data', None):
                 side_char = 'l' if side == 'left' else 'r'
                 orig_shots_side = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
-                curr_shots_side = [s for s in d_sm.shots if s.get('side') == side]
+                curr_shots_side = [s for s in self.current_context.shots if s.get('side') == side]
                 
                 aligned = self.align_shots(orig_shots_side, curr_shots_side, r_erkennung * 2.5)
                 
@@ -1855,131 +1684,31 @@ class LaborApp:
                         curr_shot = curr_shots_side[c_idx]
                         frame_num = curr_shot.get('labor_frame_num', 0)
                         
-                        #if frame_num < self.current_index: #NUR BILD VORHER
                         if frame_num <= self.current_index:
                             shots_to_draw.append(orig_shots_side[o_idx])
                 
                 self.last_orig_shots_to_draw = shots_to_draw 
             else:
                 self.last_orig_shots_to_draw = []
-            # (Wird wieder butterweich und hochauflösend vom Renderer übernommen)
             
-            
-            # ====================================================================
             # ---> NEU: Daten für den späteren Vergleich merken <---
-            self.current_engine_shots = d_sm.shots 
-            #self.current_side = side # WURDE SCHON GANZ OBEN GEMACHT!!
-    
-            # ---> NEU: Alle nötigen Bilder aus der Engine fischen <---
-            h, w = live_img.shape[:2]
+            self.current_engine_shots = self.current_context.shots 
             
-            # ---> DER FIX: Diff-Gesamt 100% sicher aus dem StateManager holen! <---
-            temp_state = d_sm.state_left if side == 'left' else d_sm.state_right
-            if temp_state.cumulative_mask is not None:
-                diff_gesamt_img = temp_state.cumulative_mask.copy()
+            # ---> NEU: Ringwertung in die GUI schreiben (MIT SCHUSS-NUMMER) <---
+            side_shots = [s for s in self.current_context.shots if s['side'] == side]
+            lines = []
+            
+            decimals = d_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
+            
+            for i, s in enumerate(side_shots):
+                if s.get('labor_frame_num') == self.current_index:
+                    lines.append(f"🎯 #{i+1}: {s['score']:.{decimals}f}")
+                    
+            if lines:
+                self.lbl_current_scores.config(text="\n".join(lines), fg="#27ae60")
             else:
-                diff_gesamt_img = np.zeros((h, w), dtype=np.uint8)
-                
-                
-            ref_img = d_dm.debug_images.get(f"referenz_{side}")
-            if ref_img is None:
-                ref_img = np.zeros((h, w, 3), dtype=np.uint8)
-    
-            # Bilder für butterweiches Zoomen im RAM zwischenspeichern
-            self.last_live_img = live_img
-            #self.last_clean_live_img = clean_live_img.copy() # <--- NEU: Das nackte Bild retten!
-            self.last_diff_img = diff_img
-            self.last_diff_gesamt_img = diff_gesamt_img
-            self.last_ref_img = ref_img
-            
-            # ---> NEU: Abrisskante aus dem Dummy-Manager fischen <---
-            self.last_abrisskante = d_dm.debug_images.get(f"letzte_abrisskante_{side}")
-    
-            
-            
-            # ==========================================================
-            # ---> NEU: Den echten RAW-Diff-Wert berechnen (Modus 4) <---
-            # ==========================================================
-            if len(ref_img.shape) == 3 and 'live_img' in locals():
-                k = self.blur_kernel_size_var.get()
-                
-                # 1. Wir nutzen zwingend das saubere Bild OHNE gezeichnete Kreise!
-                #---> ELA-FIX: Wenn Blur auf 0 steht, Weichzeichnen überspringen (Originalbild nutzen) <---
-                if k > 0 and k % 2 == 1:
-                    live_blur = cv2.GaussianBlur(live_img, (k, k), 0)
-                    ref_blur = cv2.GaussianBlur(ref_img, (k, k), 0)
-                else:
-                    live_blur = live_img.copy()
-                    ref_blur = ref_img.copy()                                           
-                
-                norm_live = detector.normalize_brightness(ref_blur, live_blur)
-                diff_bgr = cv2.absdiff(ref_blur, norm_live)
-                raw_diff = np.max(diff_bgr, axis=2) # Unser Farb-Hack!
-                
-                # =========================================================================
-                # ---> NEU: Matrix-Simulation für das Labor (Ansicht 4 synchron halten!) <---
-                # =========================================================================
-                if self.farb_bonus_aktiv_var.get():
-                    bg_sec = 'Hintergrund_Links' if side == 'left' else 'Hintergrund_Rechts'
-                    r_tgt = d_config.getint(bg_sec, 'rgb_r')
-                    g_tgt = d_config.getint(bg_sec, 'rgb_g')
-                    b_tgt = d_config.getint(bg_sec, 'rgb_b')
-                    
-                    sum_tgt = float(r_tgt + g_tgt + b_tgt)
-                    if sum_tgt == 0: sum_tgt = 1.0
-                    target_norm = np.array([b_tgt/sum_tgt, g_tgt/sum_tgt, r_tgt/sum_tgt], dtype=np.float32)
-                    
-                    live_float = norm_live.astype(np.float32)
-                    live_sum = np.sum(live_float, axis=2, keepdims=True)
-                    live_sum[live_sum == 0] = 1.0
-                    live_norm = live_float / live_sum
-                    
-                    dist_matrix = np.linalg.norm(live_norm - target_norm, axis=2) * 1000.0
-                    
-                    self.last_color_dist = dist_matrix # Distanz für die Maus retten!
-                    
-                    # =========================================================================
-                    # ---> NEU: ELA-konforme Multiplikator-Logik mit Rausch-Plateau <---
-                    # =========================================================================
-                    limit = self.farb_bonus_limit_var.get()
-                    multiplier = 1.0 - (dist_matrix / limit)
-                    
-                    # Boost um 15% (Rausch-Ausgleich), aber hart bei 1.0 abriegeln!
-                    multiplier = np.clip(multiplier * 1.15, 0.0, 1.0)
-                    
-                    kurve = self.farb_bonus_kurve_var.get()
-                    if kurve != 1.0:
-                        multiplier = multiplier ** kurve
-                    
-                    self.last_color_multiplier = multiplier 
-                    
-                    raw_diff = np.clip(raw_diff.astype(np.float32) * multiplier, 0, 255).astype(np.uint8)
-                else:
-                    self.last_color_multiplier = None
-    
-                # ---> NEU: Wir führen den Threshold VORHER aus, genau wie die Engine! <---
-                hit_tol = self.hit_tolerance_var.get()
-                _, thresh_raw = cv2.threshold(raw_diff, hit_tol, 255, cv2.THRESH_BINARY)
-                self.last_thresh_raw = thresh_raw.copy()
-    
-                self.last_raw_diff = raw_diff.copy() # Für die farbige Anzeige
-                
-                # =================================================================
-                # ---> DER ELA-BUGFIX: History-Maske beim Rückwärts-Springen laden!
-                # =================================================================
-                if 'history_mask' in locals() and history_mask is not None:
-                    self.last_history_mask = history_mask.copy()
-                else:
-                    # Dieser Block greift nur, wenn wir durch den Lazy Cache rückwärts springen
-                    # und die history_mask oben nicht durch die Engine definiert wurde!
-                    if target_idx > 0 and (target_idx - 1) in self.frame_cache[side]:
-                        self.last_history_mask = self.frame_cache[side][target_idx - 1]['mask'].copy()
-                    else:
-                        if startmask_name:
-                            self.last_history_mask = startmask_gray.copy()
-                        else:
-                            self.last_history_mask = np.zeros((h, w), dtype=np.uint8)
-    
+                self.lbl_current_scores.config(text="- keine -", fg="gray")
+
             self.renderer.update_image_display()
             
         finally:
@@ -1995,723 +1724,20 @@ class LaborApp:
             self.update_frame_title()
 
     def align_shots(self, orig_shots, curr_shots, threshold):
-        """Robustes Greedy-Alignment, das Aussetzer und OpenCV-Reihenfolge-Änderungen verzeiht."""
-        aligned = []
-        used_curr = set()
-        
-        # 1. Wir suchen für jeden Original-Schuss den perfekten, noch freien Partner
-        for i, orig in enumerate(orig_shots):
-            ox, oy = orig['x'], orig['y']
-            
-            best_j = None
-            best_dist = float('inf')
-            
-            # Wir gucken uns die aktuellen Schüsse an (mit einem großzügigen Puffer für vertauschte Reihenfolgen)
-            start_j = max(0, i - 15)
-            end_j = min(len(curr_shots), i + 15)
-            
-            for j in range(start_j, end_j):
-                if j in used_curr: continue
-                cx, cy = int(curr_shots[j]['pos'][0]), int(curr_shots[j]['pos'][1])
-                dist = np.hypot(cx - ox, cy - oy)
-                
-                # Gierig den absolut nächsten Schuss schnappen, der innerhalb des Limits liegt
-                if dist < threshold and dist < best_dist:
-                    best_dist = dist
-                    best_j = j
-                    
-            if best_j is not None:
-                used_curr.add(best_j)
-                aligned.append((i, best_j, best_dist))
-            else:
-                # Kein passender Partner im Umkreis gefunden -> Schuss fehlt in der Neuberechnung
-                aligned.append((i, None, None))
-                
-        # 2. Jetzt sammeln wir alle NEUEN Schüsse ein, die bisher keinen Original-Partner gefunden haben
-        for j in range(len(curr_shots)):
-            if j not in used_curr:
-                aligned.append((None, j, None))
-                
-        # 3. Liste sortieren, damit sie in der Tabelle chronologisch hübsch aussieht
-        def sort_key(item):
-            o_idx, c_idx, d = item
-            if o_idx is not None: return o_idx * 1000
-            if c_idx is not None: return (c_idx * 1000) + 500
-            return 999999
-            
-        aligned.sort(key=sort_key)
-        return aligned
+        # ---> DELEGIERT AN DEN CONTEXT <---
+        return self.labor_context.align_shots(orig_shots, curr_shots, threshold)
 
     def show_comparison(self):
-        if not self.current_zip_path or not getattr(self, 'original_match_data', None) or not self.orig_files:
-            return
-
-        # 1. Info-Fenster öffnen
-        comp_win = tk.Toplevel(self.root)
-        comp_win.title(f"📊 Integrations-Check: Live-Parameter vs. Original-Match")
-        
-        sf = self.root.winfo_fpixels('1i') / 96.0
-        w, h = int(1600 * sf), int(750 * sf) # Etwas breiter gemacht für die Ringwerte
-        comp_win.geometry(f"{w}x{h}")
-        
-        # ---> DER FIX: transient und topmost restlos entfernt! <---
-        # Wir holen das Fenster nur einmalig sanft nach vorne, ohne es festzunageln.
-        comp_win.lift()
-        comp_win.focus_force()
-
-        # =====================================================================
-        # ---> Feste Werkzeugleiste für Buttons oben <---
-        # =====================================================================
-        btn_frame = tk.Frame(comp_win)
-        btn_frame.pack(fill=tk.X, padx=10, pady=5)
-        
-        def copy_to_clipboard():
-            full_log = txt.get("1.0", tk.END)
-            self.root.clipboard_clear()
-            self.root.clipboard_append(full_log)
-            tk.messagebox.showinfo("Kopiert", "Das komplette Protokoll wurde in die Zwischenablage kopiert!", parent=comp_win)
-            
-        tk.Button(btn_frame, text="📋 In Zwischenablage kopieren", command=copy_to_clipboard, bg="#3498db", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT)
-
-        # =====================================================================
-        # ---> Text-Frame mit Scrollbar <---
-        # =====================================================================
-        txt_frame = tk.Frame(comp_win)
-        txt_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-        
-        scrollbar = tk.Scrollbar(txt_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        txt = tk.Text(txt_frame, font=("Consolas", 12), bg="#1e1e1e", fg="#00ff00", padx=10, pady=10, yscrollcommand=scrollbar.set)
-        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=txt.yview)
-
-        txt.insert(tk.END, "Führe komplette Neuberechnung aller Schüsse durch... Bitte warten...\n")
-        comp_win.update()
-
-        # 2. Voller Simulations-Durchlauf (Stumm im Hintergrund)
-        d_config = self.package_data['config']
-        
-        ## Auch hier sicherstellen, dass der Parameter im RAM-Parser existiert
-        #if not d_config.has_section('Zielscheibe'):
-        #    d_config.add_section('Zielscheibe')
-        #    
-        #if not d_config.has_option('Zielscheibe', 'ringwertung_nachkommastellen'):
-        #    d_config.set('Zielscheibe', 'ringwertung_nachkommastellen', '1')
-        #    print("🔧 [LAZY-INJECTION] Parameter 'ringwertung_nachkommastellen=1' für Integrations-Check ergänzt.")
-
-        d_dm = DummyDateiManager(self)
-        d_sm = StateManager(d_config, d_dm)
-        detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
-
-        for s in ['left', 'right']:
-            ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
-            if ref_name:
-                ref_img = self.get_img(ref_name)
-                detector.set_reference_image(ref_img, s)
-                
-                if getattr(self, 'original_match_data', None):
-                    meta = self.original_match_data.get('metadata', {})
-                    center_key = 'center_l' if s == 'left' else 'center_r'
-                    if meta.get(center_key):
-                        d_sm.set_nullpunkt(s, meta[center_key][0], meta[center_key][1])
-            
-            startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
-            if startmask_name:
-                startmask_bgr = self.get_img(startmask_name)
-                startmask_gray = cv2.cvtColor(startmask_bgr, cv2.COLOR_BGR2GRAY)
-                state = d_sm.state_left if s == 'left' else d_sm.state_right
-                state.cumulative_mask = startmask_gray
-
-        frame_counts = {'left': 0, 'right': 0}
-        for orig_name in self.orig_files:
-            img = self.get_img(orig_name)
-            s = 'left' if 'left' in orig_name else 'right'
-            frame_counts[s] += 1
-            curr_frame_num = frame_counts[s]
-            
-            shots_before = len(d_sm.shots)
-            detector.detect_new_shot(img, s)
-            shots_after = len(d_sm.shots)
-            
-            for idx in range(shots_before, shots_after):
-                d_sm.shots[idx]['frame_num'] = curr_frame_num
-
-        # 3. Ausgabe aufbereiten[cite: 11]
-        txt.delete(1.0, tk.END)
-        txt.insert(tk.END, f"VERGLEICH: KOMPLETTES MATCH (Aktuelle Slider-Werte vs. Original-JSON)\n")
-        txt.insert(tk.END, "="*85 + "\n")
-
-        # ---> NEU: Dynamische Nachkommastellen aus der Config auslesen <---
-        decimals = d_config.getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
-
-        def build_side_comparison(side_name, side_char):
-            cal_r = detector.get_caliber_radius(side_name) 
-            orig_shots = [s for s in self.original_match_data.get("timeline", []) if s.get('s') == side_char]
-            curr_shots = [s for s in d_sm.shots if s['side'] == side_name]
-            
-            if not orig_shots and not curr_shots: return 
-            
-            txt.insert(tk.END, f"\n--- KAMERA {side_name.upper()} ---\n")
-            txt.insert(tk.END, f"Original Treffer: {len(orig_shots)} | Neu berechnet: {len(curr_shots)}\n")
-            txt.insert(tk.END, "Legende: 'E' = Manuell editiert | '*' = Methode hat sich zum Original geändert\n")
-            
-            # Neuer, erweiterter Header mit Platz für die Ringwertung
-            header = f"{'Nr':>3} | {'Bild':>4} | {'Orig-Methode':<25} | {'Neu-Methode':<25} | {'Orig (X,Y, Ring)':<27} | {'Neu (X,Y, Ring)':<27} | {'Dist':>6} | {'O-CV':>6} | {'N-CV':>6} | {'% Kal':<10}\n"
-            txt.insert(tk.END, header)
-            txt.insert(tk.END, "-"*165 + "\n")
-            
-            threshold = cal_r * 2.5  
-            aligned = self.align_shots(orig_shots, curr_shots, threshold)
-                    
-            total_dist = 0.0
-            match_count = 0
-            
-            for idx, (orig_idx, curr_idx, dist) in enumerate(aligned):
-                if orig_idx is not None and curr_idx is not None:
-                    orig = orig_shots[orig_idx]
-                    curr = curr_shots[curr_idx]
-                    
-                    ox, oy = float(orig['x']), float(orig['y'])
-                    cx, cy = float(curr['pos'][0]), float(curr['pos'][1])
-                    
-                    # Ringwerte auslesen
-                    orig_score = float(orig.get('score', 0.0))
-                    curr_score = float(curr.get('score', 0.0))
-                    
-                    dx, dy = cx - ox, cy - oy
-                    dist = np.hypot(dx, dy)
-                    
-                    cal_d = cal_r * 2
-                    pct = (dist / cal_d) * 100 if cal_d else 0
-                    
-                    total_dist += dist
-                    match_count += 1
-                    
-                    warn = "⚠️" if pct > 25.0 else ""
-                    edit_marker = "E" if orig.get('edited', False) else " "
-                    
-                    # =========================================================================
-                    # ---> NEU: Original-Score dynamisch formatieren (Die ungeschminkte Wahrheit!)
-                    # =========================================================================
-                    o_score_str = f"{orig_score:.4f}".rstrip('0')
-                    if o_score_str.endswith('.'): 
-                        o_score_str += "0" # Aus "10." machen wir sauber wieder "10.0"
-                    
-                    # String-Zusammenbau inkl. formatierter Ringwertung
-                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>5.1f},{oy:>5.1f} ({o_score_str})"
-                    curr_str = f"N:{curr_idx+1:02d}  {cx:>5.1f},{cy:>5.1f} ({curr_score:.{decimals}f})"
-                    
-                    f_num = curr.get('frame_num', 0)
-                    curr_method = curr.get('winner_method', 'Std')
-                    orig_method = orig.get('winner_method', 'Unbekannt')
-                    
-                    display_curr_method = f"{curr_method}*" if orig_method != 'Unbekannt' and orig_method != curr_method else curr_method
-                    
-                    orig_cv, curr_cv = orig.get('cv_score', 0.0), curr.get('cv_score', 0.0)
-                    pct_str = f"{pct:.1f}% {warn}"
-                    
-                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {orig_method:<25} | {display_curr_method:<25} | {orig_str:<27} | {curr_str:<27} | {dist:6.1f}p | {orig_cv:6.1f} | {curr_cv:6.1f} | {pct_str:<10}\n")
-                    
-                elif orig_idx is not None:
-                    orig = orig_shots[orig_idx]
-                    edit_marker = "E" if orig.get('edited', False) else " "
-                    ox, oy = float(orig['x']), float(orig['y'])
-                    orig_score = float(orig.get('score', 0.0))
-                    
-                    # ---> HIER AUCH DIE NEUE FORMATIERUNG EINFÜGEN <---
-                    o_score_str = f"{orig_score:.4f}".rstrip('0')
-                    if o_score_str.endswith('.'): 
-                        o_score_str += "0"
-                        
-                    orig_str = f"O:{orig_idx+1:02d}{edit_marker} {ox:>5.1f},{oy:>5.1f} ({o_score_str})"
-                    orig_cv = orig.get('cv_score', 0.0)
-                    orig_method = orig.get('winner_method', 'Unbekannt')
-                    
-                    txt.insert(tk.END, f"{idx+1:3d} | {'--':>4} | {orig_method:<25} | {'--- FEHLT ---':<25} | {orig_str:<27} | {'--- FEHLT ---':<27} | {'--':>6} | {orig_cv:6.1f} | {'--':>6} | {'-- ❌':<10}\n")
-                    
-                elif curr_idx is not None:
-                    curr = curr_shots[curr_idx]
-                    cx, cy = float(curr['pos'][0]), float(curr['pos'][1])
-                    curr_score = float(curr.get('score', 0.0))
-                    curr_str = f"N:{curr_idx+1:02d}  {cx:>5.1f},{cy:>5.1f} ({curr_score:.{decimals}f})"
-                    curr_cv = curr.get('cv_score', 0.0)
-                    f_num = curr.get('frame_num', 0)
-                    curr_method = curr.get('winner_method', 'Std')
-                    
-                    txt.insert(tk.END, f"{idx+1:3d} | #{f_num:<3} | {'--- FEHLT ---':<25} | {curr_method:<25} | {'--- FEHLT ---':<27} | {curr_str:<27} | {'--':>6} | {'--':>6} | {curr_cv:6.1f} | {'-- 🆕':<10}\n")
-
-            if match_count > 0:
-                avg_dist = total_dist / match_count
-                txt.insert(tk.END, "-"*165 + "\n")
-                txt.insert(tk.END, f"Ø Abweichung {side_name.upper()} (nur gematchte Treffer): {avg_dist:.2f} Pixel\n")
-                
-        build_side_comparison('left', 'l')
-        build_side_comparison('right', 'r')
-        
-        txt.config(state=tk.DISABLED)
-
-
+        # ---> DELEGIERT AN DEN CONTEXT <---
+        self.labor_context.show_comparison(self)
 
     def export_test_case(self):
-        """
-        Exportiert das aktuell geladene Match inklusive der manuell 
-        bearbeiteten/perfektionierten match.json und der AKTUELLEN GUI-Parameter (config.ini).
-        """
-        # 1. Sicherheitscheck: Ist überhaupt etwas geladen?
-        if not getattr(self, 'current_zip_path', None) or not getattr(self, 'original_match_data', None) or not self.orig_files:
-            messagebox.showwarning("Fehler", "Es ist kein Match geladen, das exportiert werden könnte!")
-            return
-    
-        # 2. Ordnerstruktur vorbereiten
-        export_dir = os.path.join(os.getcwd(), "testcases")
-        os.makedirs(export_dir, exist_ok=True)
-        
-        base_name = os.path.basename(self.current_zip_path)
-        default_name = base_name.replace(".zip", "_verbessert.zip")
-        
-        # 3. Speicher-Dialog öffnen
-        save_path = filedialog.asksaveasfilename(
-            initialdir=export_dir,
-            initialfile=default_name,
-            title="Golden Master Test-Case speichern",
-            defaultextension=".zip",
-            filetypes=[("ZIP Archive", "*.zip")]
-        )
-        
-        if not save_path:
-            return 
-            
-        # =========================================================================
-        # ---> NEU: DER DETAIL-EXPORT TÜRSTEHER <---
-        # =========================================================================
-        d_config = self.package_data['config']
-        if d_config.getboolean('Erkennung', 'detail_export_aktiv', fallback=False):
-            # messagebox.askyesno gibt True zurück, wenn "Ja" geklickt wird
-            disable_export = messagebox.askyesno(
-                "Performance Warnung",
-                "⚠️ Der Parameter 'detail_export_aktiv' ist aktuell EINGESCHALTET.\n\n"
-                "Dies verlangsamt die Live-Engine und bläht den Testcase unnötig auf. "
-                "Für einen regulären Golden Master sollte dieser Wert 'no' sein.\n\n"
-                "Möchtest du den Parameter für diesen Export automatisch deaktivieren?"
-            )
-            if disable_export:
-                # Schaltet den Parameter im RAM ab (und passt den Slider im Labor an)
-                d_config.set('Erkennung', 'detail_export_aktiv', 'no')
-                # Wenn wir schon eine Checkbox/Variable in den Slidern registriert haben, updaten wir sie!
-                # (Da der Parameter aus Legacy-Gründen evtl. keinen eigenen Slider mehr hat, ist das in try/except sicher verpackt)
-                try:
-                    for key, tk_var in self.registered_sliders.items():
-                        if key == 'detail_export_aktiv':
-                            tk_var.set(False)
-                except Exception:
-                    pass
-                self.print_log("SYSTEM", "ℹ️ 'detail_export_aktiv' wurde für den Export deaktiviert.")
-            
-        try:
-            # =========================================================================
-            # NEU: 4. SILENT MATCH RECALCULATION (Die perfekten Schüsse generieren!)
-            # =========================================================================
-            # Wir machen hier genau das Gleiche wie in show_comparison(), aber STUMM.
-            # ---> ELA FIX <---
-            d_config = self.package_data['config']
-            d_dm = DummyDateiManager(self)
-            d_sm = StateManager(d_config, d_dm)
-            detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None) 
-
-            # Setze Referenzen und Startmasken
-            for s in ['left', 'right']:
-                # ---> DER FIX: Prüfen, ob die Kamera für diese Seite überhaupt noch aktiv ist! <---
-                state = d_sm.state_left if s == 'left' else d_sm.state_right
-                if not state:
-                    continue # Kamera ist abgeschaltet -> alte Bilder im ZIP ignorieren
-                    
-                ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
-                if ref_name:
-                    detector.set_reference_image(self.get_img(ref_name), s)
-                    
-                    # ---> ELA FIX <---
-                    if getattr(self, 'original_match_data', None):
-                        meta = self.original_match_data.get('metadata', {})
-                        center_key = 'center_l' if s == 'left' else 'center_r'
-                        if meta.get(center_key):
-                            d_sm.set_nullpunkt(s, meta[center_key][0], meta[center_key][1])
-                
-                startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
-                if startmask_name:
-                    startmask_gray = cv2.cvtColor(self.get_img(startmask_name), cv2.COLOR_BGR2GRAY)
-                    state.cumulative_mask = startmask_gray
-
-            # Alle orig-Bilder durch die NEUEN Parameter jagen
-            for orig_name in self.orig_files:
-                img = self.get_img( orig_name)
-                s = 'left' if 'left' in orig_name else 'right'
-                detector.detect_new_shot(img, s)
-            
-            # =========================================================================
-            # NEU: 5. EINE BRANDNEUE MATCH.JSON BAUEN (mit korrekten Summen!)
-            # =========================================================================
-            # Wir lassen den StateManager die komplette Arbeit machen:
-            player_l = self.original_match_data.get("metadata", {}).get("spieler", "Schütze 1").split(" / ")[0].strip()
-            player_r = self.original_match_data.get("metadata", {}).get("spieler", "Schütze 2").split(" / ")[-1].strip()
-            
-            new_match_data = d_sm.get_match_data(player_l, player_r)
-            
-            # Da es ein Labor-Export ist, setzen wir alle Schüsse auf "edited = False" 
-            # und füllen Dummy-Zeitstempel auf (da wir die echten nicht haben)
-            for i, s in enumerate(new_match_data["timeline"]):
-                s["t"] = float(i + 1.0)
-                s["edited"] = False
-
-            # =========================================================================
-            # NEU: 6. ELA Export mit zentralem Overwrite-Schutz
-            # =========================================================================
-            config_ram = self.package_data.get('config')
-            if config_ram:
-                string_io = io.StringIO()
-                config_ram.write(string_io)
-                new_ini_str = string_io.getvalue()
-            else:
-                new_ini_str = None
-                
-            is_overwrite = (os.path.abspath(save_path) == os.path.abspath(self.current_zip_path))
-                
-            # Wir übergeben direkt save_path. Den .tmp-Schutz macht der DateiManager atomar!
-            success = self.dm.export_match_package(
-                filepath=save_path,
-                match_data=new_match_data,
-                config_string=new_ini_str,
-                source_zip=self.current_zip_path,
-                apply_diet_filter=True
-            )
-            
-            if success:
-                # RAM updaten, damit der nächste Klick auf "Integrations-Check" sofort stimmt
-                if is_overwrite:
-                    self.original_match_data = copy.deepcopy(new_match_data)
-                    
-                messagebox.showinfo("Erfolg", f"Test-Case erfolgreich gespeichert:\n{os.path.basename(save_path)}")
-            else:
-                messagebox.showerror("Fehler", "Beim Exportieren ist ein Fehler aufgetreten.")
-            
-        except Exception as e:
-            messagebox.showerror("Fehler", f"Beim Exportieren ist ein Fehler aufgetreten:\n{str(e)}")
+        # ---> DELEGIERT AN DEN CONTEXT <---
+        self.labor_context.export_test_case(self)
 
     def apply_to_live(self):
-        """
-        Aktualisiert die physische config.ini und baut (falls Live-Tuning) ein Handover-Paket
-        sowie Vorher/Nachher-Backups zur Dokumentation.
-        """
-        if not getattr(self, 'package_data', None):
-            messagebox.showwarning("Fehler", "Es ist keine Konfiguration geladen!")
-            return
-
-        current_path = getattr(self, 'current_zip_path', '')
-
-        # --- SMART SAVE: Finde heraus, was WIRKLICH geändert wurde (Mit Diagnose-Prints) ---
-        changed_items = [] # Liste von (section, key, orig_val, curr_val)
-        changed_keys = []
-        print("\n" + "="*60)
-        print("🔍 [SMART-SAVE DIAGNOSE] Starte Parameter-Abgleich...")
-        print("="*60)
-
-        if self.package_data and 'config' in self.package_data:
-            config_ram = self.package_data['config']
-            
-            for section in config_ram.sections():
-                for key, curr_val_raw in config_ram.items(section):
-                    curr_val = str(curr_val_raw).strip()
-                    orig_val = self.get_orig_config_value(section, key, fallback=None)
-                    
-                    if orig_val is not None:
-                        if self.is_config_value_changed(section, key, curr_val):
-                            print(f"  🔴 [GEÄNDERT] [{section}] {key} -> Alt: '{orig_val}' | Neu: '{curr_val}'")
-                            changed_items.append((section, key, orig_val, curr_val))
-                            changed_keys.append(f"[{section}] {key}" if key in ('rgb_r', 'rgb_g', 'rgb_b', 'tolerance', 'min_area_percent', 'cut_top', 'cut_bottom', 'cut_left', 'cut_right') else key)
-                        else:
-                            print(f"  🟢 [Gleich]   [{section}] {key}")
-                    else:
-                        print(f"  ⚠️ [Kein Originalwert im Snapshot] [{section}] {key} (Neu angelegt: '{curr_val}')")
-                        changed_items.append((section, key, None, curr_val))
-                        changed_keys.append(key)
-
-        print("="*60)
-        print(f"📋 Endergebnis: {len(changed_items)} geänderte Parameter erkannt -> {changed_keys}")
-        print("="*60 + "\n")
-
-        # ---> NEU: Die clevere Speicher-Weiche <---
-        apply_mode = "ALL" # Standardmäßig wird alles überschrieben
-        
-        if not current_path:
-            # Fall 1: Stand-Alone Modus (Nur lokale config.ini)
-            titel = "Globale Einstellungen speichern"
-            text = "Möchtest du diese Werte direkt in die System-Konfiguration schreiben?\n\n▶ Sie gelten ab sofort als Standard für alle NEUEN Matches.\n\nDas Labor wird danach geschlossen."
-            if not messagebox.askyesno(titel, text): return
-            
-        elif os.path.basename(current_path) == "Live_Tuning_Bridge.zip":
-            # Fall 2: Live-Tuning am Schießstand
-            titel = "Live-System aktualisieren"
-            text = "Möchtest du diese Einstellungen an das laufende System am Schießstand senden?\n\n▶ Das aktuelle Match wird sofort damit fortgesetzt.\n▶ Das Labor wird danach geschlossen."
-            if not messagebox.askyesno(titel, text): return
-            
-        else:
-            # Fall 3: Altes Match (Time Capsule) geladen - SMART SAVE!
-            if changed_items:
-                # Benutzer hat etwas verändert
-                titel = "Intelligentes Speichern (Smart-Save)"
-                max_len = 99
-                # Formatierung für das Popup
-                changes_text = "\n".join([f"• [{sec}] {k}: {o_v} ➔ {c_v}" if o_v is not None else f"• [{sec}] {k}: {c_v}" for sec, k, o_v, c_v in changed_items[:max_len]])
-                if len(changed_items) > max_len:
-                    changes_text += f"\n... und {len(changed_items) - max_len} weitere."
-                    
-                msg = (
-                    f"Du betrachtest gerade ein historisches Match-Paket.\n"
-                    f"Folgende {len(changed_items)} Parameter hast du im Labor verändert:\n\n"
-                    f"{changes_text}\n\n"
-                    "Wie möchtest du speichern?\n\n"
-                    "[ NUR GEÄNDERTE ] = Überträgt nur die rot markierten Werte in dein Live-System.\n"
-                    "[ ALLES ÜBERSCHREIBEN ] = Macht diese historische Config zum neuen globalen Standard."
-                )
-                
-                # Custom Dialog mit Scrollable Text und festen Buttons unten
-                def custom_prompt():
-                    result = tk.StringVar(value="")
-                    dlg = tk.Toplevel(self.root)
-                    dlg.title(titel)
-                    
-                    # ---> NEU: Dynamische DPI-Skalierung <---
-                    sf = self.root.winfo_fpixels('1i') / 96.0
-                    w, h = int(560 * sf), int(420 * sf)
-                    dlg.geometry(f"{w}x{h}")
-                    
-                    dlg.attributes('-topmost', True)
-                    dlg.focus_force()
-                    
-                    # Layout mit festem Button-Frame unten und Canvas/Text oben mit Scrollbar
-                    btn_frame = tk.Frame(dlg, pady=12, bg="#f0f0f0")
-                    btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
-                    
-                    def set_res(val):
-                        result.set(val)
-                        dlg.destroy()
-                        
-                    tk.Button(btn_frame, text="Nur Geänderte", bg="#27ae60", fg="white", font=("Arial", 10, "bold"), command=lambda: set_res("CHANGED")).pack(side=tk.LEFT, padx=15)
-                    tk.Button(btn_frame, text="Alles Überschreiben", bg="#e74c3c", fg="white", font=("Arial", 10, "bold"), command=lambda: set_res("ALL")).pack(side=tk.LEFT, padx=15)
-                    tk.Button(btn_frame, text="Abbrechen", font=("Arial", 10), command=lambda: set_res("CANCEL")).pack(side=tk.RIGHT, padx=15)
-                    
-                    text_frame = tk.Frame(dlg)
-                    text_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=15, pady=15)
-                    
-                    scrollbar = ttk.Scrollbar(text_frame, orient="vertical")
-                    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-                    
-                    txt_widget = tk.Text(text_frame, wrap=tk.WORD, font=("Arial", 10), yscrollcommand=scrollbar.set, bg="#fafafa", padx=10, pady=10)
-                    txt_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-                    scrollbar.config(command=txt_widget.yview)
-                    
-                    txt_widget.insert(tk.END, msg)
-                    txt_widget.config(state=tk.DISABLED) # Nur lesen
-                    
-                    self.root.wait_window(dlg)
-                    return result.get()
-                
-                choice = custom_prompt()
-                if choice == "CANCEL" or choice == "":
-                    return
-                apply_mode = choice
-                
-            else:
-                # Nichts wurde verändert
-                titel = "Keine Änderungen erkannt"
-                text = (
-                    "Du hast im Labor keine Parameter verändert (keine roten Markierungen).\n\n"
-                    "Möchtest du die historische Config dieses ZIP-Paketes trotzdem zum neuen globalen Standard machen (Alles überschreiben)?"
-                )
-                if not messagebox.askyesno(titel, text): return
-                apply_mode = "ALL"
-
-            
-        # =========================================================================
-        # ---> NEU: DER DETAIL-EXPORT TÜRSTEHER (FÜR DIE LIVE-ANLAGE) <---
-        # =========================================================================
-        d_config = self.package_data['config']
-        if d_config.getboolean('Erkennung', 'detail_export_aktiv', fallback=False):
-            disable_export = messagebox.askyesno(
-                "Performance Warnung",
-                "⚠️ Der Parameter 'detail_export_aktiv' ist aktuell EINGESCHALTET.\n\n"
-                "Dies verlangsamt die Maschine am echten Schießstand erheblich!\n\n"
-                "Möchtest du den Parameter vor dem Speichern automatisch deaktivieren?"
-            )
-            if disable_export:
-                d_config.set('Erkennung', 'detail_export_aktiv', 'no')
-                try:
-                    for key, tk_var in self.registered_sliders.items():
-                        if key == 'detail_export_aktiv':
-                            tk_var.set(False)
-                except Exception:
-                    pass
-                self.print_log("SYSTEM", "ℹ️ 'detail_export_aktiv' wurde für das Live-System deaktiviert.")
-            
-        try:
-            current_path = getattr(self, 'current_zip_path', '')
-            export_dir = os.path.join(os.getcwd(), "labor_export")
-            os.makedirs(export_dir, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            safe_basename = os.path.basename(current_path).replace(".zip", "") if current_path else "Backup"
-
-            # =========================================================
-            # ---> WIEDER DA: Das "Vorher"-Backup <---
-            # =========================================================
-            if current_path and os.path.exists(current_path):
-                backup_vorher_path = os.path.join(export_dir, f"{safe_basename}_Vorher_{timestamp}.zip")
-                shutil.copy2(current_path, backup_vorher_path)
-
-            # 1. & 2. RAM-Config in String wandeln und Bulk-Update-Dict bauen
-            config_ram = self.package_data.get('config')
-            updates = {}
-            if config_ram:
-                if apply_mode == "CHANGED":
-                    # ---> SMART SAVE: Wir patchen gezielt nur die geänderten (section, key)-Paare in die lokale Config <---
-                    disk_config_ram = self.dm.load_or_create_config()
-                    for sec, key, _, curr_val in changed_items:
-                        val_actual = config_ram.get(sec, key, fallback=curr_val)
-                        if not disk_config_ram.has_section(sec):
-                            disk_config_ram.add_section(sec)
-                        disk_config_ram.set(sec, key, str(val_actual))
-                        
-                        if sec not in updates:
-                            updates[sec] = {}
-                        updates[sec][key] = str(val_actual)
-                    
-                    string_io = io.StringIO()
-                    disk_config_ram.write(string_io)
-                    new_ini_str = string_io.getvalue()
-                    
-                else:
-                    # ---> NORMAL SAVE (ALL) <---
-                    string_io = io.StringIO()
-                    config_ram.write(string_io)
-                    new_ini_str = string_io.getvalue()
-                    
-                    # Übernimm ALLES in das Update-Dictionary
-                    for section in config_ram.sections():
-                        updates[section] = {}
-                        for key, val in config_ram.items(section):
-                            updates[section][key] = str(val)
-            else:
-                new_ini_str = None
- 
-            # 3. Physische config.ini aktualisieren (Kommentare bleiben erhalten!)
-            self.dm.update_ini_file_bulk(updates)
-
-            # 4. Prüfen: Sind wir im "Live-Tuning" Modus? (Die Bridge-Weiche!)
-            if current_path and os.path.basename(current_path) == "Live_Tuning_Bridge.zip":
-                
-                # Wir müssen die aktuellen Masken/Diffs berechnen, um sie an TargetVision zu übergeben
-                d_config = self.package_data['config']  
-                d_dm = DummyDateiManager(self)
-                d_sm = StateManager(d_config, d_dm)
-                detector = TargetDetector(d_config, d_dm, d_sm, lambda side, text, show_gui=False: None)
-
-                # =====================================================================
-                # ---> DER FIX: Referenzen, Nullpunkte & Startmasken VORAB setzen! <---
-                # =====================================================================
-                for s in ['left', 'right']:
-                    state = d_sm.state_left if s == 'left' else d_sm.state_right
-                    if not state: 
-                        continue
-                        
-                    ref_name = next((f for f in self.all_files if f"referenz_{s}" in f), None)
-                    if ref_name:
-                        detector.set_reference_image(self.get_img(ref_name), s)
-                        if getattr(self, 'original_match_data', None):
-                            meta = self.original_match_data.get('metadata', {})
-                            center_key = 'center_l' if s == 'left' else 'center_r'
-                            if meta.get(center_key):
-                                d_sm.set_nullpunkt(s, meta[center_key][0], meta[center_key][1])
-                    
-                    startmask_name = next((f for f in self.all_files if f"cumulative_startmask_{s}" in f), None)
-                    if startmask_name:
-                        startmask_gray = cv2.cvtColor(self.get_img(startmask_name), cv2.COLOR_BGR2GRAY)
-                        state.cumulative_mask = startmask_gray
-
-                # Jetzt die Aufnahmen sauber (und nur EINMAL) durchjagen
-                for orig_name in self.orig_files:
-                    s = 'left' if 'left' in orig_name else 'right'
-                    temp_state = d_sm.state_left if s == 'left' else d_sm.state_right
-                    if not temp_state: 
-                        continue
-                    detector.detect_new_shot(self.get_img(orig_name), s)
-
-                # Die Bilder über den DateiManager temporär auf die Festplatte legen, damit der Exporter sie greifen kann
-                for img_name, img_data in d_dm.debug_images.items():
-                    self.dm.save_debug_image(img_name, img_data)
-
-                # =========================================================
-                # ---> NEU: Warten, bis der Koch alle Bilder auf die Platte geschrieben hat! <---
-                # =========================================================
-                if hasattr(self.dm, 'flush_image_queue'):
-                    self.dm.flush_image_queue()
-                    
-                # =========================================================
-                # ---> DER FIX 2: Die neuen JSON-Daten bauen! <---
-                # =========================================================
-                new_match_data = {
-                    "metadata": self.original_match_data.get("metadata", {}).copy(),
-                    "timeline": []
-                }
-                shots_l = [s for s in d_sm.shots if s['side'] == 'left']
-                shots_r = [s for s in d_sm.shots if s['side'] == 'right']
-                new_match_data["metadata"]["treffer_links"] = len(shots_l)
-                new_match_data["metadata"]["treffer_rechts"] = len(shots_r)
-                new_match_data["metadata"]["gesamtpunkte"] = len(d_sm.shots)
-                
-                for s in d_sm.shots:
-                    side_char = "l" if s['side'] == 'left' else "r"
-                    new_match_data["timeline"].append({
-                        "t": float(len(new_match_data["timeline"]) + 1.0),
-                        "s": side_char,
-                        # ---> NEU: Mit 4 Nachkommastellen statt int() <---
-                        "x": round(float(s['pos'][0]), 4),
-                        "y": round(float(s['pos'][1]), 4),
-                        "a": round(float(s['area']), 1),
-                        "score": float(s.get('score', 0.0)),
-                        "cv_score": round(float(s.get('cv_score', 0.0)), 1),
-                        "winner_method": str(s.get('winner_method', 'Unbekannt')),
-                        "edited": False
-                    })
-                
-                # =========================================================
-                # ---> WIEDER DA: Das "Nachher"-Backup <---
-                # =========================================================
-                backup_nachher_path = os.path.join(export_dir, f"{safe_basename}_Nachher_{timestamp}.zip")
-                self.dm.export_match_package(
-                    filepath=backup_nachher_path,
-                    match_data=new_match_data,  # <--- HIER WAR NOCH self.original_match_data !!
-                    source_folder=self.dm.DEBUG_FOLDER,
-                    apply_diet_filter=False 
-                )
-
-                # Handover-Paket schnüren (Nimmt die Bilder direkt aus dem debug_bilder Ordner)
-                handover_path = os.path.join(export_dir, "Live_Tuning_Handover.zip")
-                self.dm.export_match_package(
-                    filepath=handover_path,
-                    match_data=new_match_data,  # <--- UND AUCH HIER MUSS new_match_data HIN !!
-                    source_folder=self.dm.DEBUG_FOLDER,
-                    apply_diet_filter=False 
-                )
-                self.print_log("SYSTEM", "Handover-Paket und Backups erstellt.")
-
-            self.print_log("SYSTEM", "Schließe Labor...")
-            self.root.destroy() 
-
-        except Exception as e:
-            # ---> NEU: Der Fehler-Röntgenblick für die Konsole! <---
-            import traceback
-            traceback.print_exc()
-            
-            messagebox.showerror("Kritischer Fehler", f"Fehler beim Übernehmen:\n{str(e)}")
+        # ---> DELEGIERT AN DEN CONTEXT <---
+        self.labor_context.apply_to_live(self)
 
 if __name__ == "__main__":
     import sys 

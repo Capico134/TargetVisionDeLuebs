@@ -21,10 +21,13 @@ class LaborRenderer:
         self.app = app
 
     def update_image_display(self, full_rebuild=True, push_to_gui=True):
-        if getattr(self.app, 'last_live_img', None) is None: return
+        # ---> SEIDEN-MUSTER: Türsteher prüft, ob ein Paket existiert <---
+        ctx = getattr(self.app, 'current_context', None)
+        if not ctx or ctx.live_img is None: return
         t_start = time.perf_counter()
 
-        h, w = self.app.last_live_img.shape[:2]
+        # Alle Dimensionen aus dem Paket holen
+        h, w = ctx.live_img.shape[:2]
         
         if full_rebuild or not hasattr(self.app, 'cached_static_layer'):
             mode = self.app.view_mode_var.get()
@@ -36,16 +39,19 @@ class LaborRenderer:
                 if len(img.shape) == 2: return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
                 return img
 
-            diff_bgr = to_bgr(self.app.last_diff_img)
+            diff_bgr = to_bgr(ctx.diff_image)
             
             if mode == 1:
                 panel_render_img = diff_bgr
             elif mode == 2:
-                panel_render_img = to_bgr(self.app.last_diff_gesamt_img)
+                panel_render_img = to_bgr(ctx.diff_gesamt_image)
             elif mode == 4: 
-                raw = getattr(self.app, 'last_raw_diff', np.zeros((h, w), dtype=np.uint8))
-                thresh_raw = getattr(self.app, 'last_thresh_raw', np.zeros((h, w), dtype=np.uint8))
-                hist_mask = getattr(self.app, 'last_history_mask', np.zeros((h, w), dtype=np.uint8))
+                # ---> SEIDEN-MUSTER: Raw-Diff Daten direkt aus dem Paket ziehen! <---
+                raw = ctx.raw_diff if ctx.raw_diff is not None else np.zeros((h, w), dtype=np.uint8)
+                thresh_raw = ctx.thresh_raw if ctx.thresh_raw is not None else np.zeros((h, w), dtype=np.uint8)
+                
+                # ---> SEIDEN-MUSTER: history_mask sicher auspacken <---
+                hist_mask = ctx.get_safe_history_mask()
                 
                 raw_display = raw.copy()
                 if hist_mask is not None and cv2.countNonZero(hist_mask) > 0:
@@ -84,7 +90,8 @@ class LaborRenderer:
                 panel_render_img[bool_base] = red_overlay[bool_base]
                 panel_render_img[bool_morph] = blue_overlay[bool_morph]
                 
-                abriss_mask = getattr(self.app, 'last_abrisskante', None)
+                # ---> SEIDEN-MUSTER: Abrisskante aus dem Paket! <---
+                abriss_mask = ctx.abrisskante
                 if abriss_mask is not None:
                     if abriss_mask.shape[:2] != (h, w):
                         abriss_mask = cv2.resize(abriss_mask, (w, h), interpolation=cv2.INTER_NEAREST)
@@ -94,14 +101,12 @@ class LaborRenderer:
                     panel_render_img[bool_abriss] = green_overlay[bool_abriss]
                     
             elif mode == 5:
-                if hasattr(self.app, 'last_clean_live_img'):
-                    panel_render_img = self.app.last_clean_live_img.copy()
-                else:
-                    panel_render_img = np.zeros((h, w, 3), dtype=np.uint8)
+                # ---> SEIDEN-MUSTER: Das echte, unverschobene Originalbild auspacken! <---
+                panel_render_img = ctx.orig_img.copy()
             else: 
-                ref = to_bgr(self.app.last_ref_img)
+                ref = to_bgr(ctx.ref_img)
                 composite = cv2.addWeighted(ref, 0.65, diff_bgr, 0.65, 0)
-                diff_gesamt = self.app.last_diff_gesamt_img
+                diff_gesamt = ctx.diff_gesamt_image
                 if diff_gesamt is not None:
                     if diff_gesamt.shape[:2] != (h, w):
                         diff_gesamt = cv2.resize(diff_gesamt, (w, h), interpolation=cv2.INTER_NEAREST)
@@ -111,13 +116,11 @@ class LaborRenderer:
                     composite[mask] = cv2.addWeighted(composite[mask], 0.5, green_overlay[mask], 0.5, 0)
                 panel_render_img = composite
 
-##### AB HIER BEGINNT DAS ZOOMEN SO WIE ICH DAS SEHE!!!!! ####
-
-            overview_img = self.app.last_live_img.copy()
+            # ---> SEIDEN-MUSTER: Übersichtsbild aus dem Paket! <---
+            overview_img = ctx.live_img.copy()
             side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
             current_frame_num = self.app.current_index
             
-            # 1. ZUERST die gelben Original-Treffer auf die Übersicht zeichnen (Hintergrund)
             if getattr(self.app, 'show_orig_hits_var', None) and self.app.show_orig_hits_var.get():
                 r_offiziell = getattr(self.app, 'official_radius_px', 15)
                 orig_shots = getattr(self.app, 'last_orig_shots_to_draw', [])
@@ -126,29 +129,25 @@ class LaborRenderer:
                     cv2.circle(overview_img, (hx, hy), int(round(r_offiziell)), (0, 255, 255), 1)
                     cv2.circle(overview_img, (hx, hy), 1, (0, 255, 255), 0)
 
-            # 2. DANACH die grünen Engine-Kreise darüber zeichnen (Vordergrund)
-            if hasattr(self.app, 'current_engine_shots') and hasattr(self.app, 'current_radius_px'):
+            # ---> SEIDEN-MUSTER: Schüsse sicher aus dem Paket holen! <---
+            if hasattr(self.app, 'current_radius_px'):
                 r_erkennung = self.app.current_radius_px
-                for shot in self.app.current_engine_shots:
+                for shot in ctx.shots:
                     is_current_frame_shot = (shot.get('labor_frame_num') == current_frame_num)
                     if shot.get('side') == side and not is_current_frame_shot:
                         draw_pos = (int(round(shot['pos'][0])), int(round(shot['pos'][1])))
                         cv2.circle(overview_img, draw_pos, r_erkennung, (0, 255, 0), 1)
 
-            # Combined base layer at ORIGINAL resolution
             combined_orig = np.hstack((overview_img, panel_render_img))
             self.app.cached_static_layer = combined_orig.copy()
 
-        # Get base image at original size
         combined_orig = self.app.cached_static_layer.copy()
         
-        # Scaling variables
         self.app.current_scale = (550 / h) * self.app.zoom_factor
         self.app.current_img_w = int(round(w * self.app.current_scale))
         W_scaled = 2 * self.app.current_img_w
         H_scaled = int(round(h * self.app.current_scale))
         
-        # Viewport Crop
         container_w = self.app.img_container.winfo_width() if hasattr(self.app, 'img_container') else 1200
         container_h = self.app.img_container.winfo_height() if hasattr(self.app, 'img_container') else 800
         pan_x = getattr(self.app, 'pan_x', 0)
@@ -176,8 +175,6 @@ class LaborRenderer:
                 
                 orig_crop = combined_orig[orig_y1:orig_y2, orig_x1:orig_x2]
                 
-                # ---> DER FIX: Exakte Zielgröße proportional zu den gesliceten Original-Pixeln! <---
-                # Verhindert das Stauch-Zittern von INTER_NEAREST beim Panning!
                 target_w = int(round((orig_x2 - orig_x1) * self.app.current_scale))
                 target_h = int(round((orig_y2 - orig_y1) * self.app.current_scale))
                 
@@ -186,7 +183,6 @@ class LaborRenderer:
                 else:
                     combined = np.full((10, 10, 3), 40, dtype=np.uint8)
                     
-                # Der wahre Viewport-Startpunkt in skalierten Pixeln ist exakt an orig_x1 gekoppelt:
                 vp_x = int(round(orig_x1 * self.app.current_scale))
                 vp_y = int(round(orig_y1 * self.app.current_scale))
                 self.app.viewport_place_x = pan_x + vp_x
@@ -202,7 +198,6 @@ class LaborRenderer:
         vp_x_orig = vp_x / self.app.current_scale
         vp_y_orig = vp_y / self.app.current_scale
         
-        # --- Overlays
         side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
         seite_str = "links" if side == 'left' else "rechts"
         d_config = self.app.package_data['config']
@@ -231,7 +226,6 @@ class LaborRenderer:
         
         aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
         ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
-        #targets = self.app.dm.load_targets()
         
         if aktive_scheibe in targets and ringwertung_aktiv:
             kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
@@ -244,8 +238,6 @@ class LaborRenderer:
         zoom_p_render = (1.0, (self.app.current_img_w / self.app.current_scale) - vp_x_orig, -vp_y_orig)
         zoom_p_overview = (1.0, -vp_x_orig, -vp_y_orig)
         
-        
-        # ---> RENDER-HELFER: Ringe zeichnen <---
         if getattr(self.app, 'show_target_rings_var', None) and self.app.show_target_rings_var.get() and fb_cx is not None and fb_cy is not None:
             if aktive_scheibe in targets:
                 target_data = targets[aktive_scheibe]
@@ -254,7 +246,6 @@ class LaborRenderer:
                 ring_color = (0, 255, 0)
                 
                 for ring_name, d_mm in ringe.items():
-                    #print(f"🟢 [RENDERER] Zielscheibe Grüner-Ring '{ring_name}': Zentrum=({fb_cx:.2f}, {fb_cy:.2f}), Radius={r_mm:.2f} mm, r_limit_mm={r_limit_mm}mm")
                     Helfer.draw_smart_ellipse(
                         img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=float(d_mm)/2.0,
                         color=ring_color, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
@@ -299,67 +290,56 @@ class LaborRenderer:
                                 zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
                             )
                 
-                
-                # 3. Bracket-Highlighting (durchgezogene 10tel-Ringe für ALLE Treffer des Frames)
                 current_frame_num = self.app.current_index
                 
-                
-                
-                
-                if hasattr(self.app, 'current_engine_shots'):
-                    for shot in self.app.current_engine_shots:
-                        if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num:
-                            new_score = shot.get('score', 0.0)
-                            
-                            if new_score is not None and new_score >= 1.0:
-                                highlight_color = (255, 110, 255)
-                                if new_score >= 10.0:
-                                    if '10' in ringe:
-                                        radius_10_score = (float(ringe['10']) + kaliber_mm) / 2.0
-                                        for step in range(1, 10):
-                                            prozent = (10.0 + (step / 10.0) - 10.0) / 0.999
-                                            r_mm_base = radius_10_score * (1.0 - prozent)
-                                            if r_mm_base >= 0:
-                                                Helfer.draw_smart_ellipse(
-                                                    img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
-                                                    color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
-                                                    lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=False, is_hit=False,
-                                                    zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
-                                                )
-                                else:
-                                    base_ring = int(math.floor(new_score))
-                                    str_base, str_next = str(base_ring), str(base_ring + 1)
-                                    if str_base in ringe:
-                                        r_outer = float(ringe[str_base]) / 2.0
-                                        if str_next in ringe:
-                                            r_inner = float(ringe[str_next]) / 2.0
-                                        else:
-                                            if str(base_ring - 1) in ringe:
-                                                r_inner = max(0.0, r_outer - ((float(ringe[str(base_ring - 1)]) / 2.0) - r_outer))
-                                            else:
-                                                r_inner = 0.0
-                                        for i in range(1,10):
-                                            r_draw = r_outer + (r_inner - r_outer) * (i / 10.0)
+                # ---> SEIDEN-MUSTER: Die Highlight-Ringe aus dem Paket ziehen! <---
+                for shot in ctx.shots:
+                    if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num:
+                        new_score = shot.get('score', 0.0)
+                        
+                        if new_score is not None and new_score >= 1.0:
+                            highlight_color = (255, 110, 255)
+                            if new_score >= 10.0:
+                                if '10' in ringe:
+                                    radius_10_score = (float(ringe['10']) + kaliber_mm) / 2.0
+                                    for step in range(1, 10):
+                                        prozent = (10.0 + (step / 10.0) - 10.0) / 0.999
+                                        r_mm_base = radius_10_score * (1.0 - prozent)
+                                        if r_mm_base >= 0:
                                             Helfer.draw_smart_ellipse(
-                                                img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_draw,
+                                                img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_mm_base,
                                                 color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
                                                 lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=False, is_hit=False,
                                                 zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
                                             )
+                            else:
+                                base_ring = int(math.floor(new_score))
+                                str_base, str_next = str(base_ring), str(base_ring + 1)
+                                if str_base in ringe:
+                                    r_outer = float(ringe[str_base]) / 2.0
+                                    if str_next in ringe:
+                                        r_inner = float(ringe[str_next]) / 2.0
+                                    else:
+                                        if str(base_ring - 1) in ringe:
+                                            r_inner = max(0.0, r_outer - ((float(ringe[str(base_ring - 1)]) / 2.0) - r_outer))
+                                        else:
+                                            r_inner = 0.0
+                                    for i in range(1,10):
+                                        r_draw = r_outer + (r_inner - r_outer) * (i / 10.0)
+                                        Helfer.draw_smart_ellipse(
+                                            img=combined, center_x=fb_cx, center_y=fb_cy, radius_mm=r_draw,
+                                            color=highlight_color, px_x=px_x, px_y=px_y, korrektur=korrektur, korr_r4=korr_r4,
+                                            lens_cx=lens_cx, lens_cy=lens_cy, is_ring=True, thickness=1, dashed=False, is_hit=False,
+                                            zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, r_limit=r_limit_mm
+                                        )
 
-
-
-
-        mode = self.app.view_mode_var.get()     # <--- DIESE ZEILE HINZUFÜGEN!
+        mode = self.app.view_mode_var.get()
         current_frame_num = self.app.current_index
         base_r = getattr(self.app, 'current_radius_px', 15)
 
-#Subpixel Anzeige        
-        # ---> ELA-OPTIMIERUNG: Während des Panning/Zoomens (is_interacting) Subpixel-Boxen überspringen! <---
         is_interacting = getattr(self.app, 'is_interacting', False)
-        if not is_interacting and (mode == 1 or mode == 2) and hasattr(self.app, 'current_engine_shots'):
-            # Reale Skalierungsfaktoren des aktuellen 'combined'-Arrays ermitteln
-            # (Garantiert 100% Deckungsgleichheit mit cv2.resize INTER_NEAREST!)
+        # ---> SEIDEN-MUSTER: Shots aus Paket <---
+        if not is_interacting and (mode == 1 or mode == 2) and ctx.shots:
             curr_h, curr_w = combined.shape[:2]
             src_w = (orig_x2 - orig_x1) if is_hybrid_mode and (crop_x1 < crop_x2 and crop_y1 < crop_y2) else (2 * w)
             src_h = (orig_y2 - orig_y1) if is_hybrid_mode and (crop_x1 < crop_x2 and crop_y1 < crop_y2) else h
@@ -367,7 +347,7 @@ class LaborRenderer:
             real_scale_x = curr_w / float(src_w) if src_w > 0 else self.app.current_scale
             real_scale_y = curr_h / float(src_h) if src_h > 0 else self.app.current_scale
 
-            for shot in self.app.current_engine_shots:
+            for shot in ctx.shots:
                 if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num:    
                     details = shot.get('score_export_details')
                     if details:
@@ -376,14 +356,11 @@ class LaborRenderer:
                         off_y = details.get('offset_y', 0)
                         
                         def draw_subpixel_box(sx_val, sy_val, color_bgr):
-                            # 1. Globale Koordinate im Doppelbild (Rechtes Panel startet bei +w)
                             gx1 = w + off_x + (sx_val / float(scale))
                             gy1 = off_y + (sy_val / float(scale))
                             gx2 = w + off_x + ((sx_val + 1) / float(scale))
                             gy2 = off_y + ((sy_val + 1) / float(scale))
                             
-                            # 2. Exakte INTER_NEAREST-Kantenformel: ceil(coord * scale) statt Python-round()!
-                            # (-1e-9 verhindert, dass glatte Ganzzahlen durch Float-Ungenauigkeit um +1 aufgerundet werden)
                             ui_x1 = int(math.ceil((gx1 - orig_x1) * real_scale_x - 1e-9))
                             ui_y1 = int(math.ceil((gy1 - orig_y1) * real_scale_y - 1e-9))
                             ui_x2 = int(math.ceil((gx2 - orig_x1) * real_scale_x - 1e-9)) - 1
@@ -398,10 +375,6 @@ class LaborRenderer:
                         for sx, sy in details.get('subpixels_new', []):
                             draw_subpixel_box(sx, sy, (0, 165, 255))
 
-
-
-
-# GELBE KREISE?
         if getattr(self.app, 'show_orig_hits_var', None) and self.app.show_orig_hits_var.get():
             for s in getattr(self.app, 'last_orig_shots_to_draw', []):
                 Helfer.draw_smart_ellipse(
@@ -411,12 +384,12 @@ class LaborRenderer:
                     zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True, r_limit=r_limit_mm
                 )        
 
-
-        if hasattr(self.app, 'current_engine_shots'):
+        # ---> SEIDEN-MUSTER: Die grünen Engine-Treffer <---
+        if ctx.shots:
             blink_on = getattr(self.app, 'blink_state', True)
             color_panel_overview = (0, 0, 255) if blink_on else (255, 100, 0)
             color_panel_render = (133, 83, 255)
-            for shot in self.app.current_engine_shots:
+            for shot in ctx.shots:
                 if shot.get('side') == side and shot.get('labor_frame_num') == current_frame_num:
                     hx, hy = shot['pos']
                     shift = 4
@@ -433,18 +406,13 @@ class LaborRenderer:
                             zoom_params=zoom_p_render, scale_x=self.app.current_scale, scale_y=self.app.current_scale, draw_center_dot=True, r_limit=r_limit_mm
                         )
 
-        # ---> RENDER-HELFER: Angeklickter / Hervorgehobener Treffer <---
         hl = getattr(self.app, 'highlighted_shot', None)
         if hl is not None and time.time() - hl['time'] < 5.0:
             hx, hy = hl['pos']
             f_num = hl['frame']
-                # Der Subpixel-Multiplikator für perfekte OpenCV Fließkomma-Kreise
-            #color = (255, 50, 200)
             color = (240, 120, 200)
-            #color = (220, 0, 0)
             shift, mult = 4, 16
 
-                # 1. Linke Seite (Röntgenblick - bleibt als reiner OpenCV-Kreis ohne Linsenverzerrung!)
             base_r = getattr(self.app, 'official_radius_px', 15)
             scaled_x1_sub = int(round(hx * self.app.current_scale * mult)) - int(vp_x * mult)
             scaled_y_sub  = int(round(hy * self.app.current_scale * mult)) - int(vp_y * mult)
@@ -458,15 +426,7 @@ class LaborRenderer:
             txt_y  = int(round(hy * self.app.current_scale)) - vp_y
             r1_px  = int(round(base_r * self.app.current_scale))
             cv2.putText(combined, f"#{f_num}", (txt_x1 - 25, txt_y - r1_px - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.6, color, 2, cv2.LINE_8) 
-            # 1. Einmal dicker schwarzer Hintergrund-Text (simuliert den Rand)
-            #cv2.putText(combined, f"#{f_num}", (txt_x1 - 25, txt_y - r1_px - 12), 
-            #            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 4, cv2.LINE_AA)
-            ## 2. Einmal dünner Flieder-Text im Kern darüber
-            #cv2.putText(combined, f"#{f_num}", (txt_x1 - 25, txt_y - r1_px - 12), 
-            #            cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 2, cv2.LINE_AA)
             
-            
-                # 2. Rechte Seite (Die ungeschönte Wahrheit der Score-Berechnung!)
             echter_score_radius_px = hl.get('cal_radius') or getattr(self.app, 'current_radius_px', 15)
             scaled_x2_sub = int(round((hx * self.app.current_scale + self.app.current_img_w) * mult)) - int(vp_x * mult)
             scaled_r2_sub = int(round(echter_score_radius_px * self.app.current_scale * mult))
@@ -479,14 +439,12 @@ class LaborRenderer:
             r2_px  = int(round(echter_score_radius_px * self.app.current_scale))
             cv2.putText(combined, f"#{f_num}", (txt_x2 - 30, txt_y - r2_px - 12), cv2.FONT_HERSHEY_SIMPLEX, 1.6, color, 3, cv2.LINE_8)
 
-        #mode = self.app.view_mode_var.get()
-        if mode == 4 and hasattr(self.app, 'current_engine_shots'):
-            for shot in self.app.current_engine_shots:
+        # ---> SEIDEN-MUSTER: Die Vektor-Hilfslinien aus dem Paket <---
+        if mode == 4 and ctx.shots:
+            for shot in ctx.shots:
                 if shot.get('side') != side or shot.get('labor_frame_num') != current_frame_num: continue
                 if "Abriss" in shot.get('winner_method', ''):
                     self._draw_candidate_vector(combined, shot.get('base_pos'), shot.get('end_pos'), shot['pos'], offset_x=self.app.current_img_w, vp_x=vp_x, vp_y=vp_y)
-
-        
 
         if getattr(self.app, 'candidate_view_active', False) and hasattr(self.app, 'var_shots'):
             shift, mult = 4, 16
@@ -499,7 +457,6 @@ class LaborRenderer:
                 cand = candidates[safe_idx]
                 hx, hy = cand['cx'], cand['cy']
                 
-                # ---> NEU: Nimm den exakt für diesen Kandidaten berechneten lokalen Radius! <---
                 cand_score_r = cand.get('cal_radius') or shot.get('cal_radius') or echter_score_radius_px
                 
                 if not cand['valid']:
@@ -577,17 +534,14 @@ class LaborRenderer:
                 if hasattr(self.app, 'package_data') and self.app.package_data and 'config' in self.app.package_data:
                     try:
                         aktiver_linien_offset_mm = 0.0 if i < 8 else halbe_linie_mm
-                        # 1. Beide Punkte in echte Millimeter relativ zur Linse entzerren
                         true_cx, true_cy = Helfer.undistort_point_mm(ref_cx, ref_cy, lens_cx, lens_cy, px_x, px_y, korrektur, korr_r4, r_limit_mm)
                         true_klick_x, true_klick_y = Helfer.undistort_point_mm(pt[0], pt[1], lens_cx, lens_cy, px_x, px_y, korrektur, korr_r4, r_limit_mm)
                         dist_klick_mm = math.hypot(true_klick_x - true_cx, true_klick_y - true_cy)
 
                         if dist_klick_mm > 0:
                             ux, uy = (true_klick_x - true_cx) / dist_klick_mm, (true_klick_y - true_cy) / dist_klick_mm
-                            # 2. Wahre Rote Position auf der Papierebene berechnen (Klick + Linienstärke)
                             true_red_x = true_cx + ux * (dist_klick_mm + aktiver_linien_offset_mm)
                             true_red_y = true_cy + uy * (dist_klick_mm + aktiver_linien_offset_mm)
-                            # 3. Vorwärts-Verzerrung des roten Punktes zurück auf den Sensor
                             r_true_lens = math.hypot(true_red_x, true_red_y)
                             scale_fwd = Helfer.distort_radius(r_true_lens, korrektur, korr_r4, r_limit=r_limit_mm) / r_true_lens if r_true_lens > 0 else 1.0
 
@@ -596,48 +550,36 @@ class LaborRenderer:
 
                             m_scaled_x = round(soll_px_x * self.app.current_scale) + getattr(self.app, 'pad_x', 0) - vp_x
                             m_scaled_y = round(soll_px_y * self.app.current_scale) + getattr(self.app, 'pad_y', 0) - vp_y
-                            #ring_bez = "Spiegel" if i < 8 else ("9er-Ring" if i < 12 else ("6er-Ring" if i < 16 else "Außenring"))
-                            #print(f"🔴 [RENDERER] Kalibrierung Roter-Punkt #{i} ({ring_bez}): Sensor-Pos=({soll_px_x:.2f}, {soll_px_y:.2f}) | UI-Render-Panel=(X:{m_scaled_x_right}, Y:{m_scaled_y})")
                             for mx in [m_scaled_x, m_scaled_x + self.app.current_img_w]:
                                 cv2.circle(combined, (mx, m_scaled_y), 3, (0, 0, 255), -1)
                     except Exception: pass
                 
         # =========================================================================
         # ---> Optische Linsen-Mitte zur Kontrolle (mit Rand-Pfeil, falls außerhalb) <---
-        # =========================================================================
+        # =========================================================================                
         if getattr(self.app, 'show_target_rings_var', None) and self.app.show_target_rings_var.get() and 'lens_cx' in locals():
-            marker_color = (0, 255, 255) # Gelb
+            marker_color = (0, 255, 255) 
             
-            # Für beide Hälften (Linkes Panel und Rechtes Panel) prüfen
             for panel_idx, base_offset_x in enumerate([0, self.app.current_img_w]):
-                # Berechne die absolute Position der Linsen-Mitte auf dem jeweiligen Panel
                 lx_panel = int(round(lens_cx * self.app.current_scale)) + base_offset_x - vp_x
                 ly_panel = int(round(lens_cy * self.app.current_scale)) - vp_y
                 
-                # Sichtbarer Bereich des Panels (vom aktuellen Viewport gecroppt)
                 panel_w = self.app.current_img_w
-                panel_h = h * self.app.current_scale # bzw. Höhe des combined arrays
+                panel_h = h * self.app.current_scale 
                 
-                # Prüfen, ob das Zentrum im sichtbaren Ausschnitt liegt
                 margin = 20
                 is_visible = (base_offset_x - vp_x <= lx_panel <= base_offset_x + panel_w - vp_x) and \
                              (0 <= ly_panel <= combined.shape[0])
                 
                 if is_visible:
-                    # Fall A: Linsen-Mitte ist im Bild -> Ganz normal das Kreuz zeichnen
                     cv2.drawMarker(combined, (lx_panel, ly_panel), marker_color, markerType=cv2.MARKER_CROSS, markerSize=25, thickness=2, line_type=cv2.LINE_AA)
                     cv2.putText(combined, "Linsen-Mitte", (lx_panel + 15, ly_panel - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, marker_color, 2, cv2.LINE_AA)
                 else:
-                    # Fall B: Linsen-Mitte ist draußen! -> Pfeil am Rand des Panels zeichnen
-                    # Begrenze die Koordinaten auf den sichtbaren Rand des jeweiligen Panels
                     edge_x = max(base_offset_x + margin, min(base_offset_x + panel_w - margin, lx_panel))
                     edge_y = max(margin, min(combined.shape[0] - margin, ly_panel))
                     
-                    # Zeichne einen fetten Richtungs-Pfeil am Rand
-                    # (Wir nutzen ein Dreieck / einen Marker als Hinweis)
                     cv2.drawMarker(combined, (edge_x, edge_y), (0, 0, 255), markerType=cv2.MARKER_TRIANGLE_UP, markerSize=20, thickness=2, line_type=cv2.LINE_AA)
                     
-                    # Text-Info, in welche Richtung das Zentrum verzogen ist
                     richtung_txt = []
                     if lens_cx * self.app.current_scale + base_offset_x < vp_x: richtung_txt.append("<< Links")
                     elif lens_cx * self.app.current_scale + base_offset_x > vp_x + panel_w: richtung_txt.append("Rechts >>")
@@ -648,37 +590,26 @@ class LaborRenderer:
                     cv2.putText(combined, inf_str, (edge_x - 60, edge_y + (25 if edge_y < 50 else -15)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2, cv2.LINE_AA)
         
         
-        # =========================================================================
-        # ---> NEU ELA: Verschiebungs-Vektor statisch als GUI-Overlay auf die linke Hälfte! <---
-        # =========================================================================
-        cache_idx = current_frame_num - 1
-        if cache_idx in self.app.frame_cache.get(side, {}):
-            dx, dy = self.app.frame_cache[side][cache_idx].get('shift', (0, 0))
-            if dx != 0 or dy != 0:
-                container_h = combined.shape[0]
-                start_x, start_y = 100, container_h - 40
-                
-                # EXAKTE MATHEMATIK: Der Vektor entspricht 1:1 der sichtbaren Verschiebung im GUI!
-                ui_dx = int(round(dx * self.app.current_scale))
-                ui_dy = int(round(dy * self.app.current_scale))
-                end_x = start_x + ui_dx
-                end_y = start_y + ui_dy
-                
-                color_vec = (0, 220, 255) # Ein etwas weicheres, professionelleres Gelb
-                
-                # Dezentere Linien und Punkte
-                if abs(ui_dx) > 2 or abs(ui_dy) > 2:
-                    cv2.circle(combined, (start_x, start_y), 3, color_vec, -1, cv2.LINE_AA)
-                    cv2.arrowedLine(combined, (start_x, start_y), (end_x, end_y), color_vec, 1, tipLength=0.2, line_type=cv2.LINE_AA)
-                
-                # Feinerer, kleinerer Text (Font-Scale 0.45 statt 0.65, dünnere Outline)
-                txt = f"SHIFT: X {dx:+d} | Y {dy:+d}"
-                #cv2.putText(combined, txt, (start_x - 10, start_y - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2, cv2.LINE_AA)
-                cv2.putText(combined, txt, (start_x - 10, start_y - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_vec, 1, cv2.LINE_AA)
-        # =========================================================================
-
+        # ---> SEIDEN-MUSTER: Den Shift-Vektor aus dem Paket holen <---
+        dx, dy = ctx.shift_vector
+        if dx != 0 or dy != 0:
+            container_h = combined.shape[0]
+            start_x, start_y = 100, container_h - 40
+            
+            ui_dx = int(round(dx * self.app.current_scale))
+            ui_dy = int(round(dy * self.app.current_scale))
+            end_x = start_x + ui_dx
+            end_y = start_y + ui_dy
+            
+            color_vec = (0, 220, 255) 
+            
+            if abs(ui_dx) > 2 or abs(ui_dy) > 2:
+                cv2.circle(combined, (start_x, start_y), 3, color_vec, -1, cv2.LINE_AA)
+                cv2.arrowedLine(combined, (start_x, start_y), (end_x, end_y), color_vec, 1, tipLength=0.2, line_type=cv2.LINE_AA)
+            
+            txt = f"SHIFT: X {dx:+d} | Y {dy:+d}"
+            cv2.putText(combined, txt, (start_x - 10, start_y - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_vec, 1, cv2.LINE_AA)
         
-        #ZEICHNEN!!!!!!!!!!!!!!!!!!'''''''''''!!!!!!!!!!!!!!!!!!
         self.app.base_combined_img = combined.copy()
         self.app.base_combined_img_rgb = cv2.cvtColor(combined, cv2.COLOR_BGR2RGB)
         
@@ -687,7 +618,6 @@ class LaborRenderer:
             self.app.lbl_image.config(image=self.app.tk_image, text="")
             self.app.lbl_image.place(x=self.app.viewport_place_x, y=self.app.viewport_place_y)
             
-            # ---> NEU: Flinkes UI-Vorschaukreuz wieder verstecken, sobald die Engine fertig ist! <---
             if hasattr(self.app, 'preview_cross_overview'):
                 for f in self.app.preview_cross_overview + self.app.preview_cross_render:
                     f.place_forget()
