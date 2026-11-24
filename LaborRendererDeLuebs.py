@@ -198,42 +198,31 @@ class LaborRenderer:
         vp_x_orig = vp_x / self.app.current_scale
         vp_y_orig = vp_y / self.app.current_scale
         
+        # ---> SEIDEN-MUSTER: Alle Linsendaten kommen bequem und fertig serviert aus dem Paket! <---
         side = getattr(self.app, 'current_side', self.app.active_camera_var.get())
-        seite_str = "links" if side == 'left' else "rechts"
+        
+        px_x = ctx.px_x
+        px_y = ctx.px_y
+        korrektur = ctx.korrektur
+        korr_r4 = ctx.korr_r4
+        lens_cx = ctx.lens_cx
+        lens_cy = ctx.lens_cy
+        kaliber_mm = ctx.kaliber_mm
+        r_limit_mm = ctx.r_limit_mm
+        
+        # Meta-Daten holen wir uns noch aus der App, da sie GUI-global sind
         d_config = self.app.package_data['config']
         targets = self.app.package_data['targets']
-        px_x = d_config.getfloat('Kameras', f'px_pro_mm_x_{seite_str}', fallback=5.0)
-        px_y = d_config.getfloat('Kameras', f'px_pro_mm_y_{seite_str}', fallback=5.0)
-        korrektur = d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}', fallback=0.0)
-        korr_r4 = d_config.getfloat('Kameras', f'linsen_verzerrung_{seite_str}_r4', fallback=0.0)
-        
-        crop_sec = "Crop_Links" if side == 'left' else "Crop_Rechts"
-        cam_w = d_config.getint('Kameras', f'cam_width_{seite_str}', fallback=1280)
-        cam_h = d_config.getint('Kameras', f'cam_height_{seite_str}', fallback=720)
-        cut_l = d_config.getint(crop_sec, 'cut_left', fallback=0)
-        cut_t = d_config.getint(crop_sec, 'cut_top', fallback=0)
-        off_x = d_config.getint('Kameras', f'lens_offset_x_{seite_str}', fallback=0)
-        off_y = d_config.getint('Kameras', f'lens_offset_y_{seite_str}', fallback=0)
-        lens_cx = (cam_w / 2.0) - cut_l + off_x
-        lens_cy = (cam_h / 2.0) - cut_t + off_y
-        
-        meta = getattr(self.app, 'original_match_data', {})
-        meta_dict = meta.get("metadata", {}) if isinstance(meta, dict) else {}
-        center_key = 'center_l' if side == 'left' else 'center_r'
-        center_pts = meta_dict.get(center_key)
-        fb_cx = center_pts[0] if center_pts else None
-        fb_cy = center_pts[1] if center_pts else None
-        
         aktive_scheibe = d_config.get('Zielscheibe', 'aktive_scheibe', fallback='Luftpistole_10m')
-        ringwertung_aktiv = d_config.getboolean('Zielscheibe', 'ringwertung_aktiv', fallback=False)
         
-        if aktive_scheibe in targets and ringwertung_aktiv:
-            kaliber_mm = float(targets[aktive_scheibe].get('kaliber_mm', 4.5))
-        else:
-            kaliber_mm = d_config.getfloat('Erkennung', 'caliber_durchmesser', fallback=4.5)
-            
-        config_limit = d_config.getfloat('Kameras', f'linsen_verzerrung_limit_{seite_str}', fallback=0.0)
-        r_limit_mm = Helfer.get_r_limit(targets, aktive_scheibe, config_limit_mm=config_limit)
+        # ---> SEIDEN-MUSTER: Exakter Nullpunkt für DIESEN Frame direkt aus dem Paket! <---
+        fb_cx = ctx.nullpunkt[0] if ctx.nullpunkt else None
+        fb_cy = ctx.nullpunkt[1] if ctx.nullpunkt else None
+        
+        # ---> DEBUG RENDERER <---
+        cb_val = self.app.show_target_rings_var.get() if hasattr(self.app, 'show_target_rings_var') else "FEHLT"
+        is_in_targets = aktive_scheibe in targets
+        #print(f"🎨 DEBUG RENDERER: fb_cx={fb_cx}, fb_cy={fb_cy} | Checkbox={cb_val} | Scheibe='{aktive_scheibe}' bekannt={is_in_targets}")
             
         zoom_p_render = (1.0, (self.app.current_img_w / self.app.current_scale) - vp_x_orig, -vp_y_orig)
         zoom_p_overview = (1.0, -vp_x_orig, -vp_y_orig)

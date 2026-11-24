@@ -6,6 +6,7 @@ import numpy as np
 import os
 from StateManagerDeLuebs import StateManager
 from HelperDeLuebs import Helfer
+from LaborContextDeLuebs import DummyDateiManager
 
 class Kalibrator:
     def __init__(self, app):
@@ -114,7 +115,10 @@ class Kalibrator:
                     
         self.app.calib_mode_active = True
         self.app.calib_points = []
-        self.app.btn_calib_assist.config(bg="#e74c3c", text="🔴 Assistent aktiv (Abbrechen)")
+        self.app.show_context_actions([
+          {"text": "↩️ Klick zurück", "bg": "#f39c12", "fg": "black", "command": self.undo_calibration_click},
+          {"text": "🔴 Kalibrierung abbrechen", "bg": "#e74c3c", "fg": "white", "command": self.cancel_calibration},
+        ])
         self.app.lbl_image.config(cursor="crosshair")
         
         d_config = self.app.package_data['config']
@@ -154,7 +158,8 @@ class Kalibrator:
         """Bricht den Assistenten ab."""
         self.app.calib_mode_active = False
         self.app.calib_points = []
-        self.app.btn_calib_assist.config(bg="#8e44ad", text="📏 Kalibrierung")
+        #self.app.btn_calib_assist.config(bg="#8e44ad", text="📏 Kalibrierung")
+        self.app.clear_context_actions()
         self.app.lbl_image.config(cursor="")
         self.app.print_log("KALIB", "Assistent manuell abgebrochen.", show_gui=True)
         self.app.renderer.update_image_display()
@@ -220,7 +225,8 @@ class Kalibrator:
     def finish_calibration(self):
         """Berechnet aus den gesammelten Punkten die Empfehlungen inkl. Best-Fit Validierung."""
         self.app.calib_mode_active = False
-        self.app.btn_calib_assist.config(bg="#8e44ad", text="📏 Kalibrierung")
+        #self.app.btn_calib_assist.config(bg="#8e44ad", text="📏 Kalibrierung")
+        self.app.clear_context_actions()
         self.app.lbl_image.config(cursor="")
         
         if len(self.app.calib_points) not in [16, 20]:
@@ -716,13 +722,17 @@ class Kalibrator:
             if hasattr(self.app, 'package_data') and self.app.package_data and 'config' in self.app.package_data:
                 d_config = self.app.package_data['config']
                 #targets = self.app.package_data['targets']
-                from LaborDeLuebs import DummyDateiManager 
                 d_dm = DummyDateiManager(self.app)
                 d_sm = StateManager(d_config, d_dm)
                 d_sm.set_nullpunkt(side, final_values['cx'], final_values['cy'])
             
-            #self.app.process_and_display()
-            self.app.renderer.update_image_display(full_rebuild=True, push_to_gui=True)
+            
+            if hasattr(self.app, 'labor_context') and self.app.labor_context:
+                self.app.labor_context.original_match_data = self.app.original_match_data
+                self.app.labor_context.reset()
+            
+            self.app.process_and_display()
+            #self.app.renderer.update_image_display(full_rebuild=True, push_to_gui=True)
             
             info_win.lift()
             info_win.focus_force()

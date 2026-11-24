@@ -242,6 +242,9 @@ class LaborUIBuilder:
         # ---> NEU: Das aufgeräumte Zahnrad-Menü für Werkzeuge <---
         self.app.btn_tools = tk.Menubutton(top_frame, text="⚙️ Werkzeuge", relief=tk.RAISED, bg="#8e44ad", fg="white", font=("Arial", 10, "bold"), padx=10)
         self.app.btn_tools.pack(side=tk.LEFT, padx=(15, 0))
+        # ---> NEU: Unsichtbarer Multifunktions-Frame für kontextbezogene Aktionen <---
+        self.app.context_action_frame = tk.Frame(top_frame)
+        
         ToolTip(self.app.btn_tools, "Öffnet das Werkzeug-Menü (Farbpipette, Kalibrierung, Härtetest, Handbuch, etc.)")
         
         tool_menu = tk.Menu(self.app.btn_tools, tearoff=0, font=("Arial", 10))
@@ -914,3 +917,36 @@ class LaborUIBuilder:
         dialog.bind("<MouseWheel>", _on_mousewheel)
         dialog.bind("<Button-4>", _on_mousewheel)
         dialog.bind("<Button-5>", _on_mousewheel)
+        
+    def show_context_actions(self, actions):
+        """Blendet kontextbezogene Aktions-Buttons im Top-Frame ein und ersetzt ggf. vorherige."""
+        frame = getattr(self.app, "context_action_frame", None)
+        if frame is None:
+            return
+
+        self.clear_context_actions()
+
+        for idx, act in enumerate(actions):
+            btn = tk.Button(
+                frame,
+                text=act.get("text", "Aktion"),
+                command=act.get("command"),
+                bg=act.get("bg", "#e74c3c"),
+                fg=act.get("fg", "white"),
+                font=act.get("font", ("Arial", 9, "bold")),
+                padx=8,
+                pady=2
+            )
+            btn.pack(side=tk.LEFT, padx=(0 if idx == 0 else 6, 0))
+
+        frame.pack(side=tk.LEFT, padx=(15, 0))
+
+    def clear_context_actions(self):
+        """Entfernt alle kontextbezogenen Buttons und versteckt den Multifunktions-Frame."""
+        frame = getattr(self.app, "context_action_frame", None)
+        if frame is None:
+            return
+
+        for child in frame.winfo_children():
+            child.destroy()
+        frame.pack_forget()

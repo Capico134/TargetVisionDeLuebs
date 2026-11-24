@@ -21,7 +21,7 @@ from LaborRendererDeLuebs import LaborRenderer
 from LaborUIDeLuebs import LaborUIBuilder
 
 from LaborContextDeLuebs import LaborContext, FrameContext  # <--- DIESE ZEILE NEU HINZUFÜGEN!
-
+from LaborControlDeLuebs import LaborNavigationController, LaborPlaybackController, LaborToolController
 from DateiManagerDeLuebs import DateiManager
 from StateManagerDeLuebs import StateManager
 from KalibrierungDeLuebs import Kalibrator
@@ -101,7 +101,14 @@ class LaborApp:
         self.dm = DateiManager() # <--- NEU: Unser zentraler ELA-Werkzeugkasten
         self.package_data = None # <--- NEU: Speichert das entpackte ZIP im RAM
         
-        self.labor_context = LaborContext(None, self.dm)  # <--- SEIDEN-MUSTER: Unser neuer Manager!
+        self.labor_context = LaborContext(None, self.dm)
+
+        # ---> NEU: Unser Navigations-Controller <---
+        self.nav_ctrl = LaborNavigationController(self)
+        # ---> NEU: Unser Playback-Controller <---
+        self.play_ctrl = LaborPlaybackController(self)
+        # ---> NEU: Unser Tool-Controller <---
+        self.tool_ctrl = LaborToolController(self)
         
         
         self.current_zip_path = None
@@ -606,6 +613,9 @@ class LaborApp:
             self.apply_config_to_ui(config_ram)
             self.original_match_data = self.package_data.get('match_data')
             
+            # ---> NEU: ELA-Handshake - Die historischen Matchdaten an das Model übergeben! <---
+            self.labor_context.original_match_data = self.original_match_data
+            
             # =========================================================================
             # ---> NEU: Fenster-Titel mit Version, Zeitstempel UND Spieler aufhübschen <---
             # =========================================================================
@@ -681,52 +691,6 @@ class LaborApp:
             self.is_zoom_box_active = False
             self._is_loading = False # <--- Ladesperre LÖSEN
 
-    def prev_shot(self):
-        if self.current_index > 0:
-            self.current_index -= 1
-            self.process_and_display()
-
-    def next_shot(self):
-        if self.current_index < len(self.get_current_side_origs()):
-            self.current_index += 1
-            self.process_and_display()
-
-    def safe_prev_shot(self, event=None):
-        # ELA-Schutz: Wenn wir in JEDWEDEM Textfeld/Dropdown sind, ignorieren wir die Pfeiltasten!
-        if isinstance(self.root.focus_get(), (tk.Entry, ttk.Combobox)):
-            return
-        self.prev_shot()
-
-    def safe_next_shot(self, event=None):
-        if isinstance(self.root.focus_get(), (tk.Entry, ttk.Combobox)):
-            return
-        self.next_shot()
-
-    def first_shot(self):
-        if self.current_index > 0:
-            self.current_index = 0
-            self.process_and_display()
-
-    def last_shot(self):
-        max_idx = len(self.get_current_side_origs())
-        if self.current_index < max_idx:
-            self.current_index = max_idx
-            self.process_and_display() 
-
-    def jump_to_shot(self, event=None):
-        max_idx = len(self.get_current_side_origs())
-        try:
-            target_shot = int(self.shot_jump_var.get().strip())
-            target_shot = max(0, min(target_shot, max_idx))
-            self.current_index = target_shot
-            
-
-            
-            self.process_and_display()
-            # ---> HIER GEZOGEN: Fokus sofort weg vom Eingabefeld <---
-            #self.root.focus_set() 
-        except ValueError:
-            self.shot_jump_var.set(str(self.current_index))
 
     def nudge_center(self, event):
         """Verschiebt den Mittelpunkt im RAM und triggert eine vollständige Neuberechnung."""
@@ -757,6 +721,8 @@ class LaborApp:
 
         # 2. Den neuen Wert speichern
         self.original_match_data['metadata'][center_key] = [round(cx, 4), round(cy, 4)]
+        if hasattr(self, 'labor_context') and self.labor_context:
+            self.labor_context.original_match_data = self.original_match_data
         
         # ---> NEU: Das asynchrone Zentrum-Preview mit 800ms Puffer! <---
         # Überbrückt die Windows-Tastatur-Verzögerung und menschliche Tipp-Pausen.
@@ -804,369 +770,6 @@ class LaborApp:
         self.labor_context.reset()
         self.process_and_display()
 
-    def on_mouse_move(self, event):
-        # Wenn noch kein Bild geladen ist, tu nichts
-        if getattr(self, 'base_combined_img', None) is None or not hasattr(self, 'current_scale'):
-            return
-
-        # ---> NEU: Kein Fadenkreuz zeichnen, während der User aktiv interagiert! <---
-        if self.is_interacting:
-            return
-
-        # =========================================================================
-        # ---> DER FIX: Wir verhindern den tödlichen Tkinter-Stau! <---
-        # =========================================================================
-        if getattr(self, '_is_rendering_crosshair', False):
-            return # Ein 500MB-Bild wird gerade verarbeitet -> weitere Maus-Events abprallen lassen!
-            
-        
-        current_time = time.time()
-        # Maximal 40 FPS erlauben
-        if current_time - getattr(self, 'last_mouse_update_time', 0) < 0.025:
-            return
-            
-        self.last_mouse_update_time = current_time
-        self._is_rendering_crosshair = True # Tür abschließen!
-        
-        try:
-            # Letzte Position für den Blink-Timer retten
-            self.last_mouse_x = event.x
-            self.last_mouse_y = event.y
-            
-            x, y = event.x, event.y
-            img_h, img_w = self.base_combined_img.shape[:2]
-            # Sicherheits-Check: Befindet sich die Maus überhaupt innerhalb des Bildes?
-            if x < 0 or y < 0 or x >= img_w or y >= img_h:
-                self.on_mouse_leave(event)
-                return
-            abs_x = x + getattr(self, 'last_vp_x', 0)
-            abs_y = y + getattr(self, 'last_vp_y', 0)
-            # 1. Ermitteln, in welcher Bildhälfte wir sind und die Basis-Koordinaten rechnen
-            is_left = (abs_x < self.current_img_w)
-            raw_x = abs_x if is_left else (abs_x - self.current_img_w)
-            real_x = int(raw_x / self.current_scale)
-            real_y = int(abs_y / self.current_scale)
-            
-            ## Schutzplanken gegen Out-of-Bounds
-            #if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
-            #    orig_h, orig_w = self.last_clean_live_img.shape[:2]
-            #    real_x = max(0, min(real_x, orig_w - 1))
-            #    real_y = max(0, min(real_y, orig_h - 1))
-
-            # Schutzplanken gegen Out-of-Bounds
-            if hasattr(self, 'last_live_img') and self.last_live_img is not None:
-                orig_h, orig_w = self.last_live_img.shape[:2]
-                real_x = max(0, min(real_x, orig_w - 1))
-                real_y = max(0, min(real_y, orig_h - 1))
-
-            # Diff-Werte abrufen
-            diff_val = self.last_raw_diff[real_y, real_x] if hasattr(self, 'last_raw_diff') else 0
-            
-            # Faktor und Farb-Distanz auslesen
-            if hasattr(self, 'last_color_multiplier') and self.last_color_multiplier is not None:
-                factor = self.last_color_multiplier[real_y, real_x]
-                dist_c = self.last_color_dist[real_y, real_x] if hasattr(self, 'last_color_dist') else 0
-                bonus_str = f" | Dist: {dist_c:.0f} | F: {factor:.2f}"
-            else:
-                bonus_str = " | Filter Aus"
-                
-            # UI Update mit Anzeige der Seite
-            side_name = "Live" if is_left else "Rechts"
-            self.lbl_coords.config(text=f"{side_name} X:{real_x:04d} Y:{real_y:04d} | D:{diff_val:03d}{bonus_str}")
-            
-            # =========================================================================
-            # ---> IDEE B: Ab 5-fachem Zoom den Maus-Klon komplett abschalten! <---
-            # =========================================================================
-            if self.zoom_factor >= 5.0:
-                # Falls von vorher noch ein Klon auf dem Monitor klebt, putzen wir ihn EINMALIG weg
-                if getattr(self, '_crosshair_active', False):
-                    # on_mouse_leave stellt das nackte Bild aus dem RGB-Cache wieder her
-                    self.on_mouse_leave(event)
-                    self._crosshair_active = False
-                    
-                # Ab hier: 100 % CPU-Ersparnis! Keine Bildberechnung, kein GUI-Upload mehr.
-                return 
-                
-            self._crosshair_active = True
-            
-            # Direktes, synchrones Zeichnen (nur bei Zoom < 5.0)
-            self.renderer.draw_crosshair(x, y)
-            
-        finally:
-            # Egal was passiert, am Ende wird die Tür wieder aufgeschlossen
-            self._is_rendering_crosshair = False
-
-    def on_mouse_leave(self, event):
-        # ---> TÜRSTEHER: Kein Neuladen auslösen, während das Bild verschoben wird! <---
-        if self.is_interacting:
-            return
-            
-        self.lbl_coords.config(text="Maus nicht im Bild")
-        self.last_mouse_x = None
-        self.last_mouse_y = None
-        
-        # ---> DER FIX: Wir nutzen den fertigen RGB-Cache statt der 1-Sekunden-Konvertierung! <---
-        if getattr(self, 'base_combined_img_rgb', None) is not None:
-            img_pil = Image.fromarray(self.base_combined_img_rgb)
-            self.tk_image = ImageTk.PhotoImage(img_pil)
-            self.lbl_image.config(image=self.tk_image)
-
-    def on_zoom_box_start(self, event):
-        """Startet den Rahmen-Zoom (Strg / Shift)"""
-        self.root.focus_set() 
-        if getattr(self, 'color_picker_active', False):
-            return "break"
-            
-        self.is_zoom_box_active = True
-        self.zoom_box_start_x = event.x
-        self.zoom_box_start_y = event.y
-        return "break"
-        
-    def on_zoom_box_motion(self, event):
-        """Berechnet die Koordinaten und weist den Renderer an, den Rahmen zu zeichnen"""
-        if getattr(self, 'is_zoom_box_active', False):
-            if self.zoom_factor >= self.max_zoom_factor - 0.01:
-                return "break"
-                
-            # 25 FPS Türsteher
-            current_time = time.time()
-            if current_time - getattr(self, 'last_zoombox_update_time', 0) < 0.040:
-                return
-            self.last_zoombox_update_time = current_time
-            
-            # ---> NEU: Den Renderer die Arbeit machen lassen! <---
-            self.renderer.draw_zoom_box(
-                self.zoom_box_start_x, self.zoom_box_start_y, 
-                event.x, event.y, 
-                getattr(self, 'viewport_place_x', getattr(self, 'pan_x', 0)), getattr(self, 'viewport_place_y', getattr(self, 'pan_y', 0))
-            )
-        return "break"
-
-    def on_zoom_box_stop(self, event):
-        """Führt den Box-Zoom aus"""
-        if getattr(self, 'is_zoom_box_active', False):
-            self.is_zoom_box_active = False
-            
-            # ---> NEU: Dem Renderer sagen, er soll aufräumen <---
-            self.renderer.hide_zoom_box()
-            self.apply_zoom_box(self.zoom_box_start_x, self.zoom_box_start_y, event.x, event.y)
-        return "break"
-
-    def abort_zoom_box(self, event=None):
-        """Bricht das Aufziehen des Zoom-Rahmens ab, wenn ESC gedrückt wird."""
-        if getattr(self, 'is_zoom_box_active', False):
-            self.is_zoom_box_active = False
-            self.zoom_box_start_x = None
-            self.zoom_box_start_y = None
-            
-            # ---> NEU: Dem Renderer sagen, er soll aufräumen <---
-            self.renderer.hide_zoom_box()
-            self.print_log("SYSTEM", "Zoom-Rahmen abgebrochen.")
-
-    def on_drag_start(self, event):
-        """Normaler Linksklick (Verschieben, Kalibrieren, Pipette)"""
-        self.root.focus_set() # <--- ELA FIX: Fokus sanft holen, bevor das Ziehen beginnt!
-        
-        # ---> FIX 1: Kein Panning starten, solange kein Bild da ist oder gerade ein ZIP lädt! <---
-        if getattr(self, 'tk_image', None) is None or getattr(self, '_is_loading', False):
-            self.drag_start_x = None
-            self.drag_start_y = None
-            return
-
-        if getattr(self, 'calib_mode_active', False):
-            if event.widget == self.lbl_image:
-                 self.handle_calibration_click(event)
-            return
-
-        if getattr(self, 'color_picker_active', False):
-            self.pick_color_from_event(event)
-            self.toggle_color_picker() 
-            return
-
-        self.drag_start_x = event.x_root
-        self.drag_start_y = event.y_root
-        self.start_pan_x = self.pan_x
-        self.start_pan_y = self.pan_y
-
-    def on_drag_motion(self, event):
-        """Verschiebt das Bild normal mit FPS-Drossel"""
-        # ---> DER FIX: Wenn wir im Zoom-Modus sind, leiten wir das Event um! <---
-        if getattr(self, 'is_zoom_box_active', False):
-            return self.on_zoom_box_motion(event)
-
-        if getattr(self, 'tk_image', None) is None: return
-        
-        # ---> DER TÜRSTEHER GEGEN DEN SONDERFALL <---
-        if self.drag_start_x is None or self.drag_start_y is None: 
-            return
-            
-        # =========================================================================
-        # ---> NEU: FPS-Drossel verhindert den 500ms Tkinter-Geometrie-Stau! <---
-        # =========================================================================
-        current_time = time.time()
-        # Maximal 25 FPS für das Panning erlauben (0.040 Sekunden)
-        if current_time - getattr(self, 'last_pan_update_time', 0) < 0.040:
-            return
-        self.last_pan_update_time = current_time
-        
-        dx = event.x_root - self.drag_start_x
-        dy = event.y_root - self.drag_start_y
-        
-        self.pan_x = self.start_pan_x + dx
-        self.pan_y = self.start_pan_y + dy
-        
-        if getattr(self, 'zoom_factor', 1.0) > 4.0:
-            self.renderer.update_image_display(full_rebuild=False, push_to_gui=True)
-        else:
-            self.lbl_image.place(x=self.pan_x, y=self.pan_y)
-
-    def on_drag_stop(self, event):
-        """Normales Loslassen (Verschieben beenden oder Röntgen-Klick)"""
-        # ---> FIX 2: Startwerte lokal sichern und Status SOFORT vor allen 'returns' freigeben! <---
-        start_x = self.drag_start_x
-        start_y = self.drag_start_y
-        self.drag_start_x = None
-        self.drag_start_y = None
-
-        # Wenn wir im Zoom-Modus sind, triggern wir den Zoom!
-        if getattr(self, 'is_zoom_box_active', False):
-            return self.on_zoom_box_stop(event)
-
-        if getattr(self, 'color_picker_active', False): return
-        if getattr(self, 'tk_image', None) is None: return
-        
-        # Türsteher, falls gar kein gültiger Drag lief
-        if start_x is None or start_y is None: 
-            return
-
-        dx = event.x_root - start_x
-        dy = event.y_root - start_y
-        dist = (dx**2 + dy**2)**0.5
-
-        if dist < 5:  
-            self.identify_shot_at_click(event.x, event.y)
-        else:
-            # =========================================================================
-            # ---> NEU: Panning beendet -> Wenn Detail-Export an ist, sofort neu zeichnen! <---
-            # =========================================================================
-            if self.package_data and self.package_data.get('config'):
-                if self.package_data['config'].getboolean('Erkennung', 'detail_export_aktiv', fallback=False):
-                    self.renderer.update_image_display(full_rebuild=False, push_to_gui=True)
-
-    def apply_zoom_box(self, x1, y1, x2, y2):
-        """Berechnet aus dem gezogenen Rahmen den neuen Zoom und zentriert den Ausschnitt."""
-        min_x, max_x = min(x1, x2), max(x1, x2)
-        min_y, max_y = min(y1, y2), max(y1, y2)
-        
-        box_w = max_x - min_x
-        box_h = max_y - min_y
-        
-        # 1. Winz-Klicks als Zeitsprung werten (funktioniert IMMER, auch bei Max-Zoom!)
-        if box_w < 15 or box_h < 15:
-            self.identify_shot_at_click(x2, y2, jump_to_frame=True)
-            return
-            
-        # ---> NEU: 2. Rahmen-Zoom sicher abfangen und willkürliches Panning stoppen <---
-        if self.zoom_factor >= self.max_zoom_factor - 0.01:
-            self.print_log("SYSTEM", f"Maximaler Zoom ({self.max_zoom_factor}x) erreicht. Rahmen-Zoom gesperrt.")
-            return # ZWINGEND NÖTIG, SONST GIBT ES PANNING OHNE ZOOM!
-            
-        self.root.update_idletasks()
-        container_w = self.img_container.winfo_width()
-        container_h = self.img_container.winfo_height()
-        
-        old_scale = getattr(self, 'current_scale', 1.0)
-        
-        # Neuen Zoom-Faktor basierend auf der Box-Größe berechnen
-        zoom_multiplier = min(container_w / box_w, container_h / box_h)
-        zoom_multiplier = max(1.01, min(zoom_multiplier, 15.0))
-        
-        self.zoom_factor = max(0.2, min(self.zoom_factor * zoom_multiplier, self.max_zoom_factor))
-        print("apply_zoom_box - zoom_factor: ", self.zoom_factor)
-        
-        # ---> SEIDEN-MUSTER FIX: Echte Auflösung aus dem Kontext-Paket holen! <---
-        if hasattr(self, 'current_context') and self.current_context and self.current_context.live_img is not None:
-            h, w = self.current_context.live_img.shape[:2]
-        else:
-            h, w = 720, 1280
-            
-        new_scale = (550.0 / h) * self.zoom_factor
-        
-        # Mittelpunkt der Box im aktuellen Anzeigebild
-        center_x = (min_x + max_x) / 2.0
-        center_y = (min_y + max_y) / 2.0
-        
-        abs_center_x = center_x + getattr(self, 'last_vp_x', 0)
-        abs_center_y = center_y + getattr(self, 'last_vp_y', 0)
-        
-        self.pan_x = int((container_w / 2.0) - (abs_center_x / old_scale) * new_scale)
-        self.pan_y = int((container_h / 2.0) - (abs_center_y / old_scale) * new_scale)
-        
-        # =========================================================================
-        # ---> DER FIX: Absolut atomares Tkinter-Update <---
-        # =========================================================================
-        # 1. Bild STUMM rendern lassen (ohne es der GUI zu geben)
-        self.renderer.update_image_display(push_to_gui=True)
-        
-                
-        self.update_frame_title()
-    
-    def toggle_color_picker(self):
-        """Schaltet den Modus um und ändert das Aussehen des Buttons/Mauszeigers"""
-        self.color_picker_active = not getattr(self, 'color_picker_active', False)
-        if self.color_picker_active:
-            self.btn_pick_color.config(bg="#e74c3c", text="🔴 Klick ins Bild...")
-            self.lbl_image.config(cursor="crosshair")
-        else:
-            self.btn_pick_color.config(bg="#f39c12", text="🎨 Wandfarbe picken")
-            self.lbl_image.config(cursor="")
-
-    def pick_color_from_event(self, event):
-        """Holt den Farbwert unter der Maus und schreibt ihn in die Config"""
-        if getattr(self, 'base_combined_img', None) is None or not hasattr(self, 'current_scale'):
-            return
-            
-        x, y = event.x, event.y
-        img_h, img_w = self.base_combined_img.shape[:2]
-        if x < 0 or y < 0 or x >= img_w or y >= img_h: return
-        abs_x = x + getattr(self, 'last_vp_x', 0)
-        abs_y = y + getattr(self, 'last_vp_y', 0)
-        # Koordinaten exakt wie beim Maus-Hover ausrechnen
-        is_left = (abs_x < self.current_img_w)
-        raw_x = abs_x if is_left else (abs_x - self.current_img_w)
-        real_x = int(raw_x / self.current_scale)
-        real_y = int(abs_y / self.current_scale)
-
-        #if hasattr(self, 'last_clean_live_img') and self.last_clean_live_img is not None:
-        #    orig_h, orig_w = self.last_clean_live_img.shape[:2]
-        #    real_x = max(0, min(real_x, orig_w - 1))
-        #    real_y = max(0, min(real_y, orig_h - 1))
-        # ---> SEIDEN-MUSTER FIX: Kontext statt last_live_img nutzen <---
-        ctx = getattr(self, 'current_context', None)
-        if ctx and ctx.live_img is not None:
-            orig_h, orig_w = ctx.live_img.shape[:2]
-            real_x = max(0, min(real_x, orig_w - 1))
-            real_y = max(0, min(real_y, orig_h - 1))
-            
-            # Farbe auslesen (BGR)
-            b_val, g_val, r_val = ctx.live_img[real_y, real_x]
-            
-            # In die Konfiguration der AKTUELLEN Kamera schreiben
-            if getattr(self, 'package_data', None) and self.package_data.get('config'):
-                config_ram = self.package_data['config']
-                side_str = "Hintergrund_Links" if self.current_side == 'left' else "Hintergrund_Rechts"
-                
-                if not config_ram.has_section(side_str):
-                    config_ram.add_section(side_str)
-                
-                config_ram.set(side_str, 'rgb_r', str(r_val))
-                config_ram.set(side_str, 'rgb_g', str(g_val))
-                config_ram.set(side_str, 'rgb_b', str(b_val))
-                
-                self.print_log("SYSTEM", f"🎨 WANDFARBE GEUPDATET ({side_str}): RGB({r_val}, {g_val}, {b_val}) gepickt an Position X:{real_x}, Y:{real_y}")
-                
-                # Engine sofort mit den neuen Farben zwingen neuzustarten!
-                self.on_param_change(force=True)
 
     # =========================================================================
     # ---> DIE FASSADE FÜR DEN KALIBRATOR <---
@@ -1190,134 +793,6 @@ class LaborApp:
 
     def start_match_integrity(self):
         MatchIntegrity.start_ui(self.root, self)
-
-
-    def identify_shot_at_click(self, x, y, jump_to_frame=False):
-        """Sucht den Treffer unter der Maus und blendet die Frame-Info ein (oder springt dorthin)"""
-        if getattr(self, 'base_combined_img', None) is None: return
-            
-        abs_x = x + getattr(self, 'last_vp_x', 0)
-        abs_y = y + getattr(self, 'last_vp_y', 0)
-        is_left = (abs_x < self.current_img_w)
-        raw_x = abs_x if is_left else (abs_x - self.current_img_w)
-        real_x = int(raw_x / self.current_scale)
-        real_y = int(abs_y / self.current_scale)
-
-        radius = getattr(self, 'current_radius_px', 15)
-        best_shot = None
-        best_dist = float('inf')
-
-        for shot in getattr(self, 'current_engine_shots', []):
-            sx, sy = shot['pos']
-            d = ((sx - real_x)**2 + (sy - real_y)**2)**0.5
-            if d <= radius and d < best_dist:
-                best_shot = shot
-                best_dist = d
-
-        if best_shot:
-            f_num = best_shot.get('labor_frame_num', '?')
-            
-            # ---> NEU: Dynamische Nachkommastellen auslesen <---
-            decimals = 1
-            if getattr(self, 'package_data', None) and self.package_data.get('config'):
-                decimals = self.package_data['config'].getint('Zielscheibe', 'ringwertung_nachkommastellen', fallback=1)
-                
-            # Verschachtelter f-String: .{decimals}f setzt die Länge flexibel
-            self.print_log("SYSTEM", f"🎯 RÖNTGEN-SCAN: Dieser Treffer entstand in BILD #{f_num} (Score: {best_shot.get('score', 0.0):.{decimals}f})")
-            
-            self.highlighted_shot = {
-                'pos': best_shot['pos'], 
-                'frame': f_num, 
-                'cal_radius': best_shot.get('cal_radius', radius), # <--- NEU: Echter lokaler Radius dieses Schusses!
-                'time': time.time()
-            }
-            
-            # ---> NEU: Die Zeitreise-Logik <---
-            if jump_to_frame and isinstance(f_num, int):
-                self.print_log("SYSTEM", f"🚀 ZEITREISE: Springe direkt zu Bild #{f_num}...")
-                self.current_index = f_num
-                self.process_and_display()
-            else:
-                self.renderer.update_image_display(full_rebuild=False)
-            
-            if hasattr(self, '_highlight_timer') and self._highlight_timer is not None:
-                self.root.after_cancel(self._highlight_timer)
-            self._highlight_timer = self.root.after(5000, self.clear_highlight)
-
-    def clear_highlight(self):
-        """Löscht das orangene/lila Highlight nach Ablauf des Timers"""
-        self.highlighted_shot = None
-        self._highlight_timer = None 
-        self.renderer.update_image_display(full_rebuild=False)
-  
-    def reset_view(self, event=None):
-        """Setzt Zoom und Position zurück (Auto-Fit bei Rechtsklick)"""
-        if getattr(self, 'current_zip_path', None):
-            self.auto_zoom_and_center()
-        else:
-            self.zoom_factor = 1.0
-            self.pan_x = 0
-            self.pan_y = 0
-            self.lbl_image.place(x=0, y=0)
-            
-        self.renderer.update_image_display()
-        self.update_frame_title() # <--- NEU
-
-    def toggle_var_mode(self, step, event=None):
-        """Aktiviert das Battle Royale VAR für ALLE neuen Schüsse im aktuellen Bild."""
-        if isinstance(self.root.focus_get(), (tk.Entry, ttk.Combobox)): return
-        if self.current_index == 0: return # Im Referenzbild gibt es keine Schüsse
-        
-        # 1. Sammle alle NEUEN Schüsse in diesem Frame
-        side = getattr(self, 'current_side', self.active_camera_var.get())
-        current_frame_num = self.current_index
-        
-        self.var_shots = []
-        for s in getattr(self, 'current_engine_shots', []):
-            if s.get('side') == side and s.get('labor_frame_num') == current_frame_num and s.get('is_new', False):
-                details = s.get('score_export_details', {})
-                if details and 'all_candidates' in details and details['all_candidates']:
-                    self.var_shots.append(s)
-                    
-        if not self.var_shots:
-            self.print_log("SYSTEM", "Keine Kandidaten-Daten im aktuellen Bild gefunden (Wurden ohne Subpixel-Export generiert).")
-            return
-            
-        was_active = getattr(self, 'candidate_view_active', False)
-        self.candidate_view_active = True
-        
-        # 2. Globalen Index weiterschalten
-        max_candidates = len(self.var_shots[0]['score_export_details']['all_candidates'])
-        
-        if not was_active:
-            # Erster Tastendruck: Bei "Runter" starten wir sauber mit Kandidat 1 (Index 0).
-            # Bei "Rauf" springen wir direkt zum letzten Kandidaten.
-            self.candidate_idx = 0 if step > 0 else max_candidates - 1
-        else:
-            # VAR ist schon aktiv -> Normal weiterblättern
-            current_idx = getattr(self, 'candidate_idx', 0)
-            self.candidate_idx = (current_idx + step) % max_candidates
-        
-        # Timer zurücksetzen
-        if hasattr(self, '_var_timer') and self._var_timer is not None:
-            self.root.after_cancel(self._var_timer)
-            self._var_timer = None                                      #TIMER AUSSCHALTEN!!!!!!!!!!!!!!!!!
-        #self._var_timer = self.root.after(10000, self.clear_var_mode)  #TIMER AUSSCHALTEN!!!!!!!!!!!!!!!!!
-        
-        self.renderer.update_image_display(full_rebuild=False)
-
-    def clear_var_mode(self, event=None):
-        """Beendet den VAR-Modus und räumt auf."""
-        if getattr(self, 'candidate_view_active', False):
-            self.candidate_view_active = False
-            self.candidate_idx = 0
-            self.var_shots = []
-            if hasattr(self, '_var_timer') and self._var_timer is not None:
-                self.root.after_cancel(self._var_timer)
-                self._var_timer = None
-            #self.print_log("VAR", "Overlay beendet.")
-            self.renderer.update_image_display(full_rebuild=False)
-
 
     def update_frame_title(self, status=None):
         """Aktualisiert die Überschrift des Bild-Bereichs mit dynamischem Zoom, Shortcuts und optionalem Status."""
@@ -1347,177 +822,6 @@ class LaborApp:
                 orig_name = "Unbekannt"
             self.image_frame.config(text=f" {zoom_str}  |  {controls}  |  📄 {orig_name} ")
             
-    def center_on_last_shot(self, event=None):
-        """Zentriert den letzten Schuss des aktuellen Bildes in der angeklickten Bildhälfte."""
-        if getattr(self, 'current_engine_shots', None) is None or not hasattr(self, 'current_scale'):
-            return
-            
-        side = self.active_camera_var.get()
-        current_frame_num = self.current_index
-        
-        # Alle Treffer dieses Bildes (und dieser Kamera) filtern
-        valid_shots = [s for s in self.current_engine_shots if s.get('side') == side and s.get('labor_frame_num') == current_frame_num]
-        
-        if not valid_shots:
-            self.print_log("SYSTEM", f"Mittelklick: Kein neuer Treffer in Bild #{current_frame_num} gefunden, auf den zentriert werden könnte.")
-            return
-            
-        # Den absolut letzten Treffer aus der Liste schnappen
-        latest_shot = valid_shots[-1]
-        hx, hy = latest_shot['pos']
-        
-        self.print_log("SYSTEM", f"Mittelklick: Zentriere auf Treffer (X:{hx:.1f}, Y:{hy:.1f}) in Bild #{current_frame_num}")
-        
-        # Fenstermaße aktualisieren und abrufen
-        self.root.update_idletasks()
-        container_w = self.img_container.winfo_width()
-        container_h = self.img_container.winfo_height()
-        
-        # Auf welche der beiden Hälften (Links oder Rechts) wurde geklickt?
-        abs_x = event.x + getattr(self, 'last_vp_x', 0)
-        is_left = (abs_x < getattr(self, 'current_img_w', 0))
-        
-        if is_left:
-            # X-Koordinate im skalierten Bild
-            shot_img_x = hx * self.current_scale
-            # Ziel-Punkt ist das Zentrum der LINKEN Bildschirmhälfte (also 25% der Gesamtbreite)
-            target_container_x = (container_w / 4.0) * 2.0
-        else:
-            # X-Koordinate im skalierten Bild (um die linke Bildhälfte nach rechts verschoben)
-            shot_img_x = (hx * self.current_scale) + self.current_img_w
-            # Ziel-Punkt ist das Zentrum der RECHTEN Bildschirmhälfte (also 75% der Gesamtbreite)
-            target_container_x = (container_w / 4.0) * 2.0
-            
-        shot_img_y = hy * self.current_scale
-        # Y-Ziel ist exakt die vertikale Mitte des Containers
-        target_container_y = container_h / 2.0
-        
-        # Neue Kamera-Verschiebung (Pan) berechnen
-        self.pan_x = int(target_container_x - shot_img_x)
-        self.pan_y = int(target_container_y - shot_img_y)
-        
-        if getattr(self, 'zoom_factor', 1.0) > 4.0:
-            self.renderer.update_image_display(full_rebuild=False, push_to_gui=True)
-        else:
-            self.lbl_image.place(x=self.pan_x, y=self.pan_y)
-        
-        # Falls die Maus nach dem Klick liegen bleibt, triggern wir kurz ein Move-Event, 
-        # damit auch das Fadenkreuz und die Koordinaten sofort aktualisiert werden
-        self.on_mouse_move(event)
-    
-    def auto_zoom_and_center(self):
-        """Berechnet den optimalen Zoom, sodass das Doppel-Bild exakt in den sichtbaren Bereich passt."""
-        side = self.active_camera_var.get() # Liefert 'left' oder 'right'
-        
-        # 1. Original-Bildgröße ermitteln (Fallback 720x1280)
-        h, w = 720, 1280
-        
-        # ---> DER FIX: Dateinamen nutzen 'left'/'right' (side), nicht 'links'/'rechts' (seite_str)! <---
-        ref_name = next((f for f in getattr(self, 'all_files', []) if f"referenz_{side}" in f), None)
-        if ref_name:
-            ref_img = self.get_img(ref_name)
-            if ref_img is not None:
-                h, w = ref_img.shape[:2]
-                
-        # 2. Verfügbaren Platz in der GUI dynamisch ermitteln
-        self.root.update_idletasks() # Wartet intern, bis das Fenster gezeichnet ist
-        container_h = self.img_container.winfo_height()
-        container_w = self.img_container.winfo_width()
-        
-        # Fallback-Maße, falls die GUI im Hintergrund noch lädt
-        if container_h < 100: container_h = 800
-        if container_w < 100: container_w = 1200
-        
-        # 3. Ziel-Skalierung berechnen (Wir lassen keinen Rand (vorher 0.95) für eine schöne Optik)
-        # Wir brauchen Platz für 2 Bilder nebeneinander (w * 2.0)
-        target_scale_w = (container_w * 1.00) / (w * 2.0)
-        target_scale_h = (container_h * 1.00) / float(h)
-        
-        # Der kleinere Wert gewinnt, damit garantiert nichts abgeschnitten wird
-        target_scale = min(target_scale_w, target_scale_h)
-        
-        # 4. Den internen zoom_factor der Engine füttern
-        # (Die Engine rechnet intern immer mit einer Basis-Höhe von 550 Pixeln)
-        self.zoom_factor = target_scale * (h / 550.0)
-        self.zoom_factor = max(0.2, min(self.zoom_factor, self.max_zoom_factor)) # Sicherheits-Grenzen
-        
-        # Echte Skalierung für das Panning (falls die Grenzen gegriffen haben)
-        echte_scale = (550.0 / h) * self.zoom_factor
-        
-        # 5. Bild exakt mittig in den Container pinnen
-        self.pan_x = int((container_w - (w * 2.0 * echte_scale)) / 2.0)
-        self.pan_y = int((container_h - (h * echte_scale)) / 2.0)
-        
-        self.lbl_image.place(x=self.pan_x, y=self.pan_y)
-
-    
-    def on_mouse_scroll(self, event):
-        # ---> DER FIX: Wir merken uns den Zoom & die Maus VOR dem ersten Scroll-Tick! <---
-        if not getattr(self, '_is_scrolling', False):
-            self._is_scrolling = True
-            self._scroll_start_zoom = self.zoom_factor
-            self._scroll_mouse_x = event.x
-            self._scroll_mouse_y = event.y
-            
-        # Prüfen, ob nach oben oder unten gescrollt wurde
-        if event.num == 4 or getattr(event, 'delta', 0) > 0:
-            self.zoom_factor *= 1.15  # 15% Reinzoomen
-        elif event.num == 5 or getattr(event, 'delta', 0) < 0:
-            self.zoom_factor *= 0.85  # 15% Rauszoomen
-            
-        # Grenzen setzen
-        self.zoom_factor = max(0.2, min(self.zoom_factor, self.max_zoom_factor))
-        
-        # Titelzeile sofort updaten (direktes visuelles Feedback)
-        self.update_frame_title()
-        
-        # Laufenden Timer abbrechen, wenn noch fleißig am Rad gedreht wird
-        if hasattr(self, '_scroll_timer') and self._scroll_timer is not None:
-            self.root.after_cancel(self._scroll_timer)
-            
-        # Render-Befehl erst ausführen, wenn 100 ms lang Ruhe am Mausrad war!
-        self._scroll_timer = self.root.after(100, lambda e=event: self._apply_scroll(e))
-
-    def _apply_scroll(self, event):
-        """Führt das tatsächliche, schwere Rendern nach Abschluss der Mausrad-Bewegung aus."""
-        self._scroll_timer = None
-        self._is_scrolling = False # Scroll-Vorgang abgeschlossen
-        
-        old_zoom = getattr(self, '_scroll_start_zoom', self.zoom_factor)
-        
-        if self.zoom_factor != old_zoom:
-            scale_change = self.zoom_factor / old_zoom
-            
-            # Wir nutzen die gespeicherten Koordinaten vom START des Scrollens
-            mx = self._scroll_mouse_x
-            my = self._scroll_mouse_y
-            
-            # =====================================================================
-            # ---> FIX: DIE KORREKTE KAMERA-ZOOM-MATHEMATIK <---
-            # =====================================================================
-            # 1. Wo liegt die Maus absolut auf dem riesigen virtuellen Bild?
-            abs_mx = mx - self.pan_x
-            abs_my = my - self.pan_y
-            
-            # 2. Wo liegt dieser Punkt NACH der Skalierung?
-            new_abs_mx = abs_mx * scale_change
-            new_abs_my = abs_my * scale_change
-            
-            # 3. Den Kamera-Nullpunkt (pan) so verschieben, dass der Punkt 
-            #    wieder exakt unter der fixen Maus (mx/my) auf dem Monitor landet!
-            self.pan_x = int(mx - new_abs_mx)
-            self.pan_y = int(my - new_abs_my)
-            # =====================================================================
-            
-        # =========================================================================
-        # ---> DER FIX: Absolut atomares Tkinter-Update <---
-        # =========================================================================
-        # 1. Bild STUMM rendern lassen
-        self.renderer.update_image_display(push_to_gui=True)
-        
-        # Koordinaten-Anzeige manuell triggern, damit sie nach dem Zoom sofort stimmt
-        self.on_mouse_move(event)
-
     def process_and_display(self):
         self.update_frame_title()
         if not self.current_zip_path: 
@@ -1591,54 +895,12 @@ class LaborApp:
             # ---> SONDERFALL: INDEX 0 = DAS REFERENZBILD <---
             # ==========================================================
             if self.current_index == 0:
-                
-                # ---> NEU: Aufruf des zentralen Hilfe-Banners <---
                 self.print_help_banner()
-                
-                self.print_log("SYSTEM", f"Zeige initialen Zustand für Kamera {side.upper()}.\n")
-                
-                # ---> NEU: Treffer-Anzeige konsequent zurücksetzen! <---
                 self.lbl_current_scores.config(text="- keine -", fg="gray")
                 self.current_engine_shots = []
                 
-                # Bilder laden (Mit schwarzem Fallback-Bild, falls nichts existiert)
-                dummy_img = self.get_img(side_origs[0]) if side_origs else None
-                h, w = dummy_img.shape[:2] if dummy_img is not None else (720, 1280)
-                
-                ref_name = next((f for f in self.all_files if f"referenz_{side}" in f), None)
-                ref_img = self.get_img(ref_name) if ref_name else np.zeros((h, w, 3), dtype=np.uint8)
-                
-                mask_name = next((f for f in self.all_files if f"cumulative_startmask_{side}" in f), None)
-                mask_img = self.get_img(mask_name) if mask_name else np.zeros((h, w), dtype=np.uint8)
-                if len(mask_img.shape) == 3: mask_img = cv2.cvtColor(mask_img, cv2.COLOR_BGR2GRAY)
-    
-                # ---> NEU: Das echte alte Bild (mit Löchern) suchen <---
-                cum_orig_name = next((f for f in self.all_files if f"cumulative_orig_{side}" in f), None)
-                cum_orig_img = self.get_img(cum_orig_name) if cum_orig_name else ref_img.copy()
-    
-                # =====================================================================
-                # ---> SEIDEN-MUSTER: Frame 0 bekommt auch sein eigenes Daten-Paket! <---
-                # =====================================================================
-                self.current_context = FrameContext(
-                    frame_number=0,
-                    shots=[],
-                    orig_img=ref_img.copy(),
-                    ref_img=ref_img.copy(),
-                    live_img=ref_img.copy(),
-                    clean_live_img=cum_orig_img.copy(),
-                    history_mask=np.zeros((h, w), dtype=np.uint8),
-                    diff_image=np.zeros_like(ref_img),
-                    diff_gesamt_image=mask_img.copy() if mask_img is not None else np.zeros((h, w), dtype=np.uint8),
-                    abrisskante=None,
-                    shift_vector=(0, 0),
-                    log_text=self.log_text.get("1.0", tk.END),
-                    is_cached_run=True
-                )
-                
-                # ---> DER FIX: Wir müssen Modus 4 manuell nullen, da er nicht im Cache liegt! <---
-                self.last_raw_diff = np.zeros((h, w), dtype=np.uint8)
-                self.last_thresh_raw = np.zeros((h, w), dtype=np.uint8)
-                
+                # ---> DELEGATION: Das Model kümmert sich um alles! <---
+                self.current_context = self.labor_context.process_frames(self, -1, side, side_origs, self.all_files, self.get_img)
                 self.renderer.update_image_display()
                 return
                 
@@ -1739,6 +1001,41 @@ class LaborApp:
         # ---> DELEGIERT AN DEN CONTEXT <---
         self.labor_context.apply_to_live(self)
 
+    # ---> DELEGATION AN DEN NAVIGATION-CONTROLLER <---
+    def on_zoom_box_start(self, event): return self.nav_ctrl.on_zoom_box_start(event)
+    def on_zoom_box_motion(self, event): return self.nav_ctrl.on_zoom_box_motion(event)
+    def on_zoom_box_stop(self, event): return self.nav_ctrl.on_zoom_box_stop(event)
+    def abort_zoom_box(self, event=None): return self.nav_ctrl.abort_zoom_box(event)
+    def on_drag_start(self, event): return self.nav_ctrl.on_drag_start(event)
+    def on_drag_motion(self, event): return self.nav_ctrl.on_drag_motion(event)
+    def on_drag_stop(self, event): return self.nav_ctrl.on_drag_stop(event)
+    def reset_view(self, event=None): return self.nav_ctrl.reset_view(event)
+    def center_on_last_shot(self, event=None): return self.nav_ctrl.center_on_last_shot(event)
+    def auto_zoom_and_center(self): return self.nav_ctrl.auto_zoom_and_center()
+    def on_mouse_scroll(self, event): return self.nav_ctrl.on_mouse_scroll(event)
+    # ---> DELEGATION AN DEN PLAYBACK-CONTROLLER <---
+    def prev_shot(self): return self.play_ctrl.prev_shot()
+    def next_shot(self): return self.play_ctrl.next_shot()
+    def safe_prev_shot(self, event=None): return self.play_ctrl.safe_prev_shot(event)
+    def safe_next_shot(self, event=None): return self.play_ctrl.safe_next_shot(event)
+    def first_shot(self): return self.play_ctrl.first_shot()
+    def last_shot(self): return self.play_ctrl.last_shot()
+    def jump_to_shot(self, event=None): return self.play_ctrl.jump_to_shot(event)
+    # ---> DELEGATION AN DEN TOOL-CONTROLLER <---
+    def toggle_color_picker(self): return self.tool_ctrl.toggle_color_picker()
+    def pick_color_from_event(self, event): return self.tool_ctrl.pick_color_from_event(event)
+    def identify_shot_at_click(self, x, y, jump_to_frame=False): return self.tool_ctrl.identify_shot_at_click(x, y, jump_to_frame)
+    def clear_highlight(self): return self.tool_ctrl.clear_highlight()
+    def toggle_var_mode(self, step, event=None): return self.tool_ctrl.toggle_var_mode(step, event)
+    def clear_var_mode(self, event=None): return self.tool_ctrl.clear_var_mode(event)
+    def on_mouse_move(self, event): return self.tool_ctrl.on_mouse_move(event)
+    def on_mouse_leave(self, event): return self.tool_ctrl.on_mouse_leave(event)
+
+    def show_context_actions(self, actions):
+        self.ui_builder.show_context_actions(actions)
+    def clear_context_actions(self):
+        self.ui_builder.clear_context_actions()
+    
 if __name__ == "__main__":
     import sys 
     

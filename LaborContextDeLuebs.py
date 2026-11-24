@@ -59,9 +59,25 @@ class FrameContext:
     history_mask: np.ndarray
     diff_image: np.ndarray
     diff_gesamt_image: np.ndarray
+    
+    #Nur Dummy Fallback-Werte:
+    # ---> NEU: Optische Parameter für den Renderer <---
+    px_x: float = 5.0
+    px_y: float = 5.0
+    korrektur: float = 0.0
+    korr_r4: float = 0.0
+    lens_cx: float = 640.0
+    lens_cy: float = 360.0
+    r_limit_mm: float = 25.0
+    kaliber_mm: float = 4.5
+    
+    # ---> NEU: Der Nullpunkt für diesen Frame <---
+    nullpunkt: Optional[tuple] = None
+    
     abrisskante: Optional[np.ndarray] = None
     raw_diff: Optional[np.ndarray] = None
     thresh_raw: Optional[np.ndarray] = None
+
     color_dist: Optional[np.ndarray] = None
     color_multiplier: Optional[np.ndarray] = None
     shift_vector: tuple = (0, 0)
@@ -92,6 +108,67 @@ class LaborContext:
     def _safe_copy(self, img_obj):
         return img_obj.copy() if img_obj is not None else None
         
+    def _build_reference_context(self, app, side, all_files, get_img_func, d_dm, d_sm, detector):
+        """Erstellt ein dediziertes Seiden-Muster-Paket ausschließlich für Bild 0 (die rohe Pappe)."""
+        ref_name = next((f for f in all_files if f"referenz_{side}" in f), None)
+        if not ref_name:
+            return None
+            
+        ref_img = get_img_func(ref_name)
+        h, w = ref_img.shape[:2]
+        
+        # 1. Hole die Maske aus der Datei, falls vorhanden (Fortsetzung eines Matches)
+        mask_name = next((f for f in all_files if f"cumulative_startmask_{side}" in f), None)
+        mask_img = get_img_func(mask_name) if mask_name else np.zeros((h, w), dtype=np.uint8)
+        if len(mask_img.shape) == 3: 
+            mask_img = cv2.cvtColor(mask_img, cv2.COLOR_BGR2GRAY)
+            
+        # 2. Hole das rohe Originalbild (mit echten Einschusslöchern)
+        cum_orig_name = next((f for f in all_files if f"cumulative_orig_{side}" in f), None)
+        cum_orig_img = get_img_func(cum_orig_name) if cum_orig_name else ref_img.copy()
+        
+        # 3. Den offiziellen historischen Nullpunkt auslesen (aus StateManager)
+        temp_state_ref = d_sm.state_left if side == 'left' else d_sm.state_right
+        #np_ref = temp_state_ref.nullpunkt_px if temp_state_ref and hasattr(temp_state_ref, 'nullpunkt_px') else None
+        np_ref = d_sm.nullpunkts.get(side)
+        
+        #print(f"🛑 DEBUG CONTEXT [Bild 0]: Hole Nullpunkt aus StateManager -> {np_ref}") # <--- NEU
+        
+        # 4. Optische Parameter des Detectors auslesen
+        lc = detector.lens_cache.get(side, {})
+
+        return FrameContext(
+            frame_number=0,
+            shots=[],
+            orig_img=ref_img.copy(),
+            ref_img=ref_img.copy(),
+            live_img=ref_img.copy(),
+            clean_live_img=cum_orig_img.copy(),
+            history_mask=np.zeros((h, w), dtype=np.uint8),
+            diff_image=np.zeros_like(ref_img),
+            diff_gesamt_image=mask_img.copy() if mask_img is not None else np.zeros((h, w), dtype=np.uint8),
+            abrisskante=None,
+            
+            # ---> OPTISCHE DATEN FÜR BILD 0 INS PAKET LEGEN <---
+            px_x=lc.get('px_x', 5.0),
+            px_y=lc.get('px_y', 5.0),
+            korrektur=lc.get('korr', 0.0),
+            korr_r4=lc.get('korr_r4', 0.0),
+            lens_cx=lc.get('lens_cx', 640.0),
+            lens_cy=lc.get('lens_cy', 360.0),
+            r_limit_mm=lc.get('r_limit_mm', 25.0),
+            kaliber_mm=detector.caliber_durchmesser,
+            nullpunkt=np_ref,
+            
+            shift_vector=(0, 0),
+            log_text=app.log_text.get("1.0", tk.END),
+            is_cached_run=True,
+            
+            # Modus 4 muss für Bild 0 genullt sein
+            raw_diff=np.zeros((h, w), dtype=np.uint8),
+            thresh_raw=np.zeros((h, w), dtype=np.uint8)
+        )
+
     def process_frames(self, app, target_idx, side, side_origs, all_files, get_img_func):
         """
         Der Motor des Labors! Kapselt die gesamte Bildverarbeitung.
@@ -100,27 +177,39 @@ class LaborContext:
         - Zieht die Bilder durch die Detection-Engine.
         - Liefert am Ende ein hermetisch abgeriegeltes FrameContext-Paket (das Seiden-Muster).
         """
-        d_dm = DummyDateiManager(app) # <--- Dummy wird jetzt hier intern gebaut!
+        d_dm = DummyDateiManager(app)
         d_sm = StateManager(self.config, d_dm)
         detector = TargetDetector(self.config, d_dm, d_sm, app.print_log)
         
+        # 1. ZUERST die Engine das Bild laden lassen (Dabei zentriert sie sich automatisch)
         ref_name = next((f for f in all_files if f"referenz_{side}" in f), None)
         if not ref_name: 
             return None
+            
         ref_img = get_img_func(ref_name)
         detector.set_reference_image(ref_img, side)
-        
+
+        # 2. DANACH zwingen wir der Engine unsere historischen/WASD-Metadaten auf!
+        # ---> ELA-FIX: Das Model (LaborContext) liest seine EIGENEN Matchdaten! <---
         if self.original_match_data:
             meta = self.original_match_data.get('metadata', {})
             center_key = 'center_l' if side == 'left' else 'center_r'
             if meta.get(center_key):
-                # ELA-SCHUTZ: Wenn wir historische ZIPs analysieren, MÜSSEN wir 
-                # das damals manuell kalibrierte Zentrum aufzwingen, damit die Engine 
-                # es nicht durch eine automatische Neu-Erkennung überschreibt.
                 cx, cy = meta[center_key][0], meta[center_key][1]
+                # Wir überschreiben die lokalen config-Daten des StateManagers mit den historischen!
                 d_sm.set_nullpunkt(side, cx, cy)
                 app.print_log("SYSTEM", f"🎯 Aktiver Nullpunkt {side.upper()} (aus Match-Daten): X:{cx:.2f} Y:{cy:.2f}")
-        
+
+        # ==========================================================
+        # ---> SONDERFALL: INDEX 0 (REFERENZBILD) <---
+        # ==========================================================
+        if target_idx == -1: # Wenn der User in der GUI auf Index 0 klickt, übermittelt er target_idx = -1
+            app.print_log("SYSTEM", f"Zeige initialen Zustand für Kamera {side.upper()}.\n")
+            return self._build_reference_context(app, side, all_files, get_img_func, d_dm, d_sm, detector)
+
+        # ==========================================================
+        # ---> NORMALE BILDER (INDEX > 0) <---
+        # ==========================================================
         startmask_name = next((f for f in all_files if f"cumulative_startmask_{side}" in f), None)
         startmask_gray = None
         if startmask_name:
@@ -129,7 +218,6 @@ class LaborContext:
             state = d_sm.state_left if side == 'left' else d_sm.state_right
             state.cumulative_mask = startmask_gray
             app.print_log(None, f"[SYSTEM] Fortsetzung erkannt! Start-Maske für {side} geladen.")
-            
         # =========================================================================
         # ---> DIE ZEITMASCHINE (LAZY CACHE SEARCH) <---
         # Wir suchen rückwärts nach dem nächsten bekannten Bild im Cache.
@@ -137,7 +225,7 @@ class LaborContext:
         # Bilder 1 bis 44 und setzen die Engine nahtlos bei Bild 46 fort.
         # HINWEIS: Wenn der Detail-Export an ist, stoppen wir absichtlich ein Bild früher 
         # (target_idx - 1), um das Zielbild zwingend FRISCH mit allen Subpixeln zu rendern!
-        # =========================================================================
+        # =========================================================================            
         detail_export = self.config.getboolean('Erkennung', 'detail_export_aktiv', fallback=False)
         start_search_idx = target_idx - 1 if detail_export else target_idx
         
@@ -173,7 +261,7 @@ class LaborContext:
             d_dm.debug_images.pop(f"diff_letzter_treffer_{side}", None)
             d_dm.debug_images.pop(f"diff_letzte_verworfene_auswertung_{side}", None)
             d_dm.debug_images.pop(f"letzte_abrisskante_{side}", None)
-            
+
             # =========================================================================
             # ---> DER ZEITMASCHINEN-FIX (DAS MASKEN-PARADOXON) <---
             # Die 'history_mask' (das Bild VOR dem neuen Schuss) muss ZWINGEND hier oben
@@ -209,14 +297,14 @@ class LaborContext:
             if dx != 0 or dy != 0:
                 live_img = detector._shift_image_exact(live_img, dx, dy)
                 clean_live_img = detector._shift_image_exact(clean_live_img, dx, dy)
-                
+
             # =========================================================================
             # ---> DIE RAM-DIÄT (SMART CACHING) <---
             # Subpixel-Daten (für den Battle-Royale Röntgenblick) fressen extrem viel Arbeitsspeicher.
             # Bei Frames, über die wir beim Fast-Forward nur unsichtbar drüberspulen (i != target_idx), 
             # schneiden wir diesen Daten-Ballast rigoros ab.
             # NUR das aktuell sichtbare Ziel-Bild behält seine VIP-Detaildaten.
-            # =========================================================================
+            # =========================================================================                
             cache_shots = copy.deepcopy(d_sm.shots)
             if i != target_idx:
                 for s in cache_shots:
@@ -226,12 +314,12 @@ class LaborContext:
             thresh_raw = None
             color_dist = None
             color_multiplier = None
-            
+
             # =========================================================================
             # ---> LAZY EVALUATION (MODUS 4 / RAW-DIFF) <---
             # Wir nutzen die offizielle Engine-Methode (keine Redundanz!), fordern aber 
             # mit return_details=True die internen Matrizen (raw_diff, color) an!
-            # =========================================================================
+            # =========================================================================            
             if i == target_idx and len(ref_img.shape) == 3:
                 k = app.blur_kernel_size_var.get()
                 if k > 0 and k % 2 == 1:
@@ -242,12 +330,19 @@ class LaborContext:
                     ref_blur = ref_img.copy()                                           
                 
                 norm_live = detector.normalize_brightness(ref_blur, live_blur)
-                
-                # ---> DELEGATION AN DIE ENGINE <---
                 thresh_raw, raw_diff, color_dist, color_multiplier = detector.calculate_raw_diff_mask(
                     ref_blur, norm_live, side, return_details=True
                 )
 
+            # ---> NEU: Optische Parameter aus dem Detector holen <---
+            lc = detector.lens_cache.get(side, {})
+            
+            # ---> NEU: Nullpunkt für diesen Frame auslesen <---
+            #np_frame = temp_state.nullpunkt_px if temp_state and hasattr(temp_state, 'nullpunkt_px') else None
+            np_frame = d_sm.nullpunkts.get(side)
+            
+            #print(f"🛑 DEBUG CONTEXT [Bild {i}]: Hole Nullpunkt aus StateManager -> {np_frame}") # <--- NEU
+            
             ctx = FrameContext(
                 frame_number=i,
                 shots=cache_shots,
@@ -258,6 +353,17 @@ class LaborContext:
                 history_mask=self._safe_copy(history_mask), 
                 diff_image=self._safe_copy(d_dm.debug_images.get(f"diff_letzter_treffer_{side}")),
                 diff_gesamt_image=self._safe_copy(temp_state.cumulative_mask), 
+                
+                px_x=lc.get('px_x', 5.0),
+                px_y=lc.get('px_y', 5.0),
+                korrektur=lc.get('korr', 0.0),
+                korr_r4=lc.get('korr_r4', 0.0),
+                lens_cx=lc.get('lens_cx', 640.0),
+                lens_cy=lc.get('lens_cy', 360.0),
+                r_limit_mm=lc.get('r_limit_mm', 25.0),
+                kaliber_mm=detector.caliber_durchmesser,
+                nullpunkt=np_frame,  
+                
                 abrisskante=self._safe_copy(d_dm.debug_images.get(f"letzte_abrisskante_{side}")),
                 raw_diff=self._safe_copy(raw_diff),
                 thresh_raw=self._safe_copy(thresh_raw),
@@ -268,6 +374,7 @@ class LaborContext:
                 is_cached_run=False
             )
             self.frame_cache[side][i] = ctx
+
 
         # =========================================================================
         # ---> DER FALLBACK REPARATUR-TRUPP (0-ms CACHE RESTORE) <---
@@ -290,8 +397,6 @@ class LaborContext:
                     ref_blur = ctx.ref_img.copy()                                           
                 
                 norm_live = detector.normalize_brightness(ref_blur, live_blur)
-                
-                # ---> DELEGATION AN DIE ENGINE (DRY-PRINZIP) <---
                 lazy_thresh, lazy_raw, lazy_cdist, lazy_cmult = detector.calculate_raw_diff_mask(
                     ref_blur, norm_live, side, return_details=True
                 )
