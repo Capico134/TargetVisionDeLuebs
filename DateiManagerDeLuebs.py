@@ -377,6 +377,12 @@ serien_gruppierung = 3
 treffer_zoom = 3
 # Anzeigedauer wie viele Sekunden reingezoomt wird
 treffer_anzeigedauer = 8
+# Web-Stream für Zuschauer (Smartphones/Tablets)
+live_stream = no
+# Port für den Web-Browser (Aufruf per http://IP:8080)
+live_stream_port = 8080
+# Bildwiederholrate für den Stream. 0 = Ausgeschaltet.
+live_stream_fps = 10
 
 [WM_Shot]
 # Pfad zum Übergabe-Ordner (lokal oder Netzlaufwerk, z.B. \\VereinsServer\WMShot\Import)
@@ -643,6 +649,23 @@ export_pfad = savegames/wmshot_export
                 print("🔧 Führe Auto-Patch aus: Setze 'farb_bonus_aktiv' auf 'no'...")
                 self.update_ini_value('Erkennung', 'farb_bonus_aktiv', 'no')
                 needs_reload = True
+
+        # --- AUTO-PATCH: Live-Stream Parameter ---
+        if not config.has_option('Anzeige', 'live_stream'):
+            print("🔧 Führe Auto-Patch aus: Füge 'live_stream = no' hinzu...")
+            self.update_ini_value('Anzeige', 'live_stream', 'no')
+            needs_reload = True
+            
+        if not config.has_option('Anzeige', 'live_stream_port'):
+            print("🔧 Führe Auto-Patch aus: Füge 'live_stream_port = 8080' hinzu...")
+            self.update_ini_value('Anzeige', 'live_stream_port', '8080')
+            needs_reload = True
+            
+        if not config.has_option('Anzeige', 'live_stream_fps'):
+            print("🔧 Führe Auto-Patch aus: Füge 'live_stream_fps = 10' hinzu...")
+            self.update_ini_value('Anzeige', 'live_stream_fps', '10')
+            needs_reload = True
+
 
         #if not config.has_option('Kameras', 'kamera_backend'):
         #    print("🔧 Führe Auto-Patch aus: Füge 'kamera_backend = DSHOW' hinzu...")

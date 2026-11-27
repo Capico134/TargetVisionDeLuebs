@@ -568,236 +568,18 @@ class TargetVisionRenderer:
         if self.tracker.nutze_kamera_rechts:
             self.draw_camera_overlay(combined_view, 'right', self.pad_x + scaled_w_left, int((orig_w - self.w_left_displayed) * self.scale_x), cv_h)
 
-        # --- BUTTON-LEISTE OBEN RECHTS ---
-        gap = 10     
-        start_y = 10
+        # =========================================================================
+        # =========================================================================
+        # ---> Logo-Overlay (Wieder fest mit dem Kamerabild verankert!) <---
+        # =========================================================================
+        margin_x = 20
+        margin_y = 20
+        start_x = getattr(self, 'pad_x', 0) + margin_x
+        start_y = getattr(self, 'pad_y', 0) + margin_y
         
-        def draw_button(view, text, right_x, bg_color):
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.5
-            thickness = 1
-            (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, thickness)
-            btn_w = text_w + 20
-            btn_h = 30
-            x1 = right_x - btn_w
-            y1 = start_y
-            x2 = right_x
-            y2 = start_y + btn_h
-            cv2.rectangle(view, (x1, y1), (x2, y2), bg_color, -1)
-            cv2.rectangle(view, (x1, y1), (x2, y2), (255, 255, 255), 1)
-            text_x = x1 + (btn_w - text_w) // 2
-            text_y = y1 + (btn_h + text_h) // 2
-            cv2.putText(view, text, (text_x, text_y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
-            return (x1, y1, x2, y2), x1 - gap
-
-        x_cursor = win_w - 10
-        self.btn_exit_coords, x_cursor = draw_button(combined_view, "Beenden", x_cursor, (60, 60, 60))
-        
-        is_rec = getattr(self.tracker, 'is_recording', False)
-        is_raw = getattr(self.tracker, 'record_raw_mode', False)
-        is_paused = getattr(self.tracker, 'is_recording_paused', False)
-        
-        if is_rec:
-            # 1. ERST den Pause-Button zeichnen (landet rechts, direkt neben "Beenden")
-            pause_text = "Weiter" if is_paused else "Pause"
-            pause_color = (40, 180, 40) if is_paused else (220, 100, 20) # BGR: Grün für Weiter, Blau für Pause
-            self.btn_pause_coords, x_cursor = draw_button(combined_view, pause_text, x_cursor, pause_color)
-
-            # 2. DANN den Record-Button zeichnen (landet nun links neben der Pause)
-            rec_text = "REC RAW" if is_raw else "REC GUI"
-            rec_color = (180, 0, 180) if is_raw else (0, 0, 220)
-            self.btn_record_coords, x_cursor = draw_button(combined_view, rec_text, x_cursor, rec_color)
-        else:
-            self.btn_pause_coords = None
-            rec_text = "Record (R:Raw)"
-            rec_color = (50, 50, 50)
-            self.btn_record_coords, x_cursor = draw_button(combined_view, rec_text, x_cursor, rec_color)
-            
-        #Handbuch
-        self.btn_hilfe_coords, x_cursor = draw_button(combined_view, "Handbuch", x_cursor, (30, 140, 255))
-        self.btn_zip_coords, x_cursor = draw_button(combined_view, "Bug ZIP", x_cursor, (40, 120, 40))
-        self.btn_highscore_coords, x_cursor = draw_button(combined_view, "Highscore", x_cursor, (50, 150, 200))
-        self.btn_save_coords, x_cursor = draw_button(combined_view, "Match Speichern", x_cursor, (180, 70, 70))
-        self.btn_labor_coords, x_cursor = draw_button(combined_view, "Labor & Einstellungen", x_cursor, (150, 50, 150))
-        
-        rings_text = "Scheibe: An" if self.show_all_rings else "Scheibe: Aus"
-        rings_color = (40, 160, 40) if self.show_all_rings else (80, 80, 80)
-        self.btn_rings_coords, x_cursor = draw_button(combined_view, rings_text, x_cursor, rings_color)
-        
-        # ---> HUD / Trefferliste <---
-        if self.ringwertung_aktiv:
-            start_y_hud = 80  
-            line_h = 25   
-            max_items = max(5, (win_h - start_y_hud - 80) // line_h)
-            box_w = 95 + (self.nachkommastellen * 15)  
-
-            for side in ['left', 'right']:
-                side_shots = self.tracker.sm.get_shots_for_side(side)
-                if not side_shots: 
-                    continue 
-                    
-                if side == 'left' and not self.tracker.nutze_kamera_links: continue
-                if side == 'right' and not self.tracker.nutze_kamera_rechts: continue
-
-                total_shots = len(side_shots)
-                display_shots = side_shots[-max_items:] if total_shots > max_items else side_shots
-                display_shots_rev = list(reversed(display_shots)) 
-                
-                # Rechte Kante der jeweiligen Kamerahälfte im Fenster bestimmen
-                if side == 'left':
-                    right_edge = self.pad_x + scaled_w_left
-                else:
-                    scaled_w_right = int((orig_w - self.w_left_displayed) * self.scale_x)
-                    right_edge = self.pad_x + scaled_w_left + scaled_w_right
-                    
-                box_x = max(self.pad_x + 10, right_edge - box_w - 10)
-                    
-                box_h = (len(display_shots_rev) + 2) * line_h
-                
-                #hud_overlay = combined_view.copy()
-                #cv2.rectangle(hud_overlay, (box_x - 10, start_y_hud - 25), (box_x + box_w, start_y_hud + box_h), (20, 20, 20), -1)
-                #cv2.addWeighted(hud_overlay, 0.4, combined_view, 0.6, 0, combined_view)
-                
-                # 1. Koordinaten der Box bestimmen
-                x1, y1 = box_x - 10, start_y_hud - 25
-                x2, y2 = box_x + box_w, start_y_hud + box_h
-                # 2. Sicherstellen, dass wir nicht über den Bildschirmrand malen
-                x1, y1 = max(0, x1), max(0, y1)
-                x2, y2 = min(combined_view.shape[1], x2), min(combined_view.shape[0], y2)
-                if x2 > x1 and y2 > y1:
-                    # 3. Nur den winzigen Ausschnitt (ROI) aus dem großen Bild nehmen
-                    roi = combined_view[y1:y2, x1:x2]
-                    # 4. Eine dunkelgraue Box in exakt derselben kleinen Größe erstellen
-                    dark_box = np.full(roi.shape, (20, 20, 20), dtype=np.uint8)
-                    # 5. Transparenz NUR auf diesen winzigen Bereich anwenden!
-                    cv2.addWeighted(roi, 0.6, dark_box, 0.4, 0, roi)
-                
-                titel = "Treffer (L)" if side == 'left' else "Treffer (R)"
-                cv2.putText(combined_view, titel, (box_x - 5, start_y_hud - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-                cv2.line(combined_view, (box_x - 5, start_y_hud - 2), (box_x + box_w - 5, start_y_hud - 2), (100, 100, 100), 1)
-                
-                for i, shot in enumerate(display_shots_rev):
-                    shot_num = total_shots - i  
-                    score_val = shot.get('score', 0.0)
-                    text_color = (0, 255, 255) if score_val < 10.0 else (0, 255, 0)
-                    text = f" {shot_num}:"
-                    
-                    score_str = f"{score_val:.{self.nachkommastellen}f}"
-                    y_pos = start_y_hud + 20 + (i * line_h)
-                    
-                    if i == 0:
-                        f_scale_num = 0.55
-                        f_scale_score = 0.65
-                        thick = 2
-                        color_num = (255, 255, 255)
-                    else:
-                        f_scale_num = 0.5
-                        f_scale_score = 0.55
-                        thick = 1
-                        color_num = (200, 200, 200)
-
-                    cv2.putText(combined_view, text, (box_x - 5, y_pos), cv2.FONT_HERSHEY_SIMPLEX, f_scale_num, color_num, thick, cv2.LINE_AA)
-                    cv2.putText(combined_view, score_str, (box_x + 50, y_pos), cv2.FONT_HERSHEY_SIMPLEX, f_scale_score, text_color, thick, cv2.LINE_AA)
-                    
-                    if i == 0 and len(display_shots_rev) > 1:
-                        cv2.line(combined_view, (box_x - 5, y_pos + 8), (box_x + box_w - 5, y_pos + 8), (70, 70, 70), 1)
-
-                y_sum = start_y_hud + 8 + len(display_shots_rev) * line_h
-                cv2.line(combined_view, (box_x - 5, y_sum), (box_x + box_w - 5, y_sum), (100, 100, 100), 1)
-                
-                gesamt = sum(s.get('score', 0.0) for s in side_shots)
-                gesamt_val = f"{gesamt:.{self.nachkommastellen}f}"
-                y_total = y_sum + 20
-                
-                cv2.putText(combined_view, "Ges.:", (box_x - 5, y_total), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-                cv2.putText(combined_view, gesamt_val, (box_x + 45, y_total), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (50, 200, 255), 2, cv2.LINE_AA)
-
-        # ---> Serien-Balken (Footer) <---
-        if self.ringwertung_aktiv and self.serien_gruppierung > 0:
-            cv_h = combined_view.shape[0]
-            footer_y = cv_h - 65
-            
-            for side in ['left', 'right']:
-                if side == 'left' and not self.tracker.nutze_kamera_links: continue
-                if side == 'right' and not self.tracker.nutze_kamera_rechts: continue
-                
-                side_shots = self.tracker.sm.get_shots_for_side(side)
-                if not side_shots: continue
-                
-                if side == 'left':
-                    start_x = getattr(self, 'pad_x', 0)
-                    available_w = int(self.w_left_displayed * self.scale_x)
-                else:
-                    start_x = getattr(self, 'pad_x', 0) + int(self.w_left_displayed * self.scale_x)
-                    available_w = int((orig_w - self.w_left_displayed) * self.scale_x)
-
-                serien = [side_shots[i:i + self.serien_gruppierung] for i in range(0, len(side_shots), self.serien_gruppierung)]
-                anzeige_serien = serien[-5:]
-                
-                block_w = 95 + (self.nachkommastellen * 15)
-                total_blocks_w = len(anzeige_serien) * block_w
-                cursor_x = start_x + (available_w - total_blocks_w) // 2
-                
-                padding = 15
-                box_x1 = cursor_x - padding
-                box_x2 = cursor_x + total_blocks_w - 20 + padding
-                box_y1 = footer_y - 25
-                box_y2 = footer_y + 10
-                
-                # ---> NEU: ROI Blending für den Footer (ohne overlay-Variable) <---
-                bx1, by1 = max(0, box_x1), max(0, box_y1)
-                bx2, by2 = min(combined_view.shape[1], box_x2), min(combined_view.shape[0], box_y2)
-                if bx2 > bx1 and by2 > by1:
-                    roi = combined_view[by1:by2, bx1:bx2]
-                    dark_box = np.full(roi.shape, (20, 20, 20), dtype=np.uint8)
-                    cv2.addWeighted(roi, 0.6, dark_box, 0.4, 0, roi)
-
-
-            for side in ['left', 'right']:
-                if side == 'left' and not self.tracker.nutze_kamera_links: continue
-                if side == 'right' and not self.tracker.nutze_kamera_rechts: continue
-                
-                side_shots = self.tracker.sm.get_shots_for_side(side)
-                if not side_shots: continue
-                
-                if side == 'left':
-                    start_x = getattr(self, 'pad_x', 0)
-                    available_w = int(self.w_left_displayed * self.scale_x)
-                else:
-                    start_x = getattr(self, 'pad_x', 0) + int(self.w_left_displayed * self.scale_x)
-                    available_w = int((orig_w - self.w_left_displayed) * self.scale_x)
-
-                serien = [side_shots[i:i + self.serien_gruppierung] for i in range(0, len(side_shots), self.serien_gruppierung)]
-                anzeige_serien = serien[-6:]
-                
-                block_w = 95 + (self.nachkommastellen * 15)
-                total_blocks_w = len(anzeige_serien) * block_w
-                cursor_x = start_x + (available_w - total_blocks_w) // 2
-                
-                for i, serie in enumerate(anzeige_serien):
-                    serien_index = len(serien) - len(anzeige_serien) + i + 1
-                    summe = sum(s.get('score', 0.0) for s in serie)
-                    
-                    is_active = (i == len(anzeige_serien) - 1) and (len(serie) < self.serien_gruppierung or len(side_shots) % self.serien_gruppierung == 0)
-                    
-                    color_label = (255, 255, 255) if is_active else (180, 180, 180)
-                    color_val = (50, 220, 255) if is_active else (220, 220, 220)
-                    
-                    cv2.putText(combined_view, f"S{serien_index}:", (cursor_x, footer_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_label, 1, cv2.LINE_AA)
-                    cv2.putText(combined_view, f"{summe:.{self.nachkommastellen}f}", (cursor_x + 35, footer_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_val, 2, cv2.LINE_AA)
-                    
-                    cursor_x += block_w
-                    
-        # ---> Logo-Overlay <---
         if getattr(self, 'logo_rgb_pre', None) is not None:
             c_h, c_w = combined_view.shape[:2]
             lh, lw = self.logo_h, self.logo_w
-            
-            margin_x = 20
-            margin_y = 20
-            
-            start_x = getattr(self, 'pad_x', 0) + margin_x
-            start_y = getattr(self, 'pad_y', 0) + margin_y
             
             end_x = start_x + lw
             end_y = start_y + lh
@@ -807,7 +589,82 @@ class TargetVisionRenderer:
                 blended = (roi * self.logo_inv_alpha) + self.logo_rgb_pre
                 combined_view[start_y:end_y, start_x:end_x] = blended.astype(np.uint8)
 
+        # =========================================================================
+        # --- BUTTON-LEISTE OBEN RECHTS (Mit dynamischem Zeilenumbruch) ---
+        # =========================================================================
+        gap = 10     
+        btn_h = 30
+        
+        # Die Buttons starten immer am rechten Fensterrand
+        safe_width_for_buttons = win_w - 10
+        x_cursor = safe_width_for_buttons
+        y_cursor = 10 # Fester Abstand von oben
+        
+        # Ab wo sollen die Buttons umbrechen? 
+        # -> Genau da, wo das Logo rechts aufhört, plus 20 Pixel Puffer!
+        lw = self.logo_w if getattr(self, 'logo_rgb_pre', None) is not None else 0
+        wrap_limit_x = start_x + lw + 20 
+        
+        def draw_button(view, text, current_x, current_y, bg_color):
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.5
+            thickness = 1
+            (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, thickness)
+            btn_w = text_w + 20
+            
+            # ---> DER UMBRUCH-CHECK <---
+            # Wenn der linke Rand des Buttons ins Logo krachen würde: Neue Zeile!
+            if current_x - btn_w < wrap_limit_x:
+                current_x = safe_width_for_buttons
+                current_y += btn_h + gap
+                
+            x1 = current_x - btn_w
+            y1 = current_y
+            x2 = current_x
+            y2 = current_y + btn_h
+            
+            cv2.rectangle(view, (x1, y1), (x2, y2), bg_color, -1)
+            cv2.rectangle(view, (x1, y1), (x2, y2), (255, 255, 255), 1)
+            
+            text_x = x1 + (btn_w - text_w) // 2
+            text_y = y1 + (btn_h + text_h) // 2
+            cv2.putText(view, text, (text_x, text_y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+            
+            # Gibt das neue X und Y für den nächsten Button in der Kette zurück
+            return (x1, y1, x2, y2), x1 - gap, current_y
+
+        # Die Button-Kette (Wichtig: Alle empfangen und überschreiben x_cursor UND y_cursor!)
+        self.btn_exit_coords, x_cursor, y_cursor = draw_button(combined_view, "Beenden", x_cursor, y_cursor, (60, 60, 60))
+        
+        is_rec = getattr(self.tracker, 'is_recording', False)
+        is_raw = getattr(self.tracker, 'record_raw_mode', False)
+        is_paused = getattr(self.tracker, 'is_recording_paused', False)
+        
+        if is_rec:
+            pause_text = "Weiter" if is_paused else "Pause"
+            pause_color = (40, 180, 40) if is_paused else (220, 100, 20)
+            self.btn_pause_coords, x_cursor, y_cursor = draw_button(combined_view, pause_text, x_cursor, y_cursor, pause_color)
+
+            rec_text = "REC RAW" if is_raw else "REC GUI"
+            rec_color = (180, 0, 180) if is_raw else (0, 0, 220)
+            self.btn_record_coords, x_cursor, y_cursor = draw_button(combined_view, rec_text, x_cursor, y_cursor, rec_color)
+        else:
+            self.btn_pause_coords = None
+            self.btn_record_coords, x_cursor, y_cursor = draw_button(combined_view, "Record (R:Raw)", x_cursor, y_cursor, (50, 50, 50))
+            
+        self.btn_hilfe_coords, x_cursor, y_cursor = draw_button(combined_view, "Handbuch", x_cursor, y_cursor, (30, 140, 255))
+        self.btn_zip_coords, x_cursor, y_cursor = draw_button(combined_view, "Bug ZIP", x_cursor, y_cursor, (40, 120, 40))
+        self.btn_highscore_coords, x_cursor, y_cursor = draw_button(combined_view, "Highscore", x_cursor, y_cursor, (50, 150, 200))
+        self.btn_save_coords, x_cursor, y_cursor = draw_button(combined_view, "Match Speichern", x_cursor, y_cursor, (180, 70, 70))
+        self.btn_labor_coords, x_cursor, y_cursor = draw_button(combined_view, "Labor & Einstellungen", x_cursor, y_cursor, (150, 50, 150))
+        
+        rings_text = "Scheibe: An" if self.show_all_rings else "Scheibe: Aus"
+        rings_color = (40, 160, 40) if self.show_all_rings else (80, 80, 80)
+        self.btn_rings_coords, x_cursor, y_cursor = draw_button(combined_view, rings_text, x_cursor, y_cursor, rings_color)
+        
+        # =========================================================================
         # ---> FPS-Counter <---
+        # =========================================================================
         current_time_fps = time.time()
         delta_t = current_time_fps - getattr(self, 'prev_frame_time', current_time_fps)
         self.prev_frame_time = current_time_fps
@@ -816,7 +673,9 @@ class TargetVisionRenderer:
             current_fps = 1.0 / delta_t
             self.fps = (self.fps * 0.9) + (current_fps * 0.1) 
             
-        cv2.putText(combined_view, f"FPS: {int(self.fps)}", (15, 30), 
+        # FPS Anzeige exakt unter dem Logo platzieren
+        fps_y = start_y + self.logo_h + 25 if getattr(self, 'logo_rgb_pre', None) is not None else start_y + 20
+        cv2.putText(combined_view, f"FPS: {int(self.fps)}", (start_x, fps_y), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
 
         cv2.imshow(self.tracker.window_name, combined_view)

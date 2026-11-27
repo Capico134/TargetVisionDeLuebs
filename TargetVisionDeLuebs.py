@@ -16,6 +16,7 @@ from StateManagerDeLuebs import StateManager
 from DetectionDeLuebs import TargetDetector
 from TargetVisionRenderer import TargetVisionRenderer
 from CameraDeLuebs import AsyncCamera # <--- NEU!
+from TargetVisionCapture import TargetVisionCapture  # <--- NEU: Unser Capture/Stream-Modul
 
 class TargetTracker:
     def __init__(self, config, datei_manager, state_manager):
@@ -56,6 +57,9 @@ class TargetTracker:
         
         self.detector = TargetDetector(config, datei_manager, state_manager, self.log)
         self.renderer = TargetVisionRenderer(self)
+
+        # ---> NEU: Capture & Streamer Modul starten <---
+        self.capture = TargetVisionCapture(self.config, log_callback=self.log)
 
         self.current_crops = {'left': (0,0,0,0), 'right': (0,0,0,0)}
         self.raw_dims = {'left': (1,1), 'right': (1,1)}
@@ -1486,6 +1490,9 @@ class TargetTracker:
 
             # Die GUI rendert IMMER butterweich weiter!
             self.last_rendered_frame = self.renderer.update_gui(frame_l, frame_r, blink_state)
+            
+            # ---> NEU: Das fertige GUI-Bild für den Web-Stream (und später die MP4) übergeben <---
+            self.capture.update_gui_frame(self.last_rendered_frame)
             
             # ---> NEU: Jeden Frame sofort in die MP4 schreiben (GUI oder getrennte RAWs) <---
             if self.is_recording and not self.is_recording_paused:
